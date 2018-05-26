@@ -524,8 +524,8 @@ class Compiler:
         """
         for uml in self.compile_list["UML"]:
             self.output.write("<vm name=\"" + uml.getName() + "\">\n")
-            self.output.write("\t<filesystem type=\"" + uml.getProperty("filetype") + "\">"
-                              + uml.getProperty("filesystem") + "</filesystem>\n")
+            #self.output.write("\t<filesystem type=\"" + uml.getProperty("filetype") + "\">"
+            #                  + uml.getProperty("filesystem") + "</filesystem>\n")
 
             interfaces = uml.getInterfaces()
             if len(interfaces) < 1:

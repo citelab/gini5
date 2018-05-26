@@ -1151,11 +1151,15 @@ def checkAliveGini():
 #    c) populates the GINI network class library
 #    d) performs some semantic/syntax checkings on
 #       the extracted specification
+
+print "================>>> "
+
 myProg = Program(sys.argv[0], SRC_FILENAME)
 if (not myProg.processOptions(sys.argv[1:])):
     sys.exit(1)
 options = myProg.options
 
+print "================>>> "
 # set the UML directory if is not given via -u option
 if (not options.umlDir):
     # set it to the directory pointed by the $UML_DIR env
@@ -1194,6 +1198,8 @@ if (binDir):
 # get the populated GINI network class
 # its structure is the same as the XML specification
 myGINI = myProg.giniNW
+
+print "================>>> "
 
 # create or terminate GINI network
 print ""

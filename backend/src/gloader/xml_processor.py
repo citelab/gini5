@@ -47,8 +47,8 @@ class XMLProcessor:
         result = result and self.checkDuplicateNames("UML", self.giniNW.vm)
         # Rule 4: No duplicate ports in switches
         result = result and self.checkDuplicatePorts(self.giniNW.switches)
-        # Rule 5: Given filesystem is correct
-        result = result and self.checkFileSystem(self.giniNW.vm)
+        # Rule 5: Given filesystem is correct (not applicable to docker)
+        #result = result and self.checkFileSystem(self.giniNW.vm)
         result = result and self.checkDuplicateNames("REALM", self.giniNW.vrm)
         # Rule 6: No duplication in network interface configuration &&
         # Rule 7: Valid IP addresses in network interface configuration
@@ -100,7 +100,7 @@ class XMLProcessor:
 
     def checkDuplicateVMIF(self, vmName, elements):
         return True
-        
+
         "checks duplication (MAC/IP) of VR network interfaces and \
         validity of the IP addresssed used"
         result = True
@@ -109,7 +109,7 @@ class XMLProcessor:
         for vmIF in elements:
             currMAC = vmIF.mac
             currIP = vmIF.ip
-            # check MAC and IP duplication 
+            # check MAC and IP duplication
             if (utilities.findIndex(macs, currMAC) != -1 or
                 utilities.findIndex(ips, currIP) != -1):
                 print vmName + ": either MAC or IP in duplication"
@@ -120,11 +120,11 @@ class XMLProcessor:
             result = result and self.checkValidIPv4(vmName, currIP)
             for route in vmIF.routes:
                 if not route.dest:
-                    continue                
+                    continue
                 if (not self.checkValidIPv4((vmName + "-" + vmIF.name), route.dest)):
                     result = False
         return result
-            
+
     def checkDuplicateVRIF(self, vrName, elements):
         return True
 
@@ -149,7 +149,7 @@ class XMLProcessor:
                 if (not self.checkValidIPv4((vrName + "-" + vrIF.name), route.dest)):
                     result = False
         return result
-            
+
     def checkValidIPv4(self, name, ip):
         return True
 
