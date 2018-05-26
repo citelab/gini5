@@ -9,5 +9,7 @@ class UML(Interfaceable):
     def __init__(self):
         Interfaceable.__init__(self)
 
-
+        self.setProperty("ipv4", "")
+        self.setProperty("port", "")
+        self.setProperty("mac", "")
         self.lightPoint = QPoint(-10,3)

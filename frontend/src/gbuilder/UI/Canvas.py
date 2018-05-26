@@ -12,7 +12,7 @@ import os.path
 realMnumber=3
 deviceTypes = {"Bridge":Bridge, "Firewall":Firewall, "Hub":Hub, "Mobile":Mobile,
                "Router":Router, "Subnet":Subnet, "Switch":Switch, "REALM":REALM,
-               "UML":UML, "UML_FreeDOS":UML_FreeDOS, "UML_Android":UML_Android, "Wireless_access_point":Wireless_access_point, "yRouter":yRouter, 'OpenFlow_Controller': OpenFlow_Controller}
+               "UML":UML, "Wireless_access_point":Wireless_access_point, "yRouter":yRouter, 'OpenFlow_Controller': OpenFlow_Controller}
 
 class View(QtGui.QGraphicsView):
     def __init__(self, parent = None):

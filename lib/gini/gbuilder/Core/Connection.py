@@ -8,8 +8,6 @@ from Devices.Router import *
 from Devices.Subnet import *
 from Devices.Switch import *
 from Devices.UML import *
-from Devices.UML_Android import *
-from Devices.UML_FreeDOS import *
 from Devices.Wireless_access_point import *
 from Devices.yRouter import *
 from UI.Edge import *
@@ -19,8 +17,6 @@ from Devices.OpenFlow_Controller import *
 # The connection rules for building topologies
 connection_rule={}
 connection_rule[UML.device_type]=(Switch.device_type, Subnet.device_type, Bridge.device_type, Hub.device_type)
-connection_rule[UML_Android.device_type]=connection_rule[UML.device_type]
-connection_rule[UML_FreeDOS.device_type]=connection_rule[UML.device_type]
 connection_rule[Router.device_type]=(Subnet.device_type, OpenFlow_Controller.device_type)
 connection_rule[Switch.device_type]=(UML.device_type, Subnet.device_type, Switch.device_type, REALM.device_type)
 connection_rule[Bridge.device_type]=(UML.device_type, Subnet.device_type, REALM.device_type)
