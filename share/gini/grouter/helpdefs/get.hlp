@@ -1,0 +1,28 @@
+.TH "get" 1 "30 July 2009" GINI "gRouter Commands"
+
+.SH NAME
+get - display the control parameters at the GINI router
+
+.SH SNOPSIS
+
+.B get 
+[
+.I parameter 
+]
+
+
+.SH DESCRIPTION
+
+The get command is used to display the control parameters at the router.
+
+
+
+.SH AUTHORS
+
+Written by Muthucumaru Maheswaran. Send comments and feedback at maheswar@cs.mcgill.ca.
+
+
+.SH "SEE ALSO"
+
+.BR set (1G),
+.BR grouter (1G)

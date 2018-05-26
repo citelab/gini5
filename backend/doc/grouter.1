@@ -1,0 +1,324 @@
+.TH "grouter" 1 "22 Septemper 2005" Linux "GINI Components"
+
+.SH NAME
+grouter \- The GINI router for creating GINI micro internets.
+
+.SH SYNOPSIS
+.B grouter
+.BR  -h " | " -V
+
+.B router
+.RB "[ " -v
+.I level
+.RB "] [ " -d 
+.I level
+.RB "] [ " -i
+.I cli
+.RB "] [ " -c 
+.I config-file
+]
+.I router-name
+
+.SH DESCRIPTION
+This is the router component from the GINI toolkit. It has all the
+routing functionalities of a basic linux machine. As its network stack
+is restricted upto layer 3, it is much light weighted than using
+another UML as a router.
+
+The router can be launched both in interactive and non-interactive
+mode. The interactive mode enables interacting with the router with
+router configuration commands and monitoring its activity in real
+time. It can not be run as a deamon; therefore, when it is started in
+a non-interactive mode, it has to be put in the background using '&'
+to get the shell prompt back. If launched in the interactive mode,
+.B kill
+command has to be used to terminate the router.
+
+Similar to 
+.BR uswitch ,
+.B grouter
+also uses the UNIX sockets to emulate the physical links. When a UNIX
+socket filename is specified for its physical link, the
+.B grouter
+creates the specified UNIX socket if it does not already
+exist. Therefore, when a GINI network that consists of all switches,
+routeres, and UMLs is instantiated, the routers have to started after
+the switches but before the UMLs.
+
+.SH OPTIONS
+
+.B -h, --help
+.RS 
+Prints the usage information and quits.
+.RE
+
+.B -V, --version
+.RS
+Prints the version information and quits.
+.RE
+
+.BI "-v, --verbose= " level
+.RS
+Sets the verbose level to
+.IR level .
+.RE
+
+.BI "-d, --debug= " level
+.RS
+Sets the debug level to 
+.IR level .
+.RE
+
+.BI "-i, --interactive= " cli
+.RS 
+Sets the interactive level. 
+.I cli
+can be either 1 or 0, 1 for enabling interactive mode and 0 to disable
+it. By default, the interactive mode is disabled. When run in
+interactive mode, router will accept commands from
+.IR stdin .
+GINI router commands can be issued in interactive mode (see the 
+.B COMMANDS
+section). When run in a non-interactive mode, the router
+configurations (or commands) has to be passed through a configuration
+file using the
+.B -c
+option. In the non-interactive mode, the router never exits (even
+ctrl-c is disabled) and, to get the shell prompt, the router has to be
+launched as a background process using '&' (ctrl-z is disabled). The
+router launched in the non-interactive mode can be termintated only
+using
+.BR kill .
+.RE
+
+.BI "-c, --config= " config-file
+.RS
+When this option is used, the commands in the specified
+.I config-file
+are executed after the router is started. This option is specifically
+useful when the router is launched in the non-interactive mode.
+.RE
+
+.BI "-n, --name= " router-name
+.RS
+Specifies the name of the router. A file named
+.I router-name.pid
+will be created in the current directory that stores the pid of the
+router process. When launched non-interactively, this pid file can be
+used to terminate the router as
+.RS
+.BR "kill " ` cat
+.IR router-name.pid `
+.RE
+The pid file is created at the current directory by default. You can
+include a pathname in the
+.I router-name
+to force the pid file to be created in a different directory.
+.RE
+
+.SH COMMANDS
+The GINI router accept number of commands to manage and monitoro the
+functionality of the router. When run in the interactive modes these
+commands can be given via the 
+.IR stdin . 
+In the interactive mode, the 
+.B source
+command can be used to feed commands from a batch command file.  When
+launched in an interactive mode, the commands can be fed through a
+config file using
+.B -c 
+option.
+
+.B set
+.RS
+.B set verbose
+[
+.I level
+]
+.RS
+set the verbose level to
+.I level 
+(0 < 
+.I level
+< 7). When
+.I level
+is omitted, this command will show the current verbose level.
+.RE
+.RE
+
+.B ifconfig
+.RS
+.B ifconfig show
+[
+.I brief
+|
+.I verbose
+]
+.RS
+Shows the configurations of the interface
+.I if 
+in brief or verbose mode.
+.RE
+.BI "ifconfig add " if " -socket " socket-file " -addr " IP-addr " -network " IP-network " -hwaddr " MAC
+[
+.BI "-gateway " GW
+] [
+.BI "-mtu " N
+]
+.RS
+Configures and activates the interface
+.IR if .
+The interface is connected to the switch keeping the socket file
+.I socket-file
+open. Therefore, if no switch with the specified file is available
+this command will have no effect. The interface is assigned with the
+6 byte hardware address
+.IR MAC ,
+the IP address of 
+.IR IP-addr ,
+and the network address of
+.IR IP-network .
+Optionally the gateway and mtu of the interface can be set.
+.RE
+.BI "ifconfig del " if
+.RS
+Removes the configurations of the interface
+.IR if .
+.RE
+.BI "ifconfig up " if
+.RS
+If the interface
+.I if
+is down, it activates it.
+.RE
+.BI "ifconfig down " if
+.RS
+Deactivates the interface
+.IR if .
+The configurations are preserved so that the interface can be
+activated just by using the 
+.B ifconfig up
+command.
+.IR if .
+.RE
+.B ifconfig mod if
+(
+.BI "-gateway " GW
+|
+.BI "-mtu " N
+)
+.RS
+Modifies the optional configuration of the interface
+.IR if .
+.RE
+.RE
+
+.B ping 
+[
+.B -n
+]
+.I IP-addr
+.RS
+Similar to a linux box ping command. But, by default, sends only one
+packet.
+.B -n 
+can be used to specify the number of packets to sent.
+.RE
+
+.B mtu
+.RS
+Shows the MTU table.
+.RE
+
+.BI "source " config-file
+.RS
+Similar to the linux source command. Batch executes the commands from
+the file
+.IR config-file .
+.RE
+
+.B halt
+.RS
+Halts the router.
+.RE
+
+.BI "help " command
+.RS
+Shows a short usage information on the command
+.IR command .
+.RE
+
+.B route
+.RS
+.B route show
+.RS
+Displays the current setup of the routing table.
+.RE
+.B "route add -dev " if " -net " nw-addr " -netmask " mask
+[
+.BI "-gw " gw-addr
+]
+.RS
+Adds a routing rule for the interface
+.I if
+so that all the traffic for the network with network address
+.I nw-addr 
+with netmask
+.I mask
+is directed to the gateway
+.IR gw-addr .
+.RE
+.BI "route del " route-number
+.RS
+Delete the route rule shown in the line number
+.I route-number
+in the routing table.
+.RE
+.RE
+
+.B arp
+.RS
+.B arp show
+.RS
+Displays the ARP table.
+.RE
+.BI "arp show -ip " IP-addr
+.RS
+Shows the ARP entry for the IP address
+.IR IP-addr .
+.RE
+.B arp del
+.RS
+Deletes all the entries in the ARP table.
+.RE
+.B "arp del -ip " IP-addr
+.RS
+Deletes the ARP entry for the IP address
+.IR IP-addr .
+.RE
+.RE
+
+.B version
+.RS
+Shows the version information of the router.
+.RE
+
+.SH BUGS
+Report bugs to maheswar@cs.mcgill.ca
+
+.SH AUTHORS
+The initial code (named as
+.BR uml_router )
+is written by Miss. Weiling Xu.
+
+Dr. Muthucumaru Maheswaran did a major restructure of the code and
+added many new features and functionalities.
+
+.SH "SEE ALSO"
+.BR ifconfig (8),
+.BR route (8),
+.BR arp (8),
+.BR ping (8),
+.BR socket (2),
+.BR socket (7),
+.BR unix (7)

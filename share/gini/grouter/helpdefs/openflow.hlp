@@ -1,0 +1,102 @@
+.TH "openflow" 1 "11 April 2016" GINI "gRouter Commands"
+
+.SH NAME
+openflow \- view OpenFlow switch information or force the OpenFlow switch to 
+reconnect to the controller
+
+.SH SYNOPSIS
+
+.B openflow 
+.B entry
+( index |
+.B all
+)
+
+.B openflow 
+.B stats
+.B desc
+
+.B openflow 
+.B stats
+.B entry
+( index |
+.B all
+)
+
+.B openflow 
+.B stats
+.B table
+
+.B openflow 
+.B stats
+.B port
+( index |
+.B all
+)
+
+.B openflow 
+.B port
+( index |
+.B all
+)
+
+.B openflow 
+.B reconnect
+
+.SH DESCRIPTION
+
+The 
+.B openflow
+command displays information related to the OpenFlow switch.
+
+The
+.B entry
+sub-command displays OpenFlow flow table entries, while the
+.B stats entry
+displays statistics for OpenFlow flow table entries. You can either specify an entry index or
+.B all
+for all entries. Note that OpenFlow flow table entries are zero-indexed.
+
+The
+.B port
+sub-command displays OpenFlow ports, while the
+.B stats port
+displays statistics for OpenFlow ports. You can either specify a port index or
+.B all
+for all ports. Note that OpenFlow flow table entries are one-indexed.
+
+The
+.B stats table
+sub-comamnd displays global flow table statistics, while the
+.B stats desc
+sub-command displays general switch information.
+
+For each of the above sub-commands, see the relevant OpenFlow struct definitions in openflow.h to see the different kind of information provided for each.
+
+This command can also be used to force the switch to reconnect to the controller by using the
+.B reconnect
+sub-command. This is useful if you have just loaded a POX module and need to trigger its initialization.
+
+This command can only be used when gRouter is launched in OpenFlow mode. gRouter is in OpenFlow mode if and only if it is connected to an OpenFlow controller.
+
+.SH EXAMPLES
+
+To print the OpenFlow flow table entry at index 3, use the following command:
+.br
+openflow entry 3
+
+To print out the corresponding statistics for that entry, use the following command:
+.br
+openflow stats entry 3
+
+To print out all OpenFlow flow table entries, use the following command:
+.br
+openflow entry all
+
+To print out the corresponding statistics for those entries, use the following command:
+.br
+openflow stats entry all
+
+.SH AUTHORS
+
+Written by Michael Kourlas.

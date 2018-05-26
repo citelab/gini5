@@ -1,0 +1,167 @@
+.TH "gloader" 1 "22 September 2005" Linux "GINI Components"
+
+.SH NAME
+gloader \- GINI network loader/terminator
+
+.SH SYNOPSIS
+.B gloader
+((
+.B -d
+|
+.B -c
+) [
+.I xml-file
+]) [
+.BR "-s " switch-dir
+] [
+.BR "-r " router-dir
+] [
+.BR "-u " uml-dir
+] [
+.BR "-b " bin-dir
+] [
+.B -k
+]
+
+.SH DESCRIPTION
+.B gloader
+accepts the 
+.I xml-file
+and loads or terminates a GINI network instantiation accordingly. It
+validates the
+.I xml-file
+with reference to the 
+.I gloader.dtd
+file that comes with the GINI toolkit. The
+.I gloader.dtd
+is in
+.B $GINI_HOME/etc
+directory. The XML file can be hand-written or auto created by
+.BR gbuilder .
+It does the following semantic checks on the XML specification: (a)
+names of the GINI components are unique, (b) the ports used by the
+switches are unique, (c) the given filesystem for the UMLs are
+correct, (d) interfaces in a UML has unique names, and (e) the IP
+addresses used in the components are in private IP address range.
+
+.B gloader
+instantiates all the switches in deamon mode and other components in
+detached mode using the
+.B screen
+utility. The
+.BR screen (1)
+command can be used appropriately to bring these components back in
+the interactive mode.
+
+.B gloader leaves a file named
+.I gini_setup
+in the directory from where it is launched. The latest command line
+options used in the command are stored in this file, so that the
+command can be re-issued quickly without re-specifying the options.
+
+When used to terminate a GINI micro Internet instance, 
+.B gloader
+terminates the switches and routers using 
+.BR kill ( 1 )
+command. The UMLs are terminated using
+.BR uml_mconsole .
+All the generated files and directories are deleted except the .cow
+files created by the UMLs. If any of the GINI components crashed while
+in operation,
+.B gloader
+might fail to perform the cleaning operation completely. Clean the the
+directory of the crashed GINI component manually and rerun the
+.B gloader
+to terminate the rest of the components.
+
+.SH OPTIONS
+
+.B -d
+.RI [ xml-file ]
+.RS
+Destroys the GINI instance specified by the 
+.IR xml-file .
+If no 
+.I xml-file
+is specified, it will take the options from the 
+.I gini_setup
+file from the previous GINI instance creation. The
+.I gini_setup
+file is not deleted, so that it can be used for creating the same GINI
+instance again quickly.
+.RE
+
+.B -c
+.RI [ xml-file ]
+.RS
+Creates a GINI instance specified by the 
+.IR xml-file .
+If no 
+.I xml-file
+is specified, it will take the options from the 
+.I gini_setup
+file from the previous GINI instance creation to recreate the
+instance.
+.RE
+
+.BI "-s " switch-dir
+.RS
+Specifies the directory for the switch-specific files to be placed. If
+not given, current directory is assumed. Each switch instance creates
+sub directory in this directory. 
+.RE
+
+.BI "-r " route-dir
+.RS
+Similar to 
+.B -s
+option, but for router-specific files.
+.RE
+
+.BI "-u " uml-dir
+.RS
+Similar to 
+.B -s
+option, but for UML-specific files.
+.RE
+
+.BI "-b " bin-dir
+.RS
+Specifies the location of the binaries of the GINI components. If not
+specified, the binaries are looked in the directories specified in the
+shell's
+.B PATH
+environment variable.
+.RE
+
+.B -k
+.RS
+To be used with the 
+.B -c
+option. By default, 
+.B gloader
+refuses to create a new GINI instance, if another instance is already
+active. This default check can be bypassed with 
+.B -k
+option and multiple GINI istances can be created
+simultaneously. Generally using this option is not advisable. If you
+use it, use it with care: a new GINI instance can overwrite the
+directories of the existing GINI components, if the names of the
+components in the different instances match.
+.RE
+
+.SH BUGS
+It currently does not handle the wireless GINI components.
+
+Report other bugs to bmaniy@cs.mcgill.ca
+
+.SH AUTHORS
+Intially written in Perl by Yuanyuan Gao.
+
+Reincarnated and extended in Python by Balasubramaneyam Maniymaran
+
+.SH "SEE ALSO"
+.BR gbuilder (1),
+.BR grouter (1),
+.BR uswitch (1),
+

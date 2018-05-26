@@ -1,0 +1,48 @@
+The following functions have been added in version 3.0.0:
+
+-- Revamped user interface with flattnened icons for the devices as well as for system trays.
+
+-- Users can now deploy actually exisiting topologies from the GML file of http://topology-zoo.org/. The conversion code is uploaded in the repository as convertor.py. All the GML files can be converted to GSAV files using this code, which can subsequently be copied to the .gini/sav/exist directory(automation of this process can be done) and thus can be loaded by the "Open Existing Topology" button on the system tray above the canvas, for which and instruction has been provided in the gbuilder.
+
+TODO: Dynamically upload the file from the website and convert it to GSAV, all in real time.
+
+-- Integration of Wireless GINI in gbuilder which has been developed by Ahmed Yousouff.
+
+	* The integration of wireless GINI involved the major portion of the tasks.
+	* Firstly, understanding and operating the Arduino Yuns, which involved configuring the Yuns for the mesh topology as well.
+	* The following packages had to be installed in the Yun:
+		
+		opkg update
+		opkg install binutils
+		opkg install make
+		wget http://downloads.arduino.cc/openwrtyun/1/packages/yun-gcc_4.6.2-2_ar71xx.ipk
+		opkg install yun-gcc_4.6.2-2_ar71xx.ipk
+		opkg install perl
+		opkg install screen
+
+		Libslack from http://www.libslack.org/
+		cd /root/
+		git clone https://github.com/ahmed-youssef/yRouter.git
+		cd yRouter/src
+		./yInstall *StationID*
+	
+	  This step will install the yRouter in the Arduino Yun.
+
+	 * Intergration of the yRouter was done in the gbuilder by creating a new droppable device which can interface through connections in the canvas.
+	 * All the properties of yRouter are integrated with the device.
+	 * Presently, there is support for only one yRouter in the topology, but one can manually set up the routes for wireless devices in the yRouter shell interface. The shell interface has been integrated with the yRouter in the gbuilder.
+	 * The ping operations have been tested for the canvas elements and there is successful pinging in the yRouter topology.
+	 * Interfacing of the yRouter can only be done by making it the mesh portal(station ID 1) and connecting it to a router through a subnet.
+
+
+The following was attempted, but after research, turned out to be irrelavant:
+
+-- Integrating the Zookeeper API to omit the time.sleep() statements in the gloader.
+	*This posed various issues such as taking impractical amount of time to delete the ephemereal nodes. The kazoo library was tested and implemented, but was not feasible according to the needs of the project.
+
+
+Future work to be done:
+
+-- Integrating the real time mobile devices in topology, as and when it connects with the yRouter, resulting in successful pinging.
+-- Integrating the support for multiple yRouters in the gbuilder.
+

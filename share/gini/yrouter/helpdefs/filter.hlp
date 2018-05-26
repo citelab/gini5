@@ -1,0 +1,80 @@
+.TH "filter" 1 "30 July 2009" GINI "gRouter Commands"
+
+.SH NAME
+filter \- setup a packet filter at the gRouter
+
+.SH SNOPSIS
+.B filter
+.B add
+( deny | allow ) 
+.I class_name
+
+.B filter show
+
+.B filter stats
+
+.B filter move
+.I rule_number
+(up | down | top | bottom )
+
+.B filter del
+.I rule_number
+
+.B filter flush
+
+.B filter [on |flush]
+
+.SH DESCRIPTION
+
+The packet filter at the GINI router can be used to deploy firewalls. Using the filter
+commands we can add deny or allow rules for certain traffic streams. The filter command also
+allows a way to manipulate the rule set already set at the router. The rules are interpreted
+in a 
+.B top-down 
+manner. That is rules listed at the top are matched
+.B first. 
+Rules that are 
+.I more specific
+should be at the top. The filter system does not provide any guidence on rule placement. The
+administrator of the GINI router should edit the rule set properly!
+
+
+A class specifying a traffic specification should be defined before adding it as part of
+a filter rule. Use the 
+.B class 
+rule to define the traffic specification.
+
+If filtering is not needed, it is a good idea to turn off filtering. Use the
+.B filter off
+command to turn off filtering (the default state is off). Use 
+.B filter on
+to enable filtering. The state of the filter can be checked by typing
+.B filter
+
+
+.SH EXAMPLES
+
+Use the following command to add a filter rule. This rule filters (denies) the traffic according to
+the 'http' traffic specification. The 
+.I 'http'
+traffic specification was defined using the  
+.B class
+command before issuing the following command. See 
+.B class
+help page for details on using the class command.
+
+.br
+filter add deny http
+
+.SH AUTHORS
+
+Written by Muthucumaru Maheswaran. Send comments and feedback at maheswar@cs.mcgill.ca.
+
+
+.SH "SEE ALSO"
+
+.BR grouter (1G),
+.BR queue (1G),
+.BR qdisc (1G),
+.BR class (1G)
+

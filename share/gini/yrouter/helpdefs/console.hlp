@@ -1,0 +1,37 @@
+.TH "console" 1 "30 July 2009" GINI "gRouter Commands"
+
+.SH NAME
+console \- manage the port used to connect wireshark and visualizer
+
+.SH SNOPSIS
+.B console
+restart 
+
+
+.SH DESCRIPTION
+
+Use this command to manage the port used to connect to the wireshark
+When the gRouter starts, it automatically creates a FIFO under the name router_name.port in the
+in the home directory. You can connect a wireshark packet visualizer using the following command:
+
+wireshark -S -l -k -i router_name.port         
+
+Once the wireshark is started, it should remain connected to the gRouter until the gRouter halts.
+If the wireshark is stopped or the capturing process is stopped, the connection between the gRouter
+and the wireshark will terminate. If you want to reconnect the wireshark, the console should be 
+restarted with the command: 
+.I console restart.
+Once the console is restarted, connect the wireshark
+again to the gRouter using the command originally used to connect. The packet capture should work now.
+
+
+
+.SH AUTHORS
+
+Written by Muthucumaru Maheswaran. Send comments and feedback at maheswar@cs.mcgill.ca.
+
+
+
+
+
+

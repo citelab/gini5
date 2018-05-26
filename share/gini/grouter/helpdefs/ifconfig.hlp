@@ -1,0 +1,161 @@
+.TH "ifconfig" 1G "30 July 2009" GINI "gRouter Commands"
+
+.SH NAME
+ifconfig \- setup network interfaces at gRouter
+
+.SH SNOPSIS
+.B ifconfig 
+.B add
+( ethX | tap0 ) [
+.B -socket
+socketfile ]
+.B -addr
+IP_address
+.B -hwaddr
+MAC_addr [
+.B -gateway
+GW_addr ] [
+.B -mtu
+Value ]
+
+.B ifconfig 
+.B del
+ethX | tap0
+
+.B ifconfig
+.B show 
+( brief | verbose )
+
+.B ifconfig
+.B up
+ethX | tap0
+
+.B ifconfig
+.B down
+ethX | tap0
+
+.B ifconfig
+.B mod
+ethX 
+(-gateway GW | -mtu Value)
+
+
+.SH DESCRIPTION
+
+.B ifconfig with the 
+.B add 
+command
+is used to setup the router resident interfaces at bootup. After that it is 
+normally used for tuning the setup or debugging the router interfaces. This command 
+can add, delete, or change interface parameters.
+	
+The 
+.I ethX
+interfaces connect the GINI router to virtual network elements such as other GINI routers,
+switches, or machines. The 
+.I tap0 
+interface connects a GINI router to the Internet. If a router in a virtual topology is
+connected to the Internet, all elements (routers and machines) part of the topology 
+should be able to access the Internet.
+
+The 
+.B -socket
+switch denotes the 
+.I socketfile
+to associate with the interface. If a file under the given name exists, the interface
+is opened in client mode and a connection is initiated with the element that created
+the file. Otherwise the socketfile is created by the router.
+The
+.B -addr
+gives the IP address
+.B -network 
+gives the subnet address, and
+.B -hwaddr
+gives the MAC address, respectively of the interface.
+
+The 
+.B -socket
+switch is not used for 
+.I tap0
+interfaces. The 
+.I tap0 
+interface does not work through a socket file. It directly connects to the host.
+
+The
+.B del 
+command of 
+.B ifconfig
+can be used to remove a previously setup interface.
+
+The
+.B show
+command of 
+.B ifconfig
+can be used to print the interface tables. It takes a parameter to indicate the verbosity of the output.
+The
+.I brief
+option denotes a summarised output and 
+.I verbose
+denotes a detailed output.
+
+The 
+.B up
+command of 
+.B ifconfig 
+is used to enable a previously created interface. Similarly, the
+.B down 
+command is used to disable an active interface.
+
+The 
+.B mod
+command is used to modify the operating parameters of an interface. Currently, the
+gateway address and the MTU can be changed.
+
+It is important to use the
+.B route
+command to setup the default or specific routes correctly. The 
+.B ifconfig
+command does not enter any entries in the routing table. This is 
+.B unlike 
+some networking subsystems of *nix operating systems that create appropriate default
+entries with the ifconfig command.
+
+.SH OPTIONS
+
+The
+.B -gateway
+option gives the IP address of the gateway. This is the default next hop for all the outgoing
+traffic on the interface. 
+The 
+.B -mtu
+option specifies using an integer value the maximum transfer unit of the interface.
+
+
+.SH EXAMPLES
+
+To create an interface 
+.I eth0
+with 192.197.122.43 as the IP address use the following command:
+.br
+ifconfig add eth0 -socket ./sockname.ctl -addr 192.197.122.43	
+.br		
+		-hwaddr 99:33:45:89:43:23
+
+To connect to the Internet, use the following command. This works assuming 
+.I tap0
+interface is already created using 
+.B tunctl
+.br
+ifconfig add tap0 -addr 192.167.133.67 -hwaddr 99:44:45:89:34:24
+
+
+
+.SH AUTHORS
+
+Written by Muthucumaru Maheswaran. Send comments and feedback at maheswar@cs.mcgill.ca.
+
+
+.SH "SEE ALSO"
+.BR grouter (1),
+.BR route (1), 
+.BR arp (1)

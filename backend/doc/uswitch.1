@@ -1,0 +1,60 @@
+.TH USWITCH "1" "31 July 2008" "GINI" "GINI Components"
+
+.SH NAME
+uswitch \- switch emulator for GINI micro internets.
+
+.SH SYNOPSIS
+.B uswitch [\fI OPTION\fR]... -s \fISOCKET_FILE\fR
+
+.SH DESCRIPTION
+.PP
+A software-level switch that interacts with the UMLs and other GINI
+components to build a GINI micro Internet.  
+The switch can connect to other GINI components in the same
+local machine or another switch in a remote machine. The connection
+between the GINI components and the switch is handled through the socket
+interface. The socket interface in the switch is implemented as UNIX
+file sockets. The connection to remote switches are made through UDP
+Internet sockets.
+The only required option
+is \fB\-s\fR \fISOCKET_FILE\fR, which specifies the file to use as the 
+socket interface.
+
+.TP
+\fB\-a\fR, \fB\-\-maxage\fR \fISECONDS\fR
+set the maximum age (in seconds) an unused MAC address can live in the 
+switch before it is removed
+.TP
+\fB\-d\fR, \fB\-\-debug\fR
+raise the debug level by one: specifying this option twice will give
+maximum verbosity
+.TP
+\fB\-\-hub\fR
+run the switch in hub mode
+.TP
+\fB\-h\fR, \fB\-\-help\fR
+display this help and exit
+.TP
+\fB\-l\fR, \fB\-\-logfile \fILOG_FILE\fR
+set the logfile to \fILOG_FILE\fR
+.TP
+\fB\-p\fR, \fB\-\-pidfile\fR \fIPID_FILE\fR
+set the pidfile to \fIPID_FILE\fR
+.TP
+\fB\-s\fR, \fB\-\-sockfile\fR \fISOCKET_FILE\fR
+set the socket file to \fISOCKET_FILE\fR
+
+.SH AUTHORS
+This code is a heavily modified version of the code obtained from 
+.I http://user-mode-linux.sourceforge.net/ 
+in 2003, rewritten by Alexis Malozemoff.
+This man page was originally written by Balasubramaneyam Maniymaran,
+rewritten by Alexis Malozemoff.
+
+.SH REPORTING BUGS
+Report bugs to <maheswar@cs.mcgill.ca>.
+
+.SH "SEE ALSO"
+.BR gloader (1),
+.BR grouter (1)
+
