@@ -195,8 +195,6 @@ class Compiler:
                     controllerFound = True
                     self.output.write("\t<controller>" + node.getName() + "</controller>\n")
 
-
-
             edges = router.edges()
             if len(edges) < 2:
                 self.generateConnectionWarning(router, 2)
@@ -318,8 +316,6 @@ class Compiler:
                         return
                     controllerFound = True
                     self.output.write("\t<controller>" + node.getName() + "</controller>\n")
-
-
 
             edges = yRouter.edges()
             if len(edges) < 2:
@@ -754,7 +750,7 @@ class Compiler:
 	"""
 	Compute route tables of yRouters.
 	"""
-	self.routing_table_interfaceable("yRouter")
+        self.routing_table_interfaceable("yRouter")
 
     def routing_table_wireless_access_point(self):
         """
@@ -807,13 +803,31 @@ class Compiler:
                 if con != c:
                     self.visitAdjacentRouters(myself, c, otherDevice, interface, visitedNodes)
 
+    def findSwitchInterface(self, interfaces, switch):
+
+        for i in interfaces:
+            if i[QtCore.QString("target")] == switch:
+                return i
+        return None
+
+
     def findAdjacentSubnets(self, device):
         """
         Find all Subnets adjacent to device.
         """
+        ainterfaces = device.getInterfaces()
+
         for con in device.edges():
             otherDevice = con.getOtherDevice(device)
             if otherDevice.device_type == "Subnet":
+                device.addAdjacentSubnet(otherDevice.getProperty("subnet"))
+            elif otherDevice.device_type == "Switch":
+                for c in otherDevice.edges():
+                    odevice = c.getOtherDevice(otherDevice)
+                    if odevice != device and odevice.device_type == "Router":
+                        iface = self.findSwitchInterface(ainterfaces, otherDevice)
+                        device.addAdjacentRouter(odevice, iface)
+
                 device.addAdjacentSubnet(otherDevice.getProperty("subnet"))
             elif otherDevice.device_type == "Wireless_access_point":
                 device.addAdjacentSubnet(otherDevice.getProperty("subnet"))

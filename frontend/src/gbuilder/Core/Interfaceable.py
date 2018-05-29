@@ -189,6 +189,13 @@ class Interfaceable(Attachable):
                 return True
         return False
 
+    def findSwitchInterface(self, interfaces, switch):
+
+        for i in interfaces:
+            if i[QtCore.QString("target")] == switch:
+                return i
+        return None
+
     def searchSubnet(self, subnet):
         """
         Search the specified subnet in the whole network.
@@ -222,7 +229,15 @@ class Interfaceable(Attachable):
             device, interface = self.searchSubnet(subnet)
             if interface:
                 target = interface[QtCore.QString("target")]
-                if interface[QtCore.QString("subnet")] == subnet \
+                if self.device_type != "UML" and device.device_type == "Router" and target.device_type == "Switch":
+                    iface = device.getInterface(target)
+                    if iface:
+                        gateway = iface[QtCore.QString("ipv4")]
+                        self.addEntry(interface[QtCore.QString("mask")],
+                                    gateway,
+                                    subnet,
+                                    target)
+                elif interface[QtCore.QString("subnet")] == subnet \
                     and self.device_type == "UML" or self.device_type == "REALM":
                     self.addEntry(interface[QtCore.QString("mask")],
                                   "",

@@ -17,8 +17,8 @@ from Devices.OpenFlow_Controller import *
 # The connection rules for building topologies
 connection_rule={}
 connection_rule[UML.device_type]=(Switch.device_type, Subnet.device_type, Bridge.device_type, Hub.device_type)
-connection_rule[Router.device_type]=(Subnet.device_type, OpenFlow_Controller.device_type)
-connection_rule[Switch.device_type]=(UML.device_type, Subnet.device_type, Switch.device_type, REALM.device_type)
+connection_rule[Router.device_type]=(Subnet.device_type, OpenFlow_Controller.device_type, Switch.device_type)
+connection_rule[Switch.device_type]=(UML.device_type, Subnet.device_type, Switch.device_type, Router.device_type)
 connection_rule[Bridge.device_type]=(UML.device_type, Subnet.device_type, REALM.device_type)
 connection_rule[Hub.device_type]=(UML.device_type, Subnet.device_type, REALM.device_type)
 connection_rule[Wireless_access_point.device_type]=(Mobile.device_type)
