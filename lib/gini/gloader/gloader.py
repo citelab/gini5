@@ -23,8 +23,6 @@ VOFC_PROG_BIN = VOFC_PROG
 GWR_PROG_BIN = GWR_PROG
 MCONSOLE_PROG_BIN = MCONSOLE_PROG
 SRC_FILENAME = "%s/gini_setup" % os.environ["GINI_HOME"] # setup file name
-UML_WAIT_DELAY = 0.2 # wait delay between checking alive UML
-GROUTER_WAIT = 2 # wait delay between starting routers
 GINI_TMP_FILE = ".gini_tmp_file" # tmp file used when checking alive UML
 nodes = []
 
@@ -439,8 +437,7 @@ def createVR(myGINI, options):
             print " (OF port: " + port + ")",
         print ""
         os.chdir(oldDir)
-        # Wait after starting router so they have time to create sockets
-        time.sleep(GROUTER_WAIT)
+
 
     return True
 
@@ -575,7 +572,6 @@ def createVOFC(myGINI, options):
         os.chmod("startit.sh",0755)
         system("./startit.sh")
         print "[OK]"
-    time.sleep(GROUTER_WAIT)
     return True
 
 def createVMB(myGINI, options):
