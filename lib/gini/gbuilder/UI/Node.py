@@ -47,8 +47,9 @@ class DropItem(QtGui.QGraphicsItem):
             painter.drawImage(QtCore.QPoint(-self.image.width()/2, -self.image.height()/2), transparency)
         painter.drawImage(QtCore.QPoint(-self.image.width()/2, -self.image.height()/2), self.image)
         device_text = self.device_type
-        if self.device_type == "yRouter":
-            device_text += " (" + str(len(availableyRouters)) + ")"
+        if options["names"]:
+            if self.device_type == "yRouter":
+                device_text += " (" + str(len(availableyRouters)) + ")"
             painter.drawText(QtCore.QRectF(-70, self.image.height()/2, 145, 60), device_text, QtGui.QTextOption(QtCore.Qt.AlignHCenter))
 
     def boundingRect(self):
