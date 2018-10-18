@@ -1,4 +1,4 @@
-file /mnt/hgfs/maheswar/gini5-repo/SConstruct,line 208:
+file /home/gini/gini5/SConstruct,line 208:
 	Configure(confdir = .sconf_temp)
 scons: Configure: Checking for C library slack... 
 scons: Configure: ".sconf_temp/conftest_0.c" is up to date.
