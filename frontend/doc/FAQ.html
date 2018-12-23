@@ -1,0 +1,242 @@
+<HTML>
+    <BODY>
+    
+<P>    
+<LI><A HREF="#1">1. General Questions</A></LI>
+<LI><A HREF="#1.1">1.1 What is GINI?</A></LI>
+<LI><A HREF="#1.2">1.2 What is new with GINI 2.0?</A></LI>
+<LI><A HREF="#1.3">1.3 Where can I get help?</A></LI>
+</P>
+
+<P>
+<LI><A HREF="#2">2. Downloading GINI 2.0</A></LI>
+<LI><A HREF="#2.1">2.1 Where can I download GINI 2.0?</A></LI>
+<LI><A HREF="#2.2">2.2 Which version should I download?</A></LI>
+<LI><A HREF="#2.3">2.3 What do I need to run GINI?</A></LI>
+</P>
+
+<P>
+<LI><A HREF="#3">3. Installing GINI 2.0</A></LI>
+<LI><A HREF="#3.1">3.1 How do I install GINI 2.0?</A></LI>
+</P>
+
+<P>
+<LI><A HREF="#4">4. Starting gBuilder 2.0</A></LI>
+<LI><A HREF="#4.1">4.1 How do I start gBuilder 2.0?</A></LI>
+</P>
+
+<P>
+<LI><A HREF="#5">5. Creating Topologies</A></LI>
+<LI><A HREF="#5.1">5.1 How do I create a topology?</A></LI>
+<LI><A HREF="#5.2">5.2 How do I save a topology?</A></LI>
+<LI><A HREF="#5.3">5.3 Can I transfer my save files to another machine?</A></LI>
+</P>
+
+<P>
+<LI><A HREF="#6">6. Starting Topologies</A></LI>
+<LI><A HREF="#6.1">6.1 How do I start a topology?</A></LI>
+<LI><A HREF="#6.2">6.2 How do I start a server?</A></LI>
+<LI><A HREF="#6.3">6.3 How do I set up ssh keypairs?</A></LI>
+</P>
+
+<P>
+<LI><A HREF="#7">7. Using Projects</A></LI>
+<LI><A HREF="#7.1">7.1 What is a project?</A></LI>
+<LI><A HREF="#7.2">7.2 Can I transfer my project files to another machine?</A></LI>
+</P>
+
+
+<A NAME="1">1. General Questions</A>
+<P>
+</P>
+<A NAME="1.1">1.1 What is GINI?</A>
+<P>
+GINI (GINI Is Not Internet) is a toolkit for creating virtual micro Internets for teaching and learning computer networks.  It provides an easy to use graphical user interface called gBuilder for creating network instances.  Using gBuilder, the user can create small to moderate sized networks.  Once the network is built graphically, parameters such as subnet addresses can be assigned by the user to different components of the network.  gBuilder provides a lot of support by automatically computing routing tables and assigning IP and MAC addresses using the constraints expressed by the user.  The network specification is verified by a compiler and then converted into an XML file containing the network definition.  The XML file can then be used to start the virtual network on the back-end program called gLoader, and the user can interact with the running devices of that network through gBuilder.
+</P>
+
+<A NAME="1.2">1.2 What is new with GINI 2.0?</A>
+<P>
+The most notable difference with GINI 2.0 is the new user interface, more specifically gBuilder 2.0.  It has been completely rewritten using PyQt4, a set of Python bindings for Qt 4.  On top of most of the features provided in the first release of gBuilder, it is highly configurable.  It adds a new level of user-friendliness by providing configurable styles and themes, as well as dockable windows.  Also, gBuilder can remember the layout so that the windows will reappear in the same location the user left them the last time they ran the program.
+</P>
+
+<A NAME="1.3">1.3 Where can I get help?</A>
+<P>
+There is a GINI mailing list for bugs or questions to which the administrators will reply to.  If the documentation is insufficient for your needs, please post something and hopefully someone will provide a solution.      
+</P>
+
+
+<A NAME="2">2. Downloading GINI 2.0</A>
+<P>
+</P>
+<A NAME="2.1">2.1 Where can I download GINI 2.0?</A>
+<P>
+If you are simply looking to use GINI, it is best downloaded from the subversion repository https://svn.origo.ethz.ch/gini/stable.  You can then proceed to the installation.  If you are interested in the development of GINI, you can download the full repository at https://svn.origo.ethz.ch/gini.
+</P>
+<A NAME="2.2">2.2 Which version should I download?</A>
+<P>
+If you are running Windows, you only have the option of installing the front-end.  If you are running Linux, you can install the front-end, back-end or full version of GINI.  To run GINI, you will require at least one installation of the front-end and one installation of the back-end or simply one full version.  
+</P>
+<A NAME="2.3">2.3 What do I need to run GINI?</A>
+<P>
+The full GINI package should work on the latest Ubuntu distributions (8.04, 8.10, 9.04) using Python 2.5 or 2.6.  The front-end version of GINI can be run on Windows, but to run a topology you will need a Linux server with the back-end installed to connect to.
+<br><br>
+Front-end:
+<ul>
+Required:
+<ul>
+<li>python 2.5+</li>
+<li>python-qt 4.4+</li>
+<li>scons 1.2+</li>
+<li>subversion (TortoiseSVN recommended for Windows)</li>
+<li>putty (Windows only - add to PATH environment variable)</li>
+<li>pyreadline (Windows only)</li>
+</ul>
+Optional:
+<ul>
+<li>matplotlib</li>
+<li>wireshark (add to PATH environment variable)</li>
+</ul>
+</ul>
+Back-end:
+<ul>
+<li>libreadline 5.0 + (plus development files)</li>
+<li>libslack</li>
+<li>openssh-server</li>
+<li>python 2.5+ (plus development files)</li>
+<li>python-xml 0.8+</li>
+<li>python-qt 4.4+</li>
+<li>scons 1.2+</li>
+<li>subversion</li>
+</ul>
+</P>
+
+<A NAME="3">3. Installing GINI 2.0</A>
+<P>
+</P>
+<A NAME="3.1">3.1 How do I install GINI 2.0?</A>
+<P>
+First, you need to create the directory where you want to install GINI, and then add the path of that directory as GINI_HOME to your environment variables.  You also need to add the path of GINI_HOME/bin to your PATH environment variable.  If you have not already downloaded the repository, do so in a different directory than GINI_HOME.  Navigate to the downloaded repository in a command line and execute the command depending on the installation you want:
+<ul>
+Full (Linux only):
+<ul>
+<li>scons install</li>
+</ul>
+Front-end:
+<ul>
+<li>cd frontend && scons install</li>
+</ul>
+Back-end (Linux only):
+<ul>
+<li>cd backend && scons install</li>
+</ul>
+</ul>
+</P>
+
+<A NAME="4">4. Starting gBuilder 2.0</A>
+<P>
+</P>
+<A NAME="4.1">4.1 How do I start gBuilder 2.0?</A>
+<P>
+If you are running Linux, typing 'gbuilder' in the command line should be sufficient.  On both Windows and Linux, double-clicking on the source file gbuilder.py or a shortcut to it should work fine.
+</P>
+
+<A NAME="5">5. Creating Topologies</A>
+<P>
+</P>
+<A NAME="5.1">5.1 How do I create a topology?</A>
+<P>
+You start by dragging the desired elements from the Drag & Drop Toolbar onto the canvas and connect them according to the connection rules.  See 5.2 for the connection rules.  To connect two elements, you must hold right-click over one element, drag it over to the element you want to connect it to and release it.  If you are not using the 'auto-generate IP/MAC addresses' option, the you will need to fill in the IP and MAC addresses of each applicable element manually and then compile.  Otherwise, you only need to compile the topology and if there are no errors, the topology can be started.
+</P>
+
+<A NAME="5.2">5.2 How do I save a topology?</A>
+<P>
+Generally, with a new topology you will be prompted to save at compilation, runtime, or when closing the program.  You can save manually under the 'File' menu.
+</P>
+
+<A NAME="5.3">5.3 Can I transfer my save files to another machine?</A>
+<P>
+Yes.  The save files should be readable on another machine and should load the same topology.  The properties of each device should also be the same as well.  Note that this does not include any changes made to the actual UML, that information is stored server-side and can be dealt with through the use of projects.
+</P>
+
+<A NAME="6">6. Starting Topologies</A>
+<P>
+</P>
+<A NAME="6.1">6.1 How do I start a topology?</A>
+<P>
+To do so, a server must be started beforehand.  See 6.2 for how to start a server.  You can then start a topology from the 'Run' menu, or press the toolbar button with the green arrow. 
+</P>
+
+<A NAME="6.2">6.2 How do I start a server?</A>
+<P>
+To do so, a username and hostname must be provided in the server options accessible from the 'Config' menu.  If you have not set up a passwordless ssh keypair, you will have to enter your password or passphrase to connect.  To find out more about ssh keypairs, see 6.3.  You can then start a server from the 'Run' menu, or press the toolbar button with the green arrow on the server.  
+</P>
+ 
+<A NAME="6.3">6.3 How do I set up ssh keypairs?</A>
+<P>
+Choose the case that best suits you.
+<br>
+<ul>
+1) The front-end and back-end are running on the same machine:
+    <ul>
+	<li>change directory to $HOME/.ssh</li>
+    <li>enter "ssh-keygen -t dsa" into the command line</li>
+    <li>enter "cat id_dsa.pub >> authorized_keys" into the command line</li>
+    </ul>
+	<br>
+2) The front-end and back-end are running on two different Linux machines:
+	<ul>
+    <li>change directory to $HOME/.ssh on the front-end</li>
+    <li>enter "ssh-keygen -t dsa" into the command line</li>
+    <li>enter "scp id_dsa.pub user@host1:.ssh/host2.pub" into the command line, where host1 is your back-end, host2 is your front-end and user is your username</li>
+    <li>change directory to $HOME/.ssh on the back-end</li>
+    <li>enter "cat host2.pub >> authorized_keys" into the command line</li>
+    </ul>
+	<br>
+3) The front-end is running on Windows:
+	<ul>
+    <li>change directory to $HOME/.ssh on the back-end</li>
+    <li>enter "ssh-keygen -t dsa" into the command line</li>
+    <li>enter "cat id_dsa.pub >> authorized_keys" into the command line</li>
+    <li>copy the file $HOME/.ssh/id_dsa to the front-end</li>
+    <li>download puttygen (http://www.chiark.greenend.org.uk/~sgtatham/putty/download.html)</li>
+    <li>load the file id_dsa into puttygen</li>
+    <li>choose 'Save private key' in puttygen</li>
+    <li>open putty</li>
+    <li>expand the 'SSH' category on the left</li>
+    <li>select 'Auth' and provide the .ppk file you saved earlier</li>
+    <li>scroll back up and select the 'Session' category on the left</li>
+    </ul>
+	<br>
+	<ul>
+    If you only use putty with this program:
+		<ul>
+        <li>select 'Default Settings' under 'Saved Sessions'</li>
+        <li>press the 'Save' button</li>
+        </ul>
+        Details: What you just did was specify a key that putty will attempt to use by default anytime you use putty for SSH.  This is useful in gBuilder if you frequently change the server location to machines that will authenticate you the same way, such as machines within a school computer lab.
+    <br><br>
+    Otherwise, you should use Sessions:
+		<ul>
+        <li>specify the Host Name you want to associate with this session</li>
+        <li>specify a meaningful Session Name</li>
+        <li>press the 'Save' button</li>
+        </ul>
+        Details: What you just did was create a putty session identified by the name you provided.  This session holds the Host Name you will connect to, as well as the key used to authenticate you.  The session name can then be provided in gBuilder, who will use it to connect to the back-end.  Note that when providing a session name in gBuilder, the server name will be ignored.
+	</ul>
+</ul>
+</P>
+ 
+<A NAME="7">7. Using Projects</A>
+<P>
+</P>
+<A NAME="7.1">7.1 What is a project?</A>
+<P>
+A project is used to specify where to load and store data on the server so that any changes made to UMLs can be reused between topologies.  
+</P>
+
+<A NAME="7.2">7.2 Can I transfer my project files to another machine?</A>
+<P>
+The short answer is yes.  The project files that gBuilder creates are simply files that store your username and hostname.  You can easily recreate this project on another machine by creating a project with the same name and the same server information.  Doing so will give you access to the same data stored on the server from that other machine.  Note that if you change the server information of a project, you will not have access to the same data.  On a related note, if you have transferred the project file to someone else, he or she will require access to the server under your username.
+</P>
+    </BODY>
+</HTML>

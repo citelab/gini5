@@ -12,7 +12,6 @@ share/
 root_fs_beta2
 .sconf_temp/
 .sconsign.dblite
-libslack-0.6/
 frontend/src/gbuilder/Core/paths.py
 .ctags*
 .tags*
@@ -24,3 +23,4 @@ tags
 backend/src/pox/ext/gini/samples/*.xml
 *.swp
 *.deb
+!frontend/doc/FAQ.html
