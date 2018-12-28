@@ -59,8 +59,8 @@ class Attachable(Device):
             if self.device_type == "yRouter":
                 command += "rxvt -T \"" + window_name + "\" -e " + screen_yrouter
             elif self.device_type == "UML":
-                command += "xterm -font 12x24 -title \"" + window_name + "\" -e  docker exec -it " + window_name + " sh"
+                command += "xterm -fa 'Monospace' -fs 14 -title \"" + window_name + "\" -e  docker exec -it " + window_name + " sh"
             else:
-                command += "xterm -font 12x24 -title \"" + window_name + "\" -e  screen -r " + window_name
+                command += "xterm -fa 'Monospace' -fs 14 -title \"" + window_name + "\" -e  screen -r " + window_name
 
         self.shell = subprocess.Popen(str(command), shell=True)

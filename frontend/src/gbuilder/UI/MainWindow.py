@@ -461,7 +461,7 @@ class MainWindow(Systray):
                 command += base
             command += tunnel + " -m \"" + startpath + "\""
         else:
-            command += "xterm -font 12x24 -title \"" + gserver + "\" -e " + base + tunnel + " \" " + server + "\""
+            command += "xterm -fa 'Monospace' -fs 14 -title \"" + gserver + "\" -e " + base + tunnel + " \" " + server + "\""
 
         self.server = subprocess.Popen(str(command), shell=True,preexec_fn=os.setpgrp)
 
