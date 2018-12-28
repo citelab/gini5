@@ -96,6 +96,13 @@ def createVS(myGINI, switchDir):
             runcmd = subprocess.Popen(command, shell=True, stdout=subprocess.PIPE)
             out,err = runcmd.communicate()
             if runcmd.returncode == 0:
+                undoOut.write(
+                    """for i in ` docker network inspect -f '{{range .Containers}}{{.Name}} {{end}}' %s`;
+                    do
+                    docker network disconnect -f %s $i;
+                    done;
+                    """ % (out, out)
+                )
                 undoOut.write("docker network remove %s\n" % out)
                 os.chmod(undoFile, 0755)
                 print "[OK]"
@@ -104,6 +111,13 @@ def createVS(myGINI, switchDir):
                 q = subprocess.Popen(command, shell=True, stdout=subprocess.PIPE)
                 out,err = q.communicate()
                 if q.returncode == 0:
+                    undoOut.write(
+                        """for i in ` docker network inspect -f '{{range .Containers}}{{.Name}} {{end}}' %s`;
+                        do
+                        docker network disconnect -f %s $i;
+                        done;
+                        """ % (out, out)
+                    )
                     undoOut.write("docker network remove %s\n" % out)
                     os.chmod(undoFile, 0755)
                     print "[OK]"
@@ -286,6 +300,13 @@ def createASwitch(rtname, swname, subnet, ofile):
     out,err = q.communicate()
     if q.returncode == 0:
         brname = "br-" + out[:12]
+        ofile.write(
+            """for i in ` docker network inspect -f '{{range .Containers}}{{.Name}} {{end}}' %s`;
+            do
+            docker network disconnect -f %s $i;
+            done;
+            """ % (out, out)
+        )
         ofile.write("docker network remove %s" % out)
         return swname, brname
     else:
@@ -294,6 +315,13 @@ def createASwitch(rtname, swname, subnet, ofile):
         out,err = q.communicate()
         if q.returncode == 0:
             brname = "br-" + out[:12]
+            ofile.write(
+                """for i in ` docker network inspect -f '{{range .Containers}}{{.Name}} {{end}}' %s`;
+                do
+                docker network disconnect -f %s $i;
+                done;
+                """ % (out, out)
+            )
             ofile.write("\ndocker network remove %s\n" % out)
             return swname, brname
         return None, None
@@ -500,22 +528,23 @@ def createVM(myGINI, options):
         sname, ip = getSwitch2Connect(myGINI, uml)
 
         print "Sname " + sname + " IP " + ip
+        baseScreenCommand = "screen -d -m -L -S %s " % uml.name
 
         if (sname != "fail"):
             # create command line
-            command = "docker run -id --privileged --name %s " % uml.name
+            command = "docker run -i --privileged --name %s " % uml.name
             command += "--network %s " % sname
             command += "--ip %s" % ip
             command += " alpine "
 
-            print "<<<<<<< " + command
+            print "<<<<<<< " + baseScreenCommand + command
 
-            runcmd = subprocess.Popen(command, shell=True, stdout=subprocess.PIPE)
+            runcmd = subprocess.Popen(baseScreenCommand + command, shell=True, stdout=subprocess.PIPE)
             out,err = runcmd.communicate()
 
             if runcmd.returncode == 0:
-                stopOut.write("docker kill %s" % out)
-                stopOut.write("docker rm %s" % out)
+                stopOut.write("docker kill %s\n\n" % uml.name)
+                stopOut.write("docker rm %s\n\n" % uml.name)
                 stopOut.close()
         else:
             print "No Target found for Machine: %s " % uml.name
@@ -525,14 +554,14 @@ def createVM(myGINI, options):
         #
         for nwIf in uml.interfaces:
             for route in nwIf.routes:
-                command = "docker exec -d %s " % uml.name
+                command = "docker exec %s " % uml.name
                 command += "route add -%s %s " % (route.type, route.dest)
                 command += "netmask %s " % route.netmask
                 if route.gw:
                     command += "gw %s " % route.gw
 
-                print "Command:  " + command
-                subprocess.call(command, shell=True)
+                print "Command:  " + baseScreenCommand + command
+                subprocess.call(baseScreenCommand + command, shell=True)
             #end each route
         #end each interface
         print "[OK]"
