@@ -25,7 +25,6 @@ MCONSOLE_PROG_BIN = MCONSOLE_PROG
 SRC_FILENAME = "%s/gini_setup" % os.environ["GINI_HOME"] # setup file name
 GINI_TMP_FILE = ".gini_tmp_file" # tmp file used when checking alive UML
 nodes = []
-tapNameMap = dict()
 
 # set this switch True if running gloader without gbuilder
 independent = False
@@ -336,19 +335,16 @@ def setupTapInterface(rtname, swname, brname, ofile):
 
     x,rnum = rtname.split("_")
     x,snum = swname.split("_")
-    tapKey = "%s-%s" % (rnum, snum)
-    if tapNameMap.get(tapKey) is None:
-        tapNameMap[tapKey] = "tap" + str(len(tapNameMap))
-    tapName = tapNameMap[tapKey]
+    tapname = "tap" + rnum + snum
 
-    subprocess.call("ip tuntap add mode tap dev %s" % tapName, shell=True)
-    subprocess.call("ip link set %s up" % tapName, shell=True)
+    subprocess.call("ip tuntap add mode tap dev %s" % tapname, shell=True)
+    subprocess.call("ip link set %s up" % tapname, shell=True)
 
-    subprocess.call("brctl addif %s %s" % (brname, tapName), shell=True)
+    subprocess.call("brctl addif %s %s" % (brname, tapname), shell=True)
 
-    ofile.write("\nip link del %s\n" % tapName)
+    ofile.write("\nip link del %s\n" % tapname)
 
-    return tapName
+    return tapname
 
 
 def createVR(myGINI, options):
@@ -389,7 +385,7 @@ def createVR(myGINI, options):
                     # If so, this router can just tap into it
                     x,rnum = router.name.split("_")
                     x,snum = swname.split("_")
-                    scheck = "Switch_" + rnum + snum
+                    scheck = "Switch_" + snum + rnum
                     brname = findBridgeName(scheck)
                     if (brname == None):
                         swname, brname = createASwitch(router.name, swname, nwIf.network, stopOut)
@@ -980,8 +976,6 @@ def destroyVWR(wrouters, routerDir):
     return True
 
 def destroyVR(routers, routerDir):
-    tapNameMap.clear()
-
     for router in routers:
         print "Stopping Router %s..." % router.name
         # get the pid file
