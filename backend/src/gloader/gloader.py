@@ -389,7 +389,7 @@ def createVR(myGINI, options):
                     # If so, this router can just tap into it
                     x,rnum = router.name.split("_")
                     x,snum = swname.split("_")
-                    scheck = "Switch_" + snum + rnum
+                    scheck = "Switch_" + rnum + snum
                     brname = findBridgeName(scheck)
                     if (brname == None):
                         swname, brname = createASwitch(router.name, swname, nwIf.network, stopOut)
