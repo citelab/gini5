@@ -25,6 +25,7 @@ MCONSOLE_PROG_BIN = MCONSOLE_PROG
 SRC_FILENAME = "%s/gini_setup" % os.environ["GINI_HOME"] # setup file name
 GINI_TMP_FILE = ".gini_tmp_file" # tmp file used when checking alive UML
 nodes = []
+tapNameMap = dict()
 
 # set this switch True if running gloader without gbuilder
 independent = False
@@ -335,16 +336,19 @@ def setupTapInterface(rtname, swname, brname, ofile):
 
     x,rnum = rtname.split("_")
     x,snum = swname.split("_")
-    tapname = "tap" + rnum + snum
+    tapKey = "%s-%s" % (rnum, snum)
+    if tapNameMap.get(tapKey) is None:
+        tapNameMap[tapKey] = "tap" + str(len(tapNameMap))
+    tapName = tapNameMap[tapKey]
 
-    subprocess.call("ip tuntap add mode tap dev %s" % tapname, shell=True)
-    subprocess.call("ip link set %s up" % tapname, shell=True)
+    subprocess.call("ip tuntap add mode tap dev %s" % tapName, shell=True)
+    subprocess.call("ip link set %s up" % tapName, shell=True)
 
-    subprocess.call("brctl addif %s %s" % (brname, tapname), shell=True)
+    subprocess.call("brctl addif %s %s" % (brname, tapName), shell=True)
 
-    ofile.write("\nip link del %s\n" % tapname)
+    ofile.write("\nip link del %s\n" % tapName)
 
-    return tapname
+    return tapName
 
 
 def createVR(myGINI, options):
@@ -976,6 +980,8 @@ def destroyVWR(wrouters, routerDir):
     return True
 
 def destroyVR(routers, routerDir):
+    tapNameMap.clear()
+
     for router in routers:
         print "Stopping Router %s..." % router.name
         # get the pid file
