@@ -267,7 +267,10 @@ def findHiddenSwitch(rtname, swname):
 
     x,rnum = rtname.split("_")
     x,snum = swname.split("_")
-    swname = "Switch_" + rnum + snum
+    if x != "Router":
+        swname = "Switch_r%su%s" % (rnum, snum)
+    else:
+        swname = "Switch_r%sr%s" % (rnum, snum)
 
     command = """docker network inspect %s --format='{{.Id}}'""" % swname
     q = subprocess.Popen(command, shell=True, stdout=subprocess.PIPE)
@@ -293,7 +296,10 @@ def createASwitch(rtname, swname, subnet, ofile):
 
     x,rnum = rtname.split("_")
     x,snum = swname.split("_")
-    swname = "Switch_" + rnum + snum
+    if x != "Router":
+        swname = "Switch_r%su%s" % (rnum, snum)
+    else:
+        swname = "Switch_r%sr%s" % (rnum, snum)
 
     command = "docker network create %s --subnet %s/24" % (swname, subnet)
     q = subprocess.Popen(command, shell=True, stdout=subprocess.PIPE)
@@ -335,7 +341,14 @@ def setupTapInterface(rtname, swname, brname, ofile):
 
     x,rnum = rtname.split("_")
     x,snum = swname.split("_")
-    tapname = "tap" + rnum + snum
+    if x != "Router":
+        tapKey = "Switch_r%su%s" % (rnum, snum)
+    else:
+        tapKey = "Switch_r%sr%s" % (rnum, snum)
+
+    if tapNameMap.get(tapKey) is None:
+        tapNameMap[tapKey] = "tap" + str(len(tapNameMap))
+    tapName = tapNameMap[tapKey]
 
     subprocess.call("ip tuntap add mode tap dev %s" % tapname, shell=True)
     subprocess.call("ip link set %s up" % tapname, shell=True)
@@ -385,7 +398,7 @@ def createVR(myGINI, options):
                     # If so, this router can just tap into it
                     x,rnum = router.name.split("_")
                     x,snum = swname.split("_")
-                    scheck = "Switch_" + snum + rnum
+                    scheck = "Switch_r%sr%s" % (snum, rnum)
                     brname = findBridgeName(scheck)
                     if (brname == None):
                         swname, brname = createASwitch(router.name, swname, nwIf.network, stopOut)
@@ -394,6 +407,7 @@ def createVR(myGINI, options):
                             return False
                 else:
                     # We are connected to a machine
+
                     swname, brname = createASwitch(router.name, swname, nwIf.network, stopOut)
                     if swname == None:
                         print "[Failed]"
