@@ -348,7 +348,7 @@ def setupTapInterface(rtname, swname, brname, ofile):
         tapKey = "Switch_r%sr%s" % (rnum, snum)
 
     if tapNameMap.get(tapKey) is None:
-        tapNameMap[tapKey] = "tap" + str(len(tapNameMap))
+        tapNameMap[tapKey] = "tap" + str(len(tapNameMap)+1)
     tapName = tapNameMap[tapKey]
 
     subprocess.call("ip tuntap add mode tap dev %s" % tapName, shell=True)
@@ -567,18 +567,29 @@ def createVM(myGINI, options):
 
         # Setup the network inside the machine..
         #
+        time.sleep(1)
+        startOut = open("startit.sh", "w")
+        startOut.write("#!/bin/bash\n")
         for nwIf in uml.interfaces:
             for route in nwIf.routes:
+
                 command = "docker exec %s " % uml.name
                 command += "route add -%s %s " % (route.type, route.dest)
                 command += "netmask %s " % route.netmask
                 if route.gw:
                     command += "gw %s " % route.gw
 
-                print "Command:  " + baseScreenCommand + command
-                subprocess.call(baseScreenCommand + command, shell=True)
+                print "Command: " + command
+                # if subprocess.call(command, shell=True) != 0:
+                #     print "Failed"
+                startOut.write(command + "\n")
             #end each route
         #end each interface
+
+        startOut.close()
+        os.chmod("startit.sh", 0755)
+        system("./startit.sh")
+
         print "[OK]"
 
         stopOut.close()
