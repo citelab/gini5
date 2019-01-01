@@ -536,11 +536,31 @@ def createVM(myGINI, options):
         # Store current and go into the sub directory...
         oldDir = os.getcwd()
         os.chdir(subUMLDir)
+
+        # Write an init script to run at docker startup
+        startOut = open("entrypoint.sh", "w")
+        startOut.write("#!/bin/ash\n\n")
+        for nwIf in uml.interfaces:
+            for route in nwIf.routes:
+                command = "route add -%s %s " % (route.type, route.dest)
+                command += "netmask %s " % route.netmask
+                if route.gw:
+                    command += "gw %s " % route.gw
+                startOut.write(command + "\n")
+            #end each route
+        #end each interface
+
         stopOut = open("stopit.sh", "w")
         stopOut.write("#!/bin/bash\n")
         # Get switch to connect
         print "Before get "
         sname, ip = getSwitch2Connect(myGINI, uml)
+
+        # Export command prompt for VM, start shell inside docker container
+        startOut.write("\nexport PS1='root@%s >> '\n" % ip)
+        startOut.write("/bin/ash\n")
+        startOut.close()
+        os.chmod("entrypoint.sh", 0755)
 
         print "Sname " + sname + " IP " + ip
         baseScreenCommand = "screen -d -m -L -S %s " % uml.name
@@ -548,6 +568,8 @@ def createVM(myGINI, options):
         if (sname != "fail"):
             # create command line
             command = "docker run -i --privileged --name %s " % uml.name
+            command += "-v %s/data/%s:/root " % (os.environ["GINI_HOME"], uml.name)
+            command += "--entrypoint /root/entrypoint.sh -it "
             command += "--network %s " % sname
             command += "--ip %s" % ip
             command += " alpine "
@@ -564,31 +586,6 @@ def createVM(myGINI, options):
         else:
             print "No Target found for Machine: %s " % uml.name
             return False
-
-        # Setup the network inside the machine..
-        #
-        time.sleep(1)
-        startOut = open("startit.sh", "w")
-        startOut.write("#!/bin/bash\n")
-        for nwIf in uml.interfaces:
-            for route in nwIf.routes:
-
-                command = "docker exec %s " % uml.name
-                command += "route add -%s %s " % (route.type, route.dest)
-                command += "netmask %s " % route.netmask
-                if route.gw:
-                    command += "gw %s " % route.gw
-
-                print "Command: " + command
-                # if subprocess.call(command, shell=True) != 0:
-                #     print "Failed"
-                startOut.write(command + "\n")
-            #end each route
-        #end each interface
-
-        startOut.close()
-        os.chmod("startit.sh", 0755)
-        system("./startit.sh")
 
         print "[OK]"
 
