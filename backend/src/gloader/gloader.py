@@ -520,6 +520,7 @@ def  getSwitch2Connect(myGINI, uml):
 #end - getSwitch2Connect
 
 
+
 def createVM(myGINI, options):
     "create UML config file, and start the UML"
 
@@ -541,17 +542,10 @@ def createVM(myGINI, options):
         startOut.write("#!/bin/ash\n\n")
         for nwIf in uml.interfaces:
             for route in nwIf.routes:
-
-                # command = "docker exec %s " % uml.name
-                command = ""
-                command += "route add -%s %s " % (route.type, route.dest)
+                command = "route add -%s %s " % (route.type, route.dest)
                 command += "netmask %s " % route.netmask
                 if route.gw:
                     command += "gw %s " % route.gw
-
-                print "Command: " + command
-                # if subprocess.call(command, shell=True) != 0:
-                #     print "Failed"
                 startOut.write(command + "\n")
             #end each route
         #end each interface
