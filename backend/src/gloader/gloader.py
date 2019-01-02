@@ -102,10 +102,7 @@ def createVS(myGINI, switchDir):
                 undoOut.close()
                 continue
 
-            print subnet
-
             command = "docker network create %s --subnet %s/24" % (switch.name, subnet)
-            print "Creating switch..." + command
             runcmd = subprocess.Popen(command, shell=True, stdout=subprocess.PIPE)
             out,err = runcmd.communicate()
             if runcmd.returncode == 0:
