@@ -26,6 +26,8 @@ SRC_FILENAME = "%s/gini_setup" % os.environ["GINI_HOME"] # setup file name
 GINI_TMP_FILE = ".gini_tmp_file" # tmp file used when checking alive UML
 nodes = []
 tapNameMap = dict()
+subnetMap = dict()
+dockerNetworkNameMap = dict()
 
 # set this switch True if running gloader without gbuilder
 independent = False
@@ -93,10 +95,23 @@ def createVS(myGINI, switchDir):
 
         subnet = findSubnet4Switch(myGINI, switch.name)
         if (subnet != ""):
+            # Check if the network is already created under another switch name
+            if subnetMap.get(subnet):
+                dockerNetworkNameMap[switch.name] = subnetMap[subnet]
+                os.chmod(undoFile, 0755)
+                undoOut.close()
+                continue
+
+            print subnet
+
             command = "docker network create %s --subnet %s/24" % (switch.name, subnet)
+            print "Creating switch..." + command
             runcmd = subprocess.Popen(command, shell=True, stdout=subprocess.PIPE)
             out,err = runcmd.communicate()
             if runcmd.returncode == 0:
+
+                subnetMap[subnet] = switch.name
+
                 undoOut.write(
                     """for i in ` docker network inspect -f '{{range .Containers}}{{.Name}} {{end}}' %s`;
                     do
@@ -123,9 +138,15 @@ def createVS(myGINI, switchDir):
                     os.chmod(undoFile, 0755)
                     print "[OK]"
                 else:
+                    print "first case"
                     print "[Failed]"
+                    undoOut.close()
+                    return False
         else:
+            print "no subnet"
             print "[Failed]"
+            undoOut.close()
+            return False
 
         os.chmod(undoFile, 0755)
         undoOut.close()
@@ -484,6 +505,14 @@ def createVR(myGINI, options):
 
     return True
 
+
+def getDockerNetworkName(switch_name):
+    if dockerNetworkNameMap.get(switch_name):
+        return dockerNetworkNameMap[switch_name]
+    else:
+        return switch_name
+
+
 def checkSwitch(myGINI, name):
 
     for switch in myGINI.switches:
@@ -501,12 +530,11 @@ def checkRouter(myGINI, name):
 
 
 def  getSwitch2Connect(myGINI, uml):
-
     # one of the interfaces is
     for nwi in uml.interfaces:
         target = nwi.target
         if checkSwitch(myGINI, target):
-            return target, nwi.ip
+            return getDockerNetworkName(target), nwi.ip
 
     for nwi in uml.interfaces:
         target = nwi.target
@@ -919,6 +947,7 @@ def destroyGINI(myGINI, options):
     result = True
 
     tapNameMap.clear()
+    dockerNetworkNameMap.clear()
 
     try:
         print "\nTerminating UMLs..."
