@@ -135,12 +135,10 @@ def createVS(myGINI, switchDir):
                     os.chmod(undoFile, 0755)
                     print "[OK]"
                 else:
-                    print "first case"
                     print "[Failed]"
                     undoOut.close()
                     return False
         else:
-            print "no subnet"
             print "[Failed]"
             undoOut.close()
             return False
