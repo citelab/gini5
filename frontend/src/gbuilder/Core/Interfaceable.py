@@ -290,4 +290,4 @@ class Interfaceable(Attachable):
                                 interfaceInfo += "\t\t\t\t\t" + pr + ":" + val + "\n"
                 else:
                     interfaceInfo += "\t\t\t" + prop + ":" + value + "\n"
-            return devInfo + interfaceInfo
+        return devInfo + interfaceInfo
