@@ -318,10 +318,24 @@ def createASwitch(rtname, swname, subnet, ofile):
     else:
         swname = "Switch_r%sr%s" % (rnum, snum)
 
+    # Similar to switch devices, check if the network is already created under another name
+    if subnetMap.get(subnet):
+        dockerNetworkNameMap[swname] = subnetMap[subnet]
+        swname = subnetMap[subnet]
+
+        command = "docker network inspect %s --format='{{.Id}}'" % swname
+        q = subprocess.Popen(command, shell=True, stdout=subprocess.PIPE)
+        out, err = q.communicate()
+        if q.returncode == 0:
+            brname = "br-" + out[:12]
+            return swname, brname
+
     command = "docker network create %s --subnet %s/24" % (swname, subnet)
     q = subprocess.Popen(command, shell=True, stdout=subprocess.PIPE)
     out,err = q.communicate()
     if q.returncode == 0:
+        subnetMap[subnet] = swname
+
         brname = "br-" + out[:12]
         ofile.write(
             """for i in ` docker network inspect -f '{{range .Containers}}{{.Name}} {{end}}' %s`;
@@ -455,6 +469,7 @@ def createVR(myGINI, options):
                         port = None
                         try:
                             # Determine PID of controller and find the netstat entry associated with that PID
+                            print "%s/%s/%s.pid" % (options.controllerDir, controller.name, controller.name)
                             pid_file = open("%s/%s/%s.pid" % (options.controllerDir, controller.name, controller.name), "r")
                             cmd = "netstat -tlpn | egrep %s/" % pid_file.read().strip()
 
@@ -537,7 +552,7 @@ def  getSwitch2Connect(myGINI, uml):
             # create a 'hidden' switch because docker needs a
             # switch to connect to the router
             swname = findHiddenSwitch(target, uml.name)
-            return swname, nwi.ip
+            return getDockerNetworkName(swname), nwi.ip
 
     return ""
 #end - getSwitch2Connect
@@ -942,6 +957,7 @@ def destroyGINI(myGINI, options):
     result = True
 
     tapNameMap.clear()
+    subnetMap.clear()
     dockerNetworkNameMap.clear()
 
     try:
