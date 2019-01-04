@@ -4,7 +4,7 @@ from Core.Item import nodeTypes
 from Core.Device import Device
 from Core.globals import options, environ, mainWidgets
 from PyQt4 import QtCore
-import os, re
+import os, re, traceback
 
 class Compiler:
     def __init__(self, device_list, filename):
@@ -81,8 +81,10 @@ class Compiler:
 
             self.output.write("</gloader>\n")
             self.output.close()
-        except Exception:
+        except Exception as e:
+            self.errors += 1
             self.log.append("Runtime error when compiling.")
+            traceback.print_exc()
         finally:
             self.log.append("Compile finished with " + str(self.errors) + \
                         " error(s) and " + str(self.warnings) + " warning(s).\n")
@@ -157,8 +159,8 @@ class Compiler:
             for edge in edges:
                 if edge.dest.device_type == "Router" or edge.source.device_type == "Router":
                     isConnectedToRouter = True
-            if not isConnectedToRouter:
-                self.generateGenericError(subnet, " must be connected to at least 1 router.")
+            if not isConnectedToRouter and self.compile_list["Router"]:
+                self.generateGenericWarning(subnet, " must be connected to at least 1 router.")
 
             for prop in ["subnet", "mask"]:
                 value = subnet.getProperty(prop)
