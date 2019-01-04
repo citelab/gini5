@@ -30,65 +30,67 @@ class Compiler:
         """
         Compile the topology into xml.
         """
-        if options["autogen"]:
-            self.log.append("Auto-generate IP/MAC Addresses is ON.")
-        else:
-            self.log.append("Auto-generate IP/MAC Addresses is OFF.")
-        if options["autorouting"]:
-            self.log.append("Auto-routing is ON.")
-        else:
-            self.log.append("Auto-routing is OFF.")
+        try:
+            if options["autogen"]:
+                self.log.append("Auto-generate IP/MAC Addresses is ON.")
+            else:
+                self.log.append("Auto-generate IP/MAC Addresses is OFF.")
+            if options["autorouting"]:
+                self.log.append("Auto-routing is ON.")
+            else:
+                self.log.append("Auto-routing is OFF.")
 
-        self.output.write("<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n")
-        self.output.write("<!DOCTYPE gloader SYSTEM \"" + os.environ["GINI_SHARE"] + "/gloader/gloader.dtd"+"\">\n")
-        self.output.write("<gloader>\n\n")
+            self.output.write("<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n")
+            self.output.write("<!DOCTYPE gloader SYSTEM \"" + os.environ["GINI_SHARE"] + "/gloader/gloader.dtd"+"\">\n")
+            self.output.write("<gloader>\n\n")
 
-        if options["autogen"]:
-            self.autogen_subnet()
-            self.autogen_switch()
+            if options["autogen"]:
+                self.autogen_subnet()
+                self.autogen_switch()
 
-        self.compile_subnet()
-        self.compile_switch()
-        self.switch_pass_mask()
+            self.compile_subnet()
+            self.compile_switch()
+            self.switch_pass_mask()
 
-        if options["autogen"]:
-            self.autogen_wireless_access_point()
-        self.compile_wireless_access_point()
+            if options["autogen"]:
+                self.autogen_wireless_access_point()
+            self.compile_wireless_access_point()
 
-        if options["autogen"]:
-            self.autogen_router()
-            self.autogen_yRouter()
-            self.autogen_UML()
-            self.autogen_REALM()
-            self.autogen_mobile()
+            if options["autogen"]:
+                self.autogen_router()
+                self.autogen_yRouter()
+                self.autogen_UML()
+                self.autogen_REALM()
+                self.autogen_mobile()
 
-        self.routing_table_clear()
-        if options["autorouting"]:
-            self.routing_table_router()
-            #self.routing_table_wireless_access_point()
-            self.routing_table_yRouter()
-            self.routing_table_entry()
-            self.routing_table_uml()
-            #self.routing_table_mobile()
+            self.routing_table_clear()
+            if options["autorouting"]:
+                self.routing_table_router()
+                #self.routing_table_wireless_access_point()
+                self.routing_table_yRouter()
+                self.routing_table_entry()
+                self.routing_table_uml()
+                #self.routing_table_mobile()
 
-        self.compile_router()
-        self.compile_yRouter()
-        self.compile_UML()
-        self.compile_REALM()
-        self.compile_mobile()
-        self.compile_OpenFlow_Controller()
+            self.compile_router()
+            self.compile_yRouter()
+            self.compile_UML()
+            self.compile_REALM()
+            self.compile_mobile()
+            self.compile_OpenFlow_Controller()
 
-        self.output.write("</gloader>\n")
-        self.output.close()
-
-        self.log.append("Compile finished with " + str(self.errors) + \
+            self.output.write("</gloader>\n")
+            self.output.close()
+        except Exception:
+            self.log.append("Runtime error when compiling.")
+        finally:
+            self.log.append("Compile finished with " + str(self.errors) + \
                         " error(s) and " + str(self.warnings) + " warning(s).\n")
+            if self.errors:
+                os.remove(self.filename)
+                return ""
 
-        if self.errors:
-            os.remove(self.filename)
-            return ""
-
-        return self.filename
+            return self.filename
 
     def autogen_subnet(self):
         """
@@ -150,6 +152,13 @@ class Compiler:
             edges = subnet.edges()
             if len(edges) < 1:
                 self.generateConnectionWarning(subnet, 1)
+
+            isConnectedToRouter = False
+            for edge in edges:
+                if edge.dest.device_type == "Router" or edge.source.device_type == "Router":
+                    isConnectedToRouter = True
+            if not isConnectedToRouter:
+                self.generateGenericError(subnet, " must be connected to at least 1 router.")
 
             for prop in ["subnet", "mask"]:
                 value = subnet.getProperty(prop)
@@ -636,6 +645,15 @@ class Compiler:
             self.output.write("</vofc>\n\n")
 
 
+    def generateGenericError(self, device, message):
+        """
+        Generate a generic compile error
+        """
+        self.errors += 1
+        message = ' '.join(("Error:", device.getName(), message))
+        self.log.append(message)
+
+
     def generateGenericWarning(self, device, message):
         """
         Generate a compile warning.
@@ -643,8 +661,6 @@ class Compiler:
         self.warnings += 1
         message = ' '.join(("Warning:", device.getName(), message))
         self.log.append(message)
-
-
 
     def pass_mask(self, node):
         """
