@@ -409,7 +409,6 @@ class Compiler:
                 value = interface[QtCore.QString(prop)]
             except:
                 self.generateError(device, prop, "missing", interface)
-         	return
 
             if not value:
                 self.generateError(device, prop, "empty", interface)
@@ -762,12 +761,12 @@ class Compiler:
         """
         Add routing entries for Routers and yRouters.
         """
-        for uml in self.compile_list["Router"]:
+        for router in self.compile_list["Router"]:
             for subnet in self.compile_list["Subnet"]:
-                uml.addRoutingEntry(subnet.getProperty("subnet"))
-	for uml in self.compile_list["yRouter"]:
-	    for subnet in self.compile_list["Subnet"]:
-		uml.addRoutingEntry(subnet.getProperty("subnet"))
+                router.addRoutingEntry(subnet.getProperty("subnet"))
+        for yRouter in self.compile_list["yRouter"]:
+            for subnet in self.compile_list["Subnet"]:
+                yRouter.addRoutingEntry(subnet.getProperty("subnet"))
 
     def findAdjacentRouters(self, device):
         """

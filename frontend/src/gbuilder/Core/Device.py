@@ -10,6 +10,6 @@ class Device(Node):
         """
         Node.__init__(self)
         self.connection = []
-   
 
-	
+    def __str__(self):
+        return "Device: %s" % self.getName()
