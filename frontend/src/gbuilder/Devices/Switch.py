@@ -35,6 +35,7 @@ class Switch(Device):
 
     def getGateway(self):
         return self.gateway[QtCore.QString("ipv4")]
+
     """
     If the switch is connected to a subnet, return the opposite node
     to which that subnet is connected, if any

@@ -5,11 +5,11 @@ from Core.Interfaceable import Interfaceable
 ##
 # Class: the Subnet
 class Subnet(Device):
-    device_type="Subnet"    
+    device_type="Subnet"
 
     def __init__(self):
         Device.__init__(self)
-                
+
         self.num_interface=0
         self.setProperty("subnet", "")
         self.setProperty("mask", "")
@@ -34,7 +34,7 @@ class Subnet(Device):
                 node1.removeInterface(node2)
             if isinstance(node2, Interfaceable):
                 node2.removeInterface(node1)
-            
+
         Device.removeEdge(self, edge)
 
     # Return the other node to which the subnet is connected, if any
@@ -48,4 +48,3 @@ class Subnet(Device):
         Device.setProperty(self, prop, value)
         if prop == "subnet":
             self.setToolTip(self.getName() + "\nSubnet: " + value)
-

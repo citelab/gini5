@@ -562,4 +562,4 @@ class Node(DropItem, Item):
         for prop, value in self.properties.iteritems():
             logical += "\t" + prop + ":" + str(value) + "\n"
 
-            return graphical + logical
+        return str(graphical + logical)
