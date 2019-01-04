@@ -80,7 +80,6 @@ class Interfaceable(Attachable):
         """
         for interface in self.interfaces:
             target = interface[QtCore.QString("target")]
-            print target
             if target.device_type == "Switch":
                 return interface
             elif target.device_type == "Router" and node.device_type == "Switch":
