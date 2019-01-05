@@ -1,12 +1,12 @@
-from UML import *
+from Mach import *
 from PyQt4.QtCore import QPoint
 from UI.StatsWindow import *
 
-class Mobile(UML):
+class Mobile(Mach):
     device_type="Mobile"
  
     def __init__(self):
-        UML.__init__(self)
+        Mach.__init__(self)
         
         self.next_interface_number=0
         

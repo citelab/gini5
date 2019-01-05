@@ -42,10 +42,10 @@ class Program:
                                   dest="routerDir",\
                                   default=".",\
                                   help="Specify the router configuration directory")
-        self.optParser.add_option("-u", "--uml-dir", \
-                                  dest="umlDir",\
+        self.optParser.add_option("-u", "--mach-dir", \
+                                  dest="machDir",\
                                   default="",\
-                                  help="Specify the UML configuration directory")
+                                  help="Specify the Mach configuration directory")
         self.optParser.add_option("-o", "--controller-dir", \
                                   dest="controllerDir",\
                                   default="",\
@@ -66,7 +66,7 @@ class Program:
         usageString += " (-d [gloader-xml-file] | -c [gloader-xml-file])"
         usageString += " [-s switch-dir]"
         usageString += " [-r router-dir]"
-        usageString += " [-u uml-dir]"
+        usageString += " [-u mach-dir]"
         usageString += " [-b bin-dir]"
         usageString += " [-k]"
         return usageString
@@ -117,7 +117,7 @@ class Program:
                 self.options.xmlFile = lines[0].strip()
                 self.options.switchDir = lines[1].strip()
                 self.options.routerDir = lines[2].strip()
-                self.options.umlDir = lines[3].strip()
+                self.options.machDir = lines[3].strip()
                 self.options.binDir = lines[4].strip()
                 self.options.controllerDir = lines[5].strip()
                 setupFileHandle.close()

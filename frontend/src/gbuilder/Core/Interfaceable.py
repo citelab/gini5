@@ -242,7 +242,7 @@ class Interfaceable(Attachable):
             device, interface = self.searchSubnet(subnet)
             if interface:
                 target = interface[QtCore.QString("target")]
-                if self.device_type != "UML" and device.device_type == "Router" and target.device_type == "Switch":
+                if self.device_type != "Mach" and device.device_type == "Router" and target.device_type == "Switch":
                     iface = device.getInterface(target)
                     if iface:
                         gateway = iface[QtCore.QString("ipv4")]
@@ -251,7 +251,7 @@ class Interfaceable(Attachable):
                                     subnet,
                                     target)
                 elif interface[QtCore.QString("subnet")] == subnet \
-                    and self.device_type == "UML" or self.device_type == "REALM":
+                    and self.device_type == "Mach" or self.device_type == "REALM":
                     self.addEntry(interface[QtCore.QString("mask")],
                                   "",
                                   " ",

@@ -211,8 +211,8 @@ class ReceiveInitStartCommand(Command):
             recovery = True
             return
 
-        # clear old uml_mconsole files
-        subprocess.call(["/bin/bash", "-c", "rm -rf ./.uml/*"])
+        # clear old mach_mconsole files
+        subprocess.call(["/bin/bash", "-c", "rm -rf ./.mach/*"])
 
         # make data dir if necessary
         if not os.access(datadir,os.F_OK):
@@ -397,10 +397,10 @@ class ReceiveRestartCommand(Command):
         print "restarting " + self.args + "..."
         if self.args.find("Router") == 0:
             self.restartRouter()
-        elif self.args.find("UML") == 0 or self.args.find("Mobile") == 0:
-            self.restartUML()
+        elif self.args.find("Mach") == 0 or self.args.find("Mobile") == 0:
+            self.restartMach()
         elif self.args.find("REALM") == 0:
-            self.restartUML()
+            self.restartMach()
 
         elif self.args.find("Switch") == 0:
             self.restartSwitch()
@@ -424,12 +424,12 @@ class ReceiveRestartCommand(Command):
             print "failed to restart " + self.args
         os.chdir(olddir)
 
-    def restartUML(self):
-        subprocess.call(["/bin/bash", "-c", "cp %s/tmp/UML_bak/FE* %s/tmp" % (os.environ["GINI_HOME"], os.environ["GINI_HOME"])])
-        if subprocess.call(["/bin/bash", "-c", "uml_mconsole " + self.args + " reboot"], stdout=open("/dev/null", "w"), stderr=open("/dev/null", "w")):
-            umldir = datadir + "/" + self.args
+    def restartMach(self):
+        subprocess.call(["/bin/bash", "-c", "cp %s/tmp/Mach_bak/FE* %s/tmp" % (os.environ["GINI_HOME"], os.environ["GINI_HOME"])])
+        if subprocess.call(["/bin/bash", "-c", "mach_mconsole " + self.args + " reboot"], stdout=open("/dev/null", "w"), stderr=open("/dev/null", "w")):
+            machdir = datadir + "/" + self.args
             olddir = os.getcwd()or self.args.find("Mobile") == 0 or self.args.find("REALM") == 0
-            os.chdir(umldir)
+            os.chdir(machdir)
             subprocess.call(["/bin/bash", "-c", "./startit.sh"])
             os.chdir(olddir)
 
@@ -461,11 +461,11 @@ class ReceiveTerminateCommand(Command):
         print "terminating " + self.args + "..."
         if self.args.find("Router") == 0:
             self.terminateRouter()
-        elif self.args.find("UML") == 0 or self.args.find("Mobile") == 0 or self.args.find("REALM") == 0:
-            self.terminateUML()
+        elif self.args.find("Mach") == 0 or self.args.find("Mobile") == 0 or self.args.find("REALM") == 0:
+            self.terminateMach()
 
-    def terminateUML(self):
-        subprocess.call(["/bin/bash", "-c", "uml_mconsole " + self.args + " cad"], stdout=open("/dev/null", "w"))
+    def terminateMach(self):
+        subprocess.call(["/bin/bash", "-c", "mach_mconsole " + self.args + " cad"], stdout=open("/dev/null", "w"))
 
     def terminateRouter(self):
         routerdir = datadir + "/" + self.args

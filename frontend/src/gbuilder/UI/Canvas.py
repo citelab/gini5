@@ -12,7 +12,7 @@ import os.path
 realMnumber=3
 deviceTypes = {"Bridge":Bridge, "Firewall":Firewall, "Hub":Hub, "Mobile":Mobile,
                "Router":Router, "Subnet":Subnet, "Switch":Switch, "REALM":REALM,
-               "UML":UML, "Wireless_access_point":Wireless_access_point, "yRouter":yRouter, 'OpenFlow_Controller': OpenFlow_Controller}
+               "Mach":Mach, "Wireless_access_point":Wireless_access_point, "yRouter":yRouter, 'OpenFlow_Controller': OpenFlow_Controller}
 
 class View(QtGui.QGraphicsView):
     def __init__(self, parent = None):
@@ -189,9 +189,9 @@ class View(QtGui.QGraphicsView):
 
                 def isValid(dest, source):
                     if dest.device_type in connection_rule[source.device_type]:
-                        if dest.device_type == "UML":
+                        if dest.device_type == "Mach":
                             if len(dest.edges()) == 1:
-                                return "UML cannot have more than one connection!"
+                                return "Mach cannot have more than one connection!"
                         elif dest.device_type == "REALM":
                             if len(dest.edges()) == 1:
                                 return "REALM cannot have more than one connection!"
@@ -397,7 +397,7 @@ class Scene(QtGui.QGraphicsScene):
             interfaces.setCurrent(item)
             routes.setCurrent(item)
             properties.display()
-            if type(item) == "Router" or type(item) == "UML" or type(item) == "Mobile" or type(item) == "yRouter":
+            if type(item) == "Router" or type(item) == "Mach" or type(item) == "Mobile" or type(item) == "yRouter":
                 interfaces.display()
                 routes.display()
             elif type(item) == "REALM":

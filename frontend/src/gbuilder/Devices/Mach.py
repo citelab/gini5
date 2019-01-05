@@ -12,4 +12,8 @@ class Mach(Interfaceable):
         self.setProperty("filetype", "cow")
         self.setProperty("filesystem", "root_fs_beta2")
 
+        self.setProperty("ipv4", "")
+        self.setProperty("port", "")
+        self.setProperty("mac", "")
+
         self.lightPoint = QPoint(-10,3)

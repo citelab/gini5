@@ -87,7 +87,7 @@ class DropBar(Dockable):
 
         self.toolChanged(self.toolBox.currentIndex())
         self.setFocusPolicy(QtCore.Qt.NoFocus)
-        #self.toolBox.setItemIcon(self.toolBox.currentIndex(), QtGui.QIcon(environ["images"] + "UML.png"))
+        #self.toolBox.setItemIcon(self.toolBox.currentIndex(), QtGui.QIcon(environ["images"] + "Mach.png"))
 
     def toolChanged(self, index):
         """

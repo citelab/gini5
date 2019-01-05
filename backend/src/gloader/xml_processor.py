@@ -43,8 +43,8 @@ class XMLProcessor:
         result = result and self.checkDuplicateNames("Switch", self.giniNW.switches)
         # Rule 2: No duplicate router names
         result = result and self.checkDuplicateNames("Router", self.giniNW.vr)
-        # Rule 3: No duplicate UML names
-        result = result and self.checkDuplicateNames("UML", self.giniNW.vm)
+        # Rule 3: No duplicate Mach names
+        result = result and self.checkDuplicateNames("Mach", self.giniNW.vm)
         # Rule 4: No duplicate ports in switches
         result = result and self.checkDuplicatePorts(self.giniNW.switches)
         # Rule 5: Given filesystem is correct (not applicable to docker)

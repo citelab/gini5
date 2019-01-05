@@ -66,8 +66,8 @@ static char * g_cmdname;		/* name of program */
 static char * pidfile		= NULL; /* name of pidfile */
 static char * g_sockname 	= NULL;	/* name of socket file */
 
-struct fd *g_sockdatafd = NULL;	/* packets sent by UML */
-struct fd *g_sockctrlfd = NULL; /* control messages from UML */
+struct fd *g_sockdatafd = NULL;	/* packets sent by Mach */
+struct fd *g_sockctrlfd = NULL; /* control messages from Mach */
 struct sockaddr_un g_sun_dat;
 
 struct fd *g_fdhead 	= NULL;	/* head of fd linked-list */
@@ -212,7 +212,7 @@ send_sock(struct port *p, struct packet *packet, int len)
 		if (errno == ECONNREFUSED) {
 			struct fd *fd;
 			DPRINTF(0, "Connection refused, looking for "
-					"uml-connection to remove.\n");
+					"mach-connection to remove.\n");
 			for (fd = g_fdhead; fd != NULL; fd = fd->next) {
 				if (fd->rmport == p) {
 					DPRINTF(0, "Clearing filedescriptor "
@@ -224,7 +224,7 @@ send_sock(struct port *p, struct packet *packet, int len)
 	}
 }
 
-/* Create a new UML socket.
+/* Create a new Mach socket.
  * This occurs when the control socket receives a message for
  * a file descriptor with a NULL remote port
  */
@@ -238,7 +238,7 @@ create_sock(struct fd *fd)
 	struct port *port;
 	struct sockaddr_un sun_dat;
 
-	DPRINTF(1, "Adding UML socket #%d\n", fd->fh);
+	DPRINTF(1, "Adding Mach socket #%d\n", fd->fh);
 
 	n = read(fd->fh, &req, sizeof (struct request_v3));
 
@@ -300,7 +300,7 @@ error:
 	close(fd->fh);
 }
 
-/* Close a UML socket.
+/* Close a Mach socket.
  * This occurs when the control socket receives a message for
  * a file descriptor with a remote port already set
  */
@@ -310,7 +310,7 @@ delete_sock(struct fd *fd)
 	int n;
 	char c[256];
 
-	DPRINTF(1, "Closing UML socket #%d\n", fd->fh);
+	DPRINTF(1, "Closing Mach socket #%d\n", fd->fh);
 
 	n = read(fd->fh, &c, sizeof(c));
 	if (n < 0) {

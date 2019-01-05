@@ -58,7 +58,7 @@ class Attachable(Device):
             print "-------- HOLA -------------" + self.device_type
             if self.device_type == "yRouter":
                 command += "rxvt -T \"" + window_name + "\" -e " + screen_yrouter
-            elif self.device_type == "UML":
+            elif self.device_type == "Mach":
                 command += "xterm -fa 'Monospace' -fs 14 -title \"" + window_name + "\" -e  screen -r " + window_name
             else:
                 command += "xterm -fa 'Monospace' -fs 14 -title \"" + window_name + "\" -e  screen -r " + window_name

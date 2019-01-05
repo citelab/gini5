@@ -19,7 +19,7 @@ class Switch(Device):
         Device.addEdge(self, edge)
 
         node = edge.getOtherDevice(self)
-        if node.device_type == "UML":
+        if node.device_type == "Mach":
             node.addInterface(self)
         elif node.device_type == "Router":
             node.addInterface(self)
@@ -28,7 +28,7 @@ class Switch(Device):
         Device.removeEdge(self, edge)
 
         node = edge.getOtherDevice(self)
-        if node.device_type == "UML":
+        if node.device_type == "Mach":
             node.removeInterface(self)
         elif node.device_type == "Router":
             node.removeInterface(self)

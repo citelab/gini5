@@ -14,7 +14,7 @@ VM_PROG = "glinux"
 GR_PROG = "grouter"
 VOFC_PROG = "gpox"
 GWR_PROG = "gwcenter.sh"
-MCONSOLE_PROG = "uml_mconsole"
+MCONSOLE_PROG = "mach_mconsole"
 SOCKET_NAME = "gini_socket"
 VS_PROG_BIN = VS_PROG
 VM_PROG_BIN = VM_PROG
@@ -23,7 +23,7 @@ VOFC_PROG_BIN = VOFC_PROG
 GWR_PROG_BIN = GWR_PROG
 MCONSOLE_PROG_BIN = MCONSOLE_PROG
 SRC_FILENAME = "%s/gini_setup" % os.environ["GINI_HOME"] # setup file name
-GINI_TMP_FILE = ".gini_tmp_file" # tmp file used when checking alive UML
+GINI_TMP_FILE = ".gini_tmp_file" # tmp file used when checking alive Mach
 nodes = []
 tapNameMap = dict()
 subnetMap = dict()
@@ -41,7 +41,7 @@ def popen(command):
 def startGINI(myGINI, options):
     "starting the GINI network components"
     # the starting order is important here
-    # first switches, then routers, and at last UMLs.
+    # first switches, then routers, and at last Machs.
     print "\nStarting Docker Switches..."
     success = createVS(myGINI, options.switchDir)
     #print "\nStarting Mobiles..."
@@ -66,8 +66,8 @@ def startGINI(myGINI, options):
 def findSubnet4Switch(myGINI, sname):
 
     # Search the VMs for a matching target
-    for uml in myGINI.vm:
-        for netif in uml.interfaces:
+    for mach in myGINI.vm:
+        for netif in mach.interfaces:
             if netif.target == sname:
                 return netif.network
 
@@ -196,7 +196,7 @@ def createVWR(myGINI, options):
             configOut.write(get_IF_properties(netWIF, len(myGINI.vmb)))
 
         index = len(nodes)-1
-        if nodes and nodes[index].find("UML_") >= 0:
+        if nodes and nodes[index].find("Mach_") >= 0:
             configOut.write("mov set node %d switch off\n" % (index + 1))
             if not independent:
                 configOut.write("mov set node %d location %d %d 0\n" % (index + 1, relx, rely))
@@ -208,7 +208,7 @@ def createVWR(myGINI, options):
         ### ------- execute ---------- ###
         # go to the router directory to execute the command
         os.chdir(os.environ["GINI_HOME"]+"/data")
-        cmd = "%s -i 1 -c %s -n %d -d uml_virtual_switch" % (GWR_PROG_BIN, configFile, len(nodes))
+        cmd = "%s -i 1 -c %s -n %d -d mach_virtual_switch" % (GWR_PROG_BIN, configFile, len(nodes))
         #print "running cmd %s" % cmd
         wrouter.num = wrouter.name.split("Wireless_access_point_")[-1]
         command = "screen -d -m -L -S WAP_%s %s" % (wrouter.num, cmd)
@@ -285,7 +285,7 @@ def findHiddenSwitch(rtname, swname):
     x,rnum = rtname.split("_")
     x,snum = swname.split("_")
     if x != "Router":
-        swname = "Switch_r%su%s" % (rnum, snum)
+        swname = "Switch_r%sm%s" % (rnum, snum) # TODO: rename switch_r?u? to r?m?
     else:
         swname = "Switch_r%sr%s" % (rnum, snum)
 
@@ -314,7 +314,7 @@ def createASwitch(rtname, swname, subnet, ofile):
     x,rnum = rtname.split("_")
     x,snum = swname.split("_")
     if x != "Router":
-        swname = "Switch_r%su%s" % (rnum, snum)
+        swname = "Switch_r%sm%s" % (rnum, snum)
     else:
         swname = "Switch_r%sr%s" % (rnum, snum)
 
@@ -373,7 +373,7 @@ def setupTapInterface(rtname, swname, brname, ofile):
     x,rnum = rtname.split("_")
     x,snum = swname.split("_")
     if x != "Router":
-        tapKey = "Switch_r%su%s" % (rnum, snum)
+        tapKey = "Switch_r%sm%s" % (rnum, snum)
     else:
         tapKey = "Switch_r%sr%s" % (rnum, snum)
 
@@ -539,19 +539,19 @@ def checkRouter(myGINI, name):
     return False
 
 
-def  getSwitch2Connect(myGINI, uml):
+def  getSwitch2Connect(myGINI, mach):
     # one of the interfaces is
-    for nwi in uml.interfaces:
+    for nwi in mach.interfaces:
         target = nwi.target
         if checkSwitch(myGINI, target):
             return getDockerNetworkName(target), nwi.ip
 
-    for nwi in uml.interfaces:
+    for nwi in mach.interfaces:
         target = nwi.target
         if checkRouter(myGINI, target):
             # create a 'hidden' switch because docker needs a
             # switch to connect to the router
-            swname = findHiddenSwitch(target, uml.name)
+            swname = findHiddenSwitch(target, mach.name)
             return getDockerNetworkName(swname), nwi.ip
 
     return ""
@@ -560,25 +560,25 @@ def  getSwitch2Connect(myGINI, uml):
 
 
 def createVM(myGINI, options):
-    "create UML config file, and start the UML"
+    "create Mach config file, and start the Mach"
 
-    makeDir(options.umlDir)
+    makeDir(options.machDir)
 
     print ">>>>>>>>>>>>>> Start >>>>>"
 
-    for uml in myGINI.vm:
-        print "Starting %s...\t" % uml.name,
-        subUMLDir = "%s/%s" % (options.umlDir, uml.name)
-        makeDir(subUMLDir)
+    for mach in myGINI.vm:
+        print "Starting %s...\t" % mach.name,
+        subMachDir = "%s/%s" % (options.machDir, mach.name)
+        makeDir(subMachDir)
 
         # Store current and go into the sub directory...
         oldDir = os.getcwd()
-        os.chdir(subUMLDir)
+        os.chdir(subMachDir)
 
         # Write an init script to run at docker startup
         startOut = open("entrypoint.sh", "w")
         startOut.write("#!/bin/ash\n\n")
-        for nwIf in uml.interfaces:
+        for nwIf in mach.interfaces:
             for route in nwIf.routes:
                 command = "route add -%s %s " % (route.type, route.dest)
                 command += "netmask %s " % route.netmask
@@ -592,7 +592,7 @@ def createVM(myGINI, options):
         stopOut.write("#!/bin/bash\n")
         # Get switch to connect
         print "Before get "
-        sname, ip = getSwitch2Connect(myGINI, uml)
+        sname, ip = getSwitch2Connect(myGINI, mach)
 
         # Export command prompt for VM, start shell inside docker container
         startOut.write("\nexport PS1='root@%s >> '\n" % ip)
@@ -601,12 +601,12 @@ def createVM(myGINI, options):
         os.chmod("entrypoint.sh", 0755)
 
         print "Sname " + sname + " IP " + ip
-        baseScreenCommand = "screen -d -m -L -S %s " % uml.name
+        baseScreenCommand = "screen -d -m -L -S %s " % mach.name
 
         if (sname != "fail"):
             # create command line
-            command = "docker run -i --privileged --name %s " % uml.name
-            command += "-v %s/data/%s:/root " % (os.environ["GINI_HOME"], uml.name)
+            command = "docker run -i --privileged --name %s " % mach.name
+            command += "-v %s/data/%s:/root " % (os.environ["GINI_HOME"], mach.name)
             command += "--entrypoint /root/entrypoint.sh -it "
             command += "--network %s " % sname
             command += "--ip %s" % ip
@@ -618,11 +618,11 @@ def createVM(myGINI, options):
             out,err = runcmd.communicate()
 
             if runcmd.returncode == 0:
-                stopOut.write("docker kill %s\n\n" % uml.name)
-                stopOut.write("docker rm %s\n\n" % uml.name)
+                stopOut.write("docker kill %s\n\n" % mach.name)
+                stopOut.write("docker rm %s\n\n" % mach.name)
                 stopOut.close()
         else:
-            print "No Target found for Machine: %s " % uml.name
+            print "No Target found for Machine: %s " % mach.name
             return False
 
         print "[OK]"
@@ -665,10 +665,10 @@ def createVOFC(myGINI, options):
     return True
 
 def createVMB(myGINI, options):
-    "create UML config file, and start the UML"
-    baseDir = os.environ["GINI_HOME"] + "/data/uml_virtual_switch"
+    "create Mach config file, and start the Mach"
+    baseDir = os.environ["GINI_HOME"] + "/data/mach_virtual_switch"
     makeDir(baseDir)
-    makeDir(options.umlDir)
+    makeDir(options.machDir)
     oldDir = os.getcwd()
     del nodes[:]
     for mobile in myGINI.vmb:
@@ -676,9 +676,9 @@ def createVMB(myGINI, options):
         #print nodes
         nodes.append(mobile.name)
         node = len(nodes)
-        subUMLDir = baseDir+"/VS_%d" % node
-        makeDir(subUMLDir)
-        os.chdir(subUMLDir)
+        subMachDir = baseDir+"/VS_%d" % node
+        makeDir(subMachDir)
+        os.chdir(subMachDir)
 #        vsconf = open("uswitch.conf", "w")
 #        vsconf.write("logfile uswitch.log\npidfile uswitch.pid\nsocket gw_socket.ctl\nfork\n")
 #        vsconf.close()
@@ -687,10 +687,10 @@ def createVMB(myGINI, options):
 
         print "Starting Mobile %s...\t" % mobile.name,
         # create command line
-        command = createUMLCmdLine(mobile)
+        command = createMachCmdLine(mobile)
 
         for nwIf in mobile.interfaces:
-            socketName = subUMLDir + "/gw_socket.ctl"
+            socketName = subMachDir + "/gw_socket.ctl"
             # create the config file in /tmp and
             # return a line to be added in the command
             outLine = getVMIFOutLine(nwIf, socketName, mobile.name)
@@ -700,9 +700,9 @@ def createVMB(myGINI, options):
                 print "[FAILED]"
                 return False
         ### ------- execute ---------- ###
-        # go to the UML directory to execute the command
-        makeDir(options.umlDir+"/"+mobile.name)
-        os.chdir(options.umlDir+"/"+mobile.name)
+        # go to the Mach directory to execute the command
+        makeDir(options.machDir+"/"+mobile.name)
+        os.chdir(options.machDir+"/"+mobile.name)
         startOut = open("startit.sh", "w")
         startOut.write(command)
         startOut.close()
@@ -715,16 +715,16 @@ def createVMB(myGINI, options):
 
 def createVRM(myGINI, options):
     "create REALM config file, and start the REALM"
-    makeDir(options.umlDir)
+    makeDir(options.machDir)
     for realm in myGINI.vrm:
         print "Starting REALM %s...\t" % realm.name,
-        subUMLDir = "%s/%s" % (options.umlDir, realm.name)
-        makeDir(subUMLDir)
+        subMachDir = "%s/%s" % (options.machDir, realm.name)
+        makeDir(subMachDir)
         # create command line
-        command = createUMLCmdLine(realm)
-        ### ---- process the UML interfaces ---- ###
+        command = createMachCmdLine(realm)
+        ### ---- process the Mach interfaces ---- ###
         # it creates one config for each interface in the /tmp/ directory
-        # and returns a string to be attached to the UML exec command line
+        # and returns a string to be attached to the Mach exec command line
         for nwIf in realm.interfaces:
             # check whether it is connecting to a switch or router
             socketName = getSocketName(nwIf, realm.name, myGINI, options);
@@ -741,10 +741,10 @@ def createVRM(myGINI, options):
                 print "[FAILED]"
                 return False
         ### ------- execute ---------- ###
-        # go to the UML directory to execute the command
+        # go to the Mach directory to execute the command
 
             oldDir = os.getcwd()
-            # os.chdir(subUMLDir)
+            # os.chdir(subMachDir)
             # startOut = open("startit.sh", "w")
             # startOut.write(command)
             # startOut.close()
@@ -788,14 +788,14 @@ def getSocketName(nwIf, name, myGINI, options):
             oldDir = os.getcwd()
             switch_sharing = False
             for i in range(len(nodes)):
-                if (nodes[i].find("UML_")+nodes[i].find("REALM_")) >= 0:
+                if (nodes[i].find("Mach_")+nodes[i].find("REALM_")) >= 0:
                     switch_sharing = True
                     break
             nodes.append(name)
             if switch_sharing:
-                newDir = os.environ["GINI_HOME"] + "/data/uml_virtual_switch/VS_%d" % (i+1)
+                newDir = os.environ["GINI_HOME"] + "/data/mach_virtual_switch/VS_%d" % (i+1)
             else:
-                newDir = os.environ["GINI_HOME"] + "/data/uml_virtual_switch/VS_%d" % len(nodes)
+                newDir = os.environ["GINI_HOME"] + "/data/mach_virtual_switch/VS_%d" % len(nodes)
                 system("mkdir %s" % newDir)
                 os.chdir(newDir)
                 configOut = open("uswitch.conf", "w")
@@ -804,7 +804,7 @@ def getSocketName(nwIf, name, myGINI, options):
                 popen("%s -s %s -l uswitch.log -p uswitch.pid &" % (VS_PROG, newDir+"/gw_socket.ctl"))
                 os.chdir(oldDir)
             #else:
-                #newDir = os.environ["GINI_HOME"] + "/bin/uml_virtual_switch/VS_%d" % len(nodes)
+                #newDir = os.environ["GINI_HOME"] + "/bin/mach_virtual_switch/VS_%d" % len(nodes)
             return newDir + "/gw_socket.ctl"
 
     routers = myGINI.vr
@@ -828,10 +828,10 @@ def getSocketName(nwIf, name, myGINI, options):
             targetDir = getFullyQualifiedDir(options.switchDir)
             return "%s/%s/%s.ctl" % \
                    (targetDir, switch.name, SOCKET_NAME)
-    umls = myGINI.vm
-    for uml in umls:
-        if (uml.name == nwIf.target):
-            # target matching a UML; UML can't create sockets
+    machs = myGINI.vm
+    for mach in machs:
+        if (mach.name == nwIf.target):
+            # target matching a Mach; Mach can't create sockets
             # so return value is socket name of the current router
             targetDir = getFullyQualifiedDir(options.routerDir)
             return "%s/%s/%s_%s.ctl" % \
@@ -886,7 +886,7 @@ def getVRIFOutLine(nwIf, intName):
     return outLine
 
 def getVMIFOutLine(nwIf, socketName, name):
-    "convert the UML network interface specs into a string"
+    "convert the Mach network interface specs into a string"
     configFile = "%s/tmp/%s.sh" % (os.environ["GINI_HOME"], nwIf.mac.upper())
     # delete confFile if already exists
     # also checks whether somebody else using the same MAC address
@@ -913,7 +913,7 @@ def getVMIFOutLine(nwIf, socketName, name):
     configOut.write("echo -ne \"\\033]0;" + name + "\\007\"")
     configOut.close()
     os.chmod(configFile, 0777)
-    bakDir = "%s/tmp/UML_bak" % os.environ["GINI_HOME"]
+    bakDir = "%s/tmp/Mach_bak" % os.environ["GINI_HOME"]
     if not os.access(bakDir, os.F_OK):
         makeDir(bakDir)
     system("cp %s %s" % (configFile, bakDir))
@@ -922,29 +922,29 @@ def getVMIFOutLine(nwIf, socketName, name):
     outLine += socketName
     return outLine
 
-def createUMLCmdLine(uml):
-    command = "screen -d -m -S %s " % uml.name
-    ## uml binary name
-    if (uml.kernel):
-        command += "%s " % uml.kernel
+def createMachCmdLine(mach):
+    command = "screen -d -m -S %s " % mach.name
+    ## mach binary name
+    if (mach.kernel):
+        command += "%s " % mach.kernel
     else:
         command += "%s " % VM_PROG_BIN
-    ## uml ID
-    command += "umid=%s " % uml.name
+    ## mach ID
+    command += "umid=%s " % mach.name
     ## handle the file system option
     # construct the cow file name
-    fileSystemName = getBaseName(uml.fileSystem.name)
-    fsCOWName = os.environ["GINI_HOME"] + "/data/" + uml.name + "/" + fileSystemName + ".cow"
-    if (uml.fileSystem.type.lower() == "cow"):
+    fileSystemName = getBaseName(mach.fileSystem.name)
+    fsCOWName = os.environ["GINI_HOME"] + "/data/" + mach.name + "/" + fileSystemName + ".cow"
+    if (mach.fileSystem.type.lower() == "cow"):
         command += "ubd0=%s,%s " % (fsCOWName, os.environ["GINI_SHARE"] + "/filesystem/" + fileSystemName)
     else:
-        command += "ubd0=%s " % uml.fileSystem.name
+        command += "ubd0=%s " % mach.fileSystem.name
     ## handle the mem option
-    if (uml.mem):
-        command += "mem=%s " % uml.mem
+    if (mach.mem):
+        command += "mem=%s " % mach.mem
     ## handle the boot option
-    if (uml.boot):
-        command += "con0=%s " % uml.boot
+    if (mach.boot):
+        command += "con0=%s " % mach.boot
     command += "hostfs=%s " % os.environ["GINI_HOME"]
     return command
 
@@ -961,8 +961,8 @@ def destroyGINI(myGINI, options):
     dockerNetworkNameMap.clear()
 
     try:
-        print "\nTerminating UMLs..."
-        result = result and  destroyVM(myGINI.vm, options.umlDir, 0)
+        print "\nTerminating Machs..."
+        result = result and  destroyVM(myGINI.vm, options.machDir, 0)
 
         print "\nTerminating routers..."
         result = result and destroyVR(myGINI.vr, options.routerDir)
@@ -983,13 +983,13 @@ def destroyGINI(myGINI, options):
 
 #    print "\nTerminating Mobiles..."
 #    try:
-#        result = result and  destroyVM(myGINI.vmb, options.umlDir, 1)
+#        result = result and  destroyVM(myGINI.vmb, options.machDir, 1)
 #    except:
 #        pass
 
 #    print "\nTerminating REALMs..."
 #    try:
-#        result = result and  destroyRVM(myGINI.vrm, options.umlDir)
+#        result = result and  destroyRVM(myGINI.vrm, options.machDir)
 #    except:
 #        pass
     #system("killall uswitch screen")
@@ -1024,7 +1024,7 @@ def destroyVWR(wrouters, routerDir):
             return False
 
         oldDir = os.getcwd()
-        switchDir = "%s/data/uml_virtual_switch" % os.environ["GINI_HOME"]
+        switchDir = "%s/data/mach_virtual_switch" % os.environ["GINI_HOME"]
         os.chdir(switchDir)
         for filename in os.listdir(switchDir):
             pidfile = filename+"/uswitch.pid"
@@ -1093,38 +1093,38 @@ def getPIDFromFile(fileName):
     fileIn.close()
     return int(lines[0].strip())
 
-def destroyRVM(umls,umlDir):
-    for uml in umls:
-        print "\tStopping REALM %s...\t[OK]" % uml.name
-        system("screen -S " + uml.name + "-vtap -p 0 -X stuff \"quitt\n\"")
-        system("screen -S " + uml.name + "-vtproxy -X quit")
+def destroyRVM(machs,machDir):
+    for mach in machs:
+        print "\tStopping REALM %s...\t[OK]" % mach.name
+        system("screen -S " + mach.name + "-vtap -p 0 -X stuff \"quitt\n\"")
+        system("screen -S " + mach.name + "-vtproxy -X quit")
         print "\tCleaning the directory...\t",
-        subUMLDir = "%s/%s" % (umlDir, uml.name)
+        subMachDir = "%s/%s" % (machDir, mach.name)
 
         # TODO: Determine if we need any data in this folder.
-        if (os.access(subUMLDir, os.F_OK)):
-            for file in os.listdir(subUMLDir):
-                fileName = "%s/%s" % (subUMLDir, file)
+        if (os.access(subMachDir, os.F_OK)):
+            for file in os.listdir(subMachDir):
+                fileName = "%s/%s" % (subMachDir, file)
                 if (os.access(fileName, os.W_OK)):
                     os.remove(fileName)
                 else:
-                    print "\n\tCould not delete file %s" % (uml.name, fileName)
+                    print "\n\tCould not delete file %s" % (mach.name, fileName)
                     print "\tCheck your directory"
                     return False
-            if (os.access(subUMLDir, os.W_OK)):
-                 os.rmdir(subUMLDir)
+            if (os.access(subMachDir, os.W_OK)):
+                 os.rmdir(subMachDir)
         print "[OK]"
-        for nwIf in uml.interfaces:
+        for nwIf in mach.interfaces:
             configFile = "%s/tmp/%s.sh" % (os.environ["GINI_HOME"],nwIf.mac.upper())
             if (os.access(configFile, os.W_OK)):
                 os.remove(configFile)
     return True
 
-def destroyVM(umls, umlDir, mode):
+def destroyVM(machs, machDir, mode):
 
-    for uml in umls:
+    for mach in machs:
         # Run the stop command
-        command = "%s/%s/stopit.sh" % (umlDir, uml.name)
+        command = "%s/%s/stopit.sh" % (machDir, mach.name)
         system(command)
     return True
 
@@ -1171,7 +1171,7 @@ def destroyVOFC(controllers, controllerDir):
 
 def checkProcAlive(procName):
     alive = False
-    # grep the UML processes
+    # grep the Mach processes
     system("pidof -x %s > %s" % (procName, GINI_TMP_FILE))
     inFile = open(GINI_TMP_FILE)
     line = inFile.readline()
@@ -1201,7 +1201,7 @@ def writeSrcFile(options):
     outFile.write("%s\n" % options.xmlFile)
     outFile.write("%s\n" % options.switchDir)
     outFile.write("%s\n" % options.routerDir)
-    outFile.write("%s\n" % options.umlDir)
+    outFile.write("%s\n" % options.machDir)
     outFile.write("%s\n" % options.binDir)
     outFile.write("%s\n" % options.controllerDir)
     outFile.close()
@@ -1246,14 +1246,14 @@ if (not myProg.processOptions(sys.argv[1:])):
     sys.exit(1)
 options = myProg.options
 
-# set the UML directory if is not given via -u option
-if (not options.umlDir):
-    # set it to the directory pointed by the $UML_DIR env
-    # if no such env variable, set the uml dir to curr dir
-    if (os.environ.has_key("UML_DIR")):
-        options.umlDir = os.environ["UML_DIR"]
+# set the Mach directory if is not given via -u option
+if (not options.machDir):
+    # set it to the directory pointed by the $Mach_DIR env
+    # if no such env variable, set the mach dir to curr dir
+    if (os.environ.has_key("Mach_DIR")):
+        options.machDir = os.environ["Mach_DIR"]
     else:
-        options.umlDir = "."
+        options.machDir = "."
 
 # get the binaries
 binDir = options.binDir

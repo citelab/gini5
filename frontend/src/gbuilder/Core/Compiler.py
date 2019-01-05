@@ -59,7 +59,7 @@ class Compiler:
             if options["autogen"]:
                 self.autogen_router()
                 self.autogen_yRouter()
-                self.autogen_UML()
+                self.autogen_Mach()
                 self.autogen_REALM()
                 self.autogen_mobile()
 
@@ -69,12 +69,12 @@ class Compiler:
                 #self.routing_table_wireless_access_point()
                 self.routing_table_yRouter()
                 self.routing_table_entry()
-                self.routing_table_uml()
+                self.routing_table_mach()
                 #self.routing_table_mobile()
 
             self.compile_router()
             self.compile_yRouter()
-            self.compile_UML()
+            self.compile_Mach()
             self.compile_REALM()
             self.compile_mobile()
             self.compile_OpenFlow_Controller()
@@ -510,39 +510,39 @@ class Compiler:
 
 
 
-    def autogen_UML(self):
+    def autogen_Mach(self):
         """
-        Auto-generate properties for UMLs.
+        Auto-generate properties for Machs.
         """
-        for uml in self.compile_list["UML"]:
-            for interface in uml.getInterfaces():
+        for mach in self.compile_list["Mach"]:
+            for interface in mach.getInterfaces():
                 if options["autogen"]:
                     try:
-                        subnet = str(uml.getInterfaceProperty("subnet")).rsplit(".", 1)[0]
+                        subnet = str(mach.getInterfaceProperty("subnet")).rsplit(".", 1)[0]
                     except:
                         continue
-                    uml.setInterfaceProperty("ipv4", "%s.%d" % (subnet, uml.getID()+1))
-                    uml.setInterfaceProperty("mac", "fe:fd:02:00:00:%02x" % uml.getID())
+                    mach.setInterfaceProperty("ipv4", "%s.%d" % (subnet, mach.getID()+1))
+                    mach.setInterfaceProperty("mac", "fe:fd:02:00:00:%02x" % mach.getID())
 
-    def compile_UML(self):
+    def compile_Mach(self):
         """
-        Compile all the UMLs.
+        Compile all the Machs.
         """
-        for uml in self.compile_list["UML"]:
-            self.output.write("<vm name=\"" + uml.getName() + "\">\n")
-            #self.output.write("\t<filesystem type=\"" + uml.getProperty("filetype") + "\">"
-            #                  + uml.getProperty("filesystem") + "</filesystem>\n")
+        for mach in self.compile_list["Mach"]:
+            self.output.write("<vm name=\"" + mach.getName() + "\">\n")
+            #self.output.write("\t<filesystem type=\"" + mach.getProperty("filetype") + "\">"
+            #                  + mach.getProperty("filesystem") + "</filesystem>\n")
 
-            interfaces = uml.getInterfaces()
+            interfaces = mach.getInterfaces()
             if len(interfaces) < 1:
-                self.generateConnectionWarning(uml, 1)
+                self.generateConnectionWarning(mach, 1)
 
             for interface in interfaces:
 
                 self.output.write("\t<if>\n")
 
                 mapping = {"subnet":"network", "mac":"mac", "ipv4":"ip"}
-                self.writeInterface(uml, interface, mapping)
+                self.writeInterface(mach, interface, mapping)
 
                 self.output.write("\t</if>\n")
 
@@ -560,7 +560,7 @@ class Compiler:
                         subnet = str(realm.getInterfaceProperty("subnet")).rsplit(".", 1)[0]
                     except:
                         continue
-                    realm.setInterfaceProperty("ipv4", "%s.%d" % (subnet, realm.getID()+1+len(self.compile_list["UML"])))
+                    realm.setInterfaceProperty("ipv4", "%s.%d" % (subnet, realm.getID()+1+len(self.compile_list["Mach"])))
                     realm.setInterfaceProperty("mac", "fe:fd:02:00:01:%02x" % realm.getID())
 
     def compile_REALM(self):
@@ -594,32 +594,32 @@ class Compiler:
         """
         Auto-generate properties for Mobiles.
         """
-        for uml in self.compile_list["Mobile"]:
-            for interface in uml.getInterfaces():
+        for mach in self.compile_list["Mobile"]:
+            for interface in mach.getInterfaces():
                 if options["autogen"]:
-                    subnet = str(uml.getInterfaceProperty("subnet")).rsplit(".", 1)[0]
-                    uml.setInterfaceProperty("ipv4", "%s.%d" % (subnet, uml.getID()+1))
-                    uml.setInterfaceProperty("mac", "fe:fd:00:00:00:%02x" % uml.getID())
+                    subnet = str(mach.getInterfaceProperty("subnet")).rsplit(".", 1)[0]
+                    mach.setInterfaceProperty("ipv4", "%s.%d" % (subnet, mach.getID()+1))
+                    mach.setInterfaceProperty("mac", "fe:fd:00:00:00:%02x" % mach.getID())
 
     def compile_mobile(self):
         """
         Compile all the Mobiles.
         """
-        for uml in self.compile_list["Mobile"]:
-            self.output.write("<vmb name=\"" + uml.getName() + "\">\n")
-            self.output.write("\t<filesystem type=\"" + uml.getProperty("filetype") + "\">"
-                              + uml.getProperty("filesystem") + "</filesystem>\n")
+        for mach in self.compile_list["Mobile"]:
+            self.output.write("<vmb name=\"" + mach.getName() + "\">\n")
+            self.output.write("\t<filesystem type=\"" + mach.getProperty("filetype") + "\">"
+                              + mach.getProperty("filesystem") + "</filesystem>\n")
 
-            interfaces = uml.getInterfaces()
+            interfaces = mach.getInterfaces()
             if len(interfaces) < 1:
-                self.generateConnectionWarning(uml, 1)
+                self.generateConnectionWarning(mach, 1)
 
             for interface in interfaces:
 
                 self.output.write("\t<if>\n")
 
                 mapping = {"subnet":"network", "mac":"mac", "ipv4":"ip"}
-                self.writeInterface(uml, interface, mapping)
+                self.writeInterface(mach, interface, mapping)
 
                 self.output.write("\t</if>\n")
 
@@ -682,7 +682,7 @@ class Compiler:
 
         for con in node.edges():
             otherDevice = con.getOtherDevice(node)
-            if otherDevice.device_type in ["Router", "UML", "REALM", "Mobile", "yRouter"]:
+            if otherDevice.device_type in ["Router", "Mach", "REALM", "Mobile", "yRouter"]:
                 target = node
                 if node.device_type == "Subnet":
                     target = node.getTarget(otherDevice)
@@ -706,7 +706,7 @@ class Compiler:
             interfaceable.emptyAdjacentLists()
             interfaceable.emptyRouteTable()
 
-        for interfaceable in self.compile_list["UML"]:
+        for interfaceable in self.compile_list["Mach"]:
             interfaceable.emptyAdjacentLists()
             interfaceable.emptyRouteTable()
 
@@ -724,16 +724,16 @@ class Compiler:
             self.findAdjacentRouters(interfaceable)
             self.findAdjacentSubnets(interfaceable)
 
-    def routing_table_uml(self):
+    def routing_table_mach(self):
         """
-        Compute route tables of UMLs.
+        Compute route tables of Machs.
         """
-        self.routing_table_interfaceable("UML")
+        self.routing_table_interfaceable("Mach")
 
-        for uml in self.compile_list["UML"]:
+        for mach in self.compile_list["Mach"]:
             for subnet in self.compile_list["Subnet"]:
-                if not uml.hasSubnet(subnet.getProperty("subnet")):
-                    uml.addRoutingEntry(subnet.getProperty("subnet"))
+                if not mach.hasSubnet(subnet.getProperty("subnet")):
+                    mach.addRoutingEntry(subnet.getProperty("subnet"))
 
     def routing_table_realm(self):
         """
@@ -741,10 +741,10 @@ class Compiler:
         """
         self.routing_table_interfaceable("REALM")
 
-        for uml in self.compile_list["REALM"]:
+        for mach in self.compile_list["REALM"]:
             for subnet in self.compile_list["Subnet"]:
-                if not uml.hasSubnet(subnet.getProperty("subnet")):
-                    uml.addRoutingEntry(subnet.getProperty("subnet"))
+                if not mach.hasSubnet(subnet.getProperty("subnet")):
+                    mach.addRoutingEntry(subnet.getProperty("subnet"))
 
     def routing_table_mobile(self):
         """
@@ -752,10 +752,10 @@ class Compiler:
         """
         self.routing_table_interfaceable("Mobile")
 
-        for uml in self.compile_list["Mobile"]:
+        for mach in self.compile_list["Mobile"]:
             for subnet in self.compile_list["Subnet"]:
-                if not uml.hasSubnet(subnet.getProperty("subnet")):
-                    uml.addRoutingEntry(subnet.getProperty("subnet"))
+                if not mach.hasSubnet(subnet.getProperty("subnet")):
+                    mach.addRoutingEntry(subnet.getProperty("subnet"))
 
     def routing_table_router(self):
         """
@@ -813,7 +813,7 @@ class Compiler:
 
         if otherDevice.device_type in ["Router", "Wireless_access_point", "yRouter"]:
             myself.addAdjacentRouter(otherDevice, interface)
-        elif otherDevice.device_type in ["UML", "Mobile", "REALM"]:
+        elif otherDevice.device_type in ["Mach", "Mobile", "REALM"]:
             pass
         else:
             for c in otherDevice.edges():
@@ -853,7 +853,7 @@ class Compiler:
         """
         Format the routes in xml.
         """
-        if devType == "UML" or devType == "REALM":
+        if devType == "Mach" or devType == "REALM":
             header = "\t\t<route type=\"net\" "
             gateway = "\" gw=\""
             footer = "</route>\n"

@@ -136,7 +136,7 @@ port_send(struct sockaddr * sa, struct packet * pkt, int len)
 		DPRINTF(1, "broadcast sent\n");
 	}
 	else if (dst_port == NULL) {
-	       	// If the destination is not a direcly connected UML, forward to switches only
+	       	// If the destination is not a direcly connected Mach, forward to switches only
 		ms_broadcast(pkt, len, sa);
 	}
 	else {

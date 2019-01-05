@@ -3,8 +3,8 @@ from Core.Interfaceable import *
 from Core.globals import environ
 from PyQt4.QtCore import QPoint
 
-class UML(Interfaceable):
-    device_type="UML"
+class Mach(Interfaceable):
+    device_type="Mach"
 
     def __init__(self):
         Interfaceable.__init__(self)
