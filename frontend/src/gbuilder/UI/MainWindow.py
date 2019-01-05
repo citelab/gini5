@@ -583,12 +583,15 @@ class MainWindow(Systray):
         if not self.server or self.server.poll() != None:
             self.log.append("Please start the server first!")
             return
+        if not self.isRunning():
+            self.log.append("No network topology is running!")
+            return
         if not self.client or not self.client.isConnected():
             self.startClient()
 
-	if (self.wgini_client is not None) and usedyRouters:
-	    status = self.wgini_client.Delete()
-	    self.log.append(status)
+        if (self.wgini_client is not None) and usedyRouters:
+            status = self.wgini_client.Delete()
+            self.log.append(status)
 
         if self.recovery:
             self.recovery = False
