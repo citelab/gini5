@@ -1197,10 +1197,10 @@ class MainWindow(Systray):
         self.copyAct.setStatusTip(self.tr("Copy the selected text"))
         self.connect(self.copyAct, QtCore.SIGNAL("triggered()"), self.copy)
 
-    	self.startWGINIClientAct = QtGui.QAction(QtGui.QIcon(environ["images"] + "startClient.png"), self.tr("&Start WGINI Client"), self)
-    	self.startWGINIClientAct.setShortcut(self.tr("Ctrl+W"))
-    	self.startWGINIClientAct.setStatusTip(self.tr("Start wireless GINI client"))
-    	self.connect(self.startWGINIClientAct, QtCore.SIGNAL("triggered()"), self.startWGINIClient)
+        # self.startWGINIClientAct = QtGui.QAction(QtGui.QIcon(environ["images"] + "startClient.png"), self.tr("&Start WGINI Client"), self)
+        # self.startWGINIClientAct.setShortcut(self.tr("Ctrl+W"))
+        # self.startWGINIClientAct.setStatusTip(self.tr("Start wireless GINI client"))
+        # self.connect(self.startWGINIClientAct, QtCore.SIGNAL("triggered()"), self.startWGINIClient)
 
     	self.discoverAct = QtGui.QAction(QtGui.QIcon(environ["images"] + "discover.png"), self.tr("&Discover"), self)
     	self.discoverAct.setShortcut(self.tr("Ctrl+Shift+Y"))
@@ -1227,10 +1227,10 @@ class MainWindow(Systray):
         self.startServerAct.setStatusTip(self.tr("Start the server"))
         self.connect(self.startServerAct, QtCore.SIGNAL("triggered()"), self.startBackend)
 
-        self.startwServerAct = QtGui.QAction(QtGui.QIcon(environ["images"] + "startServer.png"), self.tr("&Start WGINI Server"), self)
-        self.startwServerAct.setShortcut(self.tr("Ctrl+W"))
-        self.startwServerAct.setStatusTip(self.tr("Start the WGINI server"))
-        self.connect(self.startwServerAct, QtCore.SIGNAL("triggered()"), self.startWServer)
+        # self.startwServerAct = QtGui.QAction(QtGui.QIcon(environ["images"] + "startServer.png"), self.tr("&Start WGINI Server"), self)
+        # self.startwServerAct.setShortcut(self.tr("Ctrl+W"))
+        # self.startwServerAct.setStatusTip(self.tr("Start the WGINI server"))
+        # self.connect(self.startwServerAct, QtCore.SIGNAL("triggered()"), self.startWServer)
 
         self.optionsAct = QtGui.QAction(QtGui.QIcon(environ["images"] + "options.png"), self.tr("&Options"), self)
         self.optionsAct.setShortcut(self.tr("F2"))
@@ -1316,13 +1316,13 @@ class MainWindow(Systray):
 
         self.runMenu = self.menuBar().addMenu(self.tr("&Run"))
         self.runMenu.setPalette(defaultOptions["palette"])
-        self.runMenu.addAction(self.startWGINIClientAct)
+        # self.runMenu.addAction(self.startWGINIClientAct)
         self.runMenu.addAction(self.discoverAct)
         self.runMenu.addAction(self.compileAct)
         self.runMenu.addAction(self.runAct)
         self.runMenu.addAction(self.stopAct)
         self.runMenu.addAction(self.startServerAct)
-        self.runMenu.addAction(self.startwServerAct)
+        # self.runMenu.addAction(self.startwServerAct)
 
         self.configMenu = self.menuBar().addMenu(self.tr("&Config"))
         self.configMenu.setPalette(defaultOptions["palette"])
@@ -1368,8 +1368,8 @@ class MainWindow(Systray):
         self.runToolBar.addAction(self.compileAct)
         self.runToolBar.addAction(self.runAct)
         self.runToolBar.addAction(self.stopAct)
-        self.runToolBar.addAction(self.startWGINIClientAct)
-        self.runToolBar.addAction(self.startwServerAct)
+        # self.runToolBar.addAction(self.startWGINIClientAct)
+        # self.runToolBar.addAction(self.startwServerAct)
 
     def createStatusBar(self):
         """
