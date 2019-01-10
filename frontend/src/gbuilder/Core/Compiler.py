@@ -25,6 +25,7 @@ class Compiler:
         for device in device_list:
             if isinstance(device, Device):
                 self.compile_list[device.device_type].append(device)
+        self.compile_list["Switch"] += self.compile_list["OpenVirtualSwitch"]
 
     def compile(self):
         """
@@ -465,7 +466,7 @@ class Compiler:
                         else:
                             self.generateError(t, "subnet", "inconsistent due to multiple values (only connect to a single subnet)")
                             return
-                    if node.device_type == "Switch":
+                    if node.device_type in ["Switch", "OpenVirtualSwitch"]:
                         # should look around for a subnet
                         if node not in switch_seen:
                             switch_seen.add(node)
@@ -481,32 +482,35 @@ class Compiler:
             switch.setProperty("subnet", subnet.getProperty("subnet"))
             if switch.getProperty("Hub mode") == "True":
                 self.output.write("\t<hub/>\n")
+            if switch.getProperty("OVS mode") == "True":
+                self.output.write("\t<ovs/>\n")
             self.output.write("</vs>\n\n")
             # self.pass_mask(switch)
 
     def switch_pass_mask(self):
+        has_subnet = False
         for switch in self.compile_list["Switch"]:
-          for edge in switch.edges():
-              node = edge.getOtherDevice(switch)
-              if node.device_type == "Subnet":
-                  has_subnet = True
+            for edge in switch.edges():
+                node = edge.getOtherDevice(switch)
+                if node.device_type == "Subnet":
+                    has_subnet = True
 
-          if has_subnet:
-              target = switch.getTarget(None)
-              gateway = target.getInterface(switch) if target is not None else None
-              Q = [switch]
-              switch_seen = set([switch])
-              while Q:
-                  t = Q.pop(0)
-                  t.gateway = gateway
-                  self.pass_mask(t)
-                  for edge in t.edges():
-                      node = edge.getOtherDevice(t)
-                      if node.device_type == "Switch":
-                          # should look around for a subnet
-                          if node not in switch_seen:
-                              switch_seen.add(node)
-                              Q.append(node)
+            if has_subnet:
+                target = switch.getTarget(None)
+                gateway = target.getInterface(switch) if target is not None else None
+                Q = [switch]
+                switch_seen = set([switch])
+                while Q:
+                    t = Q.pop(0)
+                    t.gateway = gateway
+                    self.pass_mask(t)
+                    for edge in t.edges():
+                        node = edge.getOtherDevice(t)
+                        if node.device_type in ["Switch", "OpenVirtualSwitch"]:
+                            # should look around for a subnet
+                            if node not in switch_seen:
+                                switch_seen.add(node)
+                                Q.append(node)
 
 
 
@@ -838,7 +842,7 @@ class Compiler:
             otherDevice = con.getOtherDevice(device)
             if otherDevice.device_type == "Subnet":
                 device.addAdjacentSubnet(otherDevice.getProperty("subnet"))
-            elif otherDevice.device_type == "Switch":
+            elif otherDevice.device_type in ["Switch", "OpenVirtualSwitch"]:
                 for c in otherDevice.edges():
                     odevice = c.getOtherDevice(otherDevice)
                     if odevice != device and odevice.device_type == "Router":

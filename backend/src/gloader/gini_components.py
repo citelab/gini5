@@ -11,6 +11,7 @@ class Switch:
     port = ""
     remote = "localhost"
     hub = False
+    isOVS = False
 
     def __init__(self, sName):
         "Initialize the Switch class"
@@ -28,6 +29,7 @@ class Switch:
         print "[Port: " + self.port + "]",
         print "[Remote: " + self.remote + "]",
         print "[Hub: " + str(self.hub) + "]"
+        print "[IsOVS " + str(self.isOVS) + "]"
 
 
 class VM:

@@ -41,6 +41,8 @@ class GINI_NW:
                         newSwitch.remote = self.getTextPart(para)
                     if (para.tagName.lower() == "hub"):
                         newSwitch.hub = True
+                    if para.tagName.lower() == "ovs":
+                        newSwitch.isOVS = True
             self.switches.append(newSwitch)
         return True
 

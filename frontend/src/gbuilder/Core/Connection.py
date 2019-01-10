@@ -13,21 +13,75 @@ from Devices.yRouter import *
 from UI.Edge import *
 from Devices.REALM import *
 from Devices.OpenFlow_Controller import *
+from Devices.OpenVirtualSwitch import *
 
 # The connection rules for building topologies
-connection_rule={}
-connection_rule[Mach.device_type]=(Switch.device_type, Subnet.device_type, Bridge.device_type, Hub.device_type)
-connection_rule[Router.device_type]=(Subnet.device_type, OpenFlow_Controller.device_type, Switch.device_type)
-connection_rule[Switch.device_type]=(Mach.device_type, Subnet.device_type, Switch.device_type, Router.device_type)
-connection_rule[Bridge.device_type]=(Mach.device_type, Subnet.device_type, REALM.device_type)
-connection_rule[Hub.device_type]=(Mach.device_type, Subnet.device_type, REALM.device_type)
-connection_rule[Wireless_access_point.device_type]=(Mobile.device_type)
-connection_rule[Subnet.device_type]=(Mach.device_type, Switch.device_type, Router.device_type, yRouter.device_type, Bridge.device_type, Hub.device_type, Firewall.device_type, REALM.device_type)
-connection_rule[Mobile.device_type]=(Wireless_access_point.device_type)
-connection_rule[Firewall.device_type]=(Subnet.device_type)
-connection_rule[REALM.device_type]=(Switch.device_type, Subnet.device_type, Bridge.device_type, Hub.device_type)
-connection_rule[yRouter.device_type]=(Subnet.device_type)
-connection_rule[OpenFlow_Controller.device_type]=(Router.device_type)
+connection_rule = dict()
+
+connection_rule[Mach.device_type] = (
+    Switch.device_type,
+    Subnet.device_type,
+    Bridge.device_type,
+    Hub.device_type,
+    OpenVirtualSwitch.device_type
+)
+connection_rule[Router.device_type] = (
+    Subnet.device_type,
+    OpenFlow_Controller.device_type,
+    Switch.device_type,
+    OpenVirtualSwitch.device_type
+)
+connection_rule[Switch.device_type] = (
+    Mach.device_type,
+    Subnet.device_type,
+    Switch.device_type,
+    Router.device_type,
+    OpenVirtualSwitch.device_type
+)
+connection_rule[OpenVirtualSwitch.device_type] = (
+    Mach.device_type,
+    Subnet.device_type,
+    Switch.device_type,
+    Router.device_type,
+    OpenFlow_Controller.device_type,
+    OpenVirtualSwitch.device_type
+)
+connection_rule[Bridge.device_type] = (
+    Mach.device_type,
+    Subnet.device_type,
+    REALM.device_type
+)
+connection_rule[Hub.device_type] = (
+    Mach.device_type,
+    Subnet.device_type,
+    REALM.device_type
+)
+connection_rule[Wireless_access_point.device_type] = (Mobile.device_type,)
+connection_rule[Subnet.device_type] = (
+    Mach.device_type,
+    Switch.device_type,
+    Router.device_type,
+    yRouter.device_type,
+    Bridge.device_type,
+    Hub.device_type,
+    Firewall.device_type,
+    REALM.device_type,
+    OpenVirtualSwitch.device_type
+)
+connection_rule[Mobile.device_type] = (Wireless_access_point.device_type,)
+connection_rule[Firewall.device_type] = (Subnet.device_type,)
+connection_rule[REALM.device_type] = (
+    Switch.device_type,
+    Subnet.device_type,
+    Bridge.device_type,
+    Hub.device_type,
+    OpenVirtualSwitch.device_type
+)
+connection_rule[yRouter.device_type] = (Subnet.device_type,)
+connection_rule[OpenFlow_Controller.device_type] = (
+    Router.device_type,
+    OpenVirtualSwitch.device_type
+)
 
 class Connection(Edge):
     device_type = "Connection"

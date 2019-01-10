@@ -1,3 +1,4 @@
+from PyQt4 import QtCore
 from Core.Device import *
 
 class Switch(Device):
@@ -6,6 +7,7 @@ class Switch(Device):
     def __init__(self):
         Device.__init__(self)
         self.setProperty("Hub mode", "False")
+        self.setProperty("OVS mode", "False")
         self.setProperty("Priority", "100")
         self.setProperty("mac", "")
 #       self.setProperty("mask", "")

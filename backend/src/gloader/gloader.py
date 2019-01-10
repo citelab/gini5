@@ -87,6 +87,8 @@ def createVS(myGINI, switchDir):
 
     for switch in myGINI.switches:
         print "Starting %s...\t" % switch.name,
+        if switch.isOVS:
+            print switch.name + " is an Open virtual switch!"
         subSwitchDir = switchDir + "/" + switch.name
         makeDir(subSwitchDir)
         undoFile = "%s/stopit.sh" % subSwitchDir
