@@ -167,10 +167,10 @@ class PropertiesWindow(Dockable):
                 checkable = True
             elif prop == "Hosts":
                 combo = True
-            elif self.currentItem.device_type in ["Switch", "OpenVirtualSwitch"]:
+            elif self.currentItem.device_type in ["Switch", "OVSwitch"]:
                 if prop == "subnet" or prop == "mask":
                     continue    # editable = False
-            if self.currentItem.device_type == "OpenVirtualSwitch" and prop == "OVS mode":
+            if self.currentItem.device_type == "OVSwitch" and prop == "OVS mode":
                 enabled = False
             self.addProperty(prop, value, editable, checkable, combo, enabled)
 

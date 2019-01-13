@@ -13,7 +13,7 @@ realMnumber=3
 deviceTypes = {"Bridge":Bridge, "Firewall":Firewall, "Hub":Hub, "Mobile":Mobile,
                "Router":Router, "Subnet":Subnet, "Switch":Switch, "REALM":REALM,
                "Mach":Mach, "Wireless_access_point":Wireless_access_point, "yRouter":yRouter,
-               "OpenFlow_Controller": OpenFlow_Controller, "OpenVirtualSwitch": OpenVirtualSwitch}
+               "OpenFlow_Controller": OpenFlow_Controller, "OVSwitch": OVSwitch}
 
 class View(QtGui.QGraphicsView):
     def __init__(self, parent = None):
@@ -204,9 +204,9 @@ class View(QtGui.QGraphicsView):
                         elif dest.device_type == "Subnet":
                             if len(dest.edges()) == 2:
                                 return "Subnet cannot have more than two connections!"
-                            if source.device_type in ["Switch", "OpenVirtualSwitch"]:
+                            if source.device_type in ["Switch", "OVSwitch"]:
                                 for edge in dest.edges():
-                                    if edge.getOtherDevice(dest).device_type in ["Switch", "OpenVirtualSwitch"]:
+                                    if edge.getOtherDevice(dest).device_type in ["Switch", "OVSwitch"]:
                                         return "Subnet cannot have more than one Switch!"
                                 for edge in source.edges():
                                     if edge.getOtherDevice(source).device_type == "Subnet":

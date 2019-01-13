@@ -25,7 +25,7 @@ class Compiler:
         for device in device_list:
             if isinstance(device, Device):
                 self.compile_list[device.device_type].append(device)
-        self.compile_list["Switch"] += self.compile_list["OpenVirtualSwitch"]
+        self.compile_list["Switch"] += self.compile_list["OVSwitch"]
 
     def compile(self):
         """
@@ -466,7 +466,7 @@ class Compiler:
                         else:
                             self.generateError(t, "subnet", "inconsistent due to multiple values (only connect to a single subnet)")
                             return
-                    if node.device_type in ["Switch", "OpenVirtualSwitch"]:
+                    if node.device_type in ["Switch", "OVSwitch"]:
                         # should look around for a subnet
                         if node not in switch_seen:
                             switch_seen.add(node)
@@ -506,7 +506,7 @@ class Compiler:
                     self.pass_mask(t)
                     for edge in t.edges():
                         node = edge.getOtherDevice(t)
-                        if node.device_type in ["Switch", "OpenVirtualSwitch"]:
+                        if node.device_type in ["Switch", "OVSwitch"]:
                             # should look around for a subnet
                             if node not in switch_seen:
                                 switch_seen.add(node)
@@ -842,7 +842,7 @@ class Compiler:
             otherDevice = con.getOtherDevice(device)
             if otherDevice.device_type == "Subnet":
                 device.addAdjacentSubnet(otherDevice.getProperty("subnet"))
-            elif otherDevice.device_type in ["Switch", "OpenVirtualSwitch"]:
+            elif otherDevice.device_type in ["Switch", "OVSwitch"]:
                 for c in otherDevice.edges():
                     odevice = c.getOtherDevice(otherDevice)
                     if odevice != device and odevice.device_type == "Router":

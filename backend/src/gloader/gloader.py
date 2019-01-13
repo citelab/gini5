@@ -104,6 +104,14 @@ def createVS(myGINI, switchDir):
                 undoOut.close()
                 continue
 
+            if switch.isOVS:
+                command = "ovs-vsctl add-br %s" % switch.name
+                runcmd = subprocess.Popen(command, shell=True, stdout=subprocess.PIPE)
+                out, err = runcmd.communicate()
+                if runcmd.returncode != 0:
+                    print "[FAILED]"
+                    return False
+
             command = "docker network create %s --subnet %s/24" % (switch.name, subnet)
             runcmd = subprocess.Popen(command, shell=True, stdout=subprocess.PIPE)
             out,err = runcmd.communicate()
@@ -119,6 +127,8 @@ def createVS(myGINI, switchDir):
                     """ % (out, out)
                 )
                 undoOut.write("docker network remove %s\n" % out)
+                if switch.isOVS:
+                    undoOut.write("ovs-vsctl del-br %s" % switch.name)
                 os.chmod(undoFile, 0755)
                 print "[OK]"
             else:
@@ -134,6 +144,8 @@ def createVS(myGINI, switchDir):
                         """ % (out, out)
                     )
                     undoOut.write("docker network remove %s\n" % out)
+                    if switch.isOVS:
+                        undoOut.write("ovs-vsctl del-br %s" % switch.name)
                     os.chmod(undoFile, 0755)
                     print "[OK]"
                 else:
@@ -141,6 +153,7 @@ def createVS(myGINI, switchDir):
                     undoOut.close()
                     return False
         else:
+            print "cannot find a subnet"
             print "[Failed]"
             undoOut.close()
             return False
@@ -287,7 +300,7 @@ def findHiddenSwitch(rtname, swname):
     x,rnum = rtname.split("_")
     x,snum = swname.split("_")
     if x != "Router":
-        swname = "Switch_r%sm%s" % (rnum, snum) # TODO: rename switch_r?u? to r?m?
+        swname = "Switch_r%sm%s" % (rnum, snum)
     else:
         swname = "Switch_r%sr%s" % (rnum, snum)
 
@@ -638,7 +651,8 @@ def createVM(myGINI, options):
 
 def createVOFC(myGINI, options):
     "create OpenFlow controller config file, and start the OpenFlow controller"
-    makeDir(options.controllerDir);
+    makeDir(options.controllerDir)
+    print("Controller directory", options.controllerDir)
     for controller in myGINI.vofc:
         print "Starting OpenFlow controller %s...\t" % controller.name,
         subControllerDir = "%s/%s" % (options.controllerDir, controller.name)
@@ -655,6 +669,7 @@ def createVOFC(myGINI, options):
 
 
         command = "screen -d -m -L -S %s %s %s" % (controller.name, VOFC_PROG_BIN, vofcFlags)
+        print command
 
         oldDir = os.getcwd()
         os.chdir(subControllerDir)
