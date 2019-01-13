@@ -1,7 +1,6 @@
 # GINI Toolkit Version 5.0.0
 
 The GINI Toolkit is free software. Please see the file COPYING for copyright information.
-Please read REPORT in this repository to know the functionalities.
 
 
 # Basic Installation - Ubuntu 18.04 LTS
@@ -22,7 +21,6 @@ sudo apt-get install	libreadline-dev \
 			screen \
 			openssh-server \
 			build-essential \
-			rxvt \
 			xterm \
 			libcanberra-gtk-module \
 			libcanberra-gtk3-module \
@@ -155,14 +153,8 @@ Otherwise, you should use Sessions:
 Details: What you just did was create a putty session identified by the name you provided.  This session holds the Host Name you will connect to, as well as the key used to authenticate you.  The session name can then be provided in gBuilder, who will use it to connect to the back-end.  Note that when providing a session name in gBuilder, the server name will be ignored.
 
 
-# Wireless GINI integration
-
-Please refer to REPORT, https://github.com/ahmed-youssef/WirelessGINI and https://github.com/ahmed-youssef/yRouter for more information.
-
-
 # Notes
 
-The package "rxvt" might be needed, if not already available.
 GINI should work on all Linux distributions with the required dependencies
 installed.  If you have any problems on any distribution and/or
 release, please e-mail the mailing list at gini@cs.mcgill.ca, or open an issue on this repository.
