@@ -80,15 +80,67 @@ def findSubnet4Switch(myGINI, sname):
     return ""
 
 
+def createOVS(myGINI, switchDir, switch):
+    """TODO: Create OVS, it is kinda different from docker network since you
+    need to bring the interface up first before connecting"""
+    print "Starting %s...\t" % switch.name
+    subSwitchDir = switchDir + "/" + switch.name
+    makeDir(subSwitchDir)
+    undoFile = "%s/stopit.sh" % subSwitchDir
+    undoOut = open(undoFile, "w")
+    undoOut.write("#!/bin/bash\n\n")
+
+    subnet = findSubnet4Switch(myGINI, switch.name)
+    if subnet != "":
+        if subnetMap.get(subnet):
+            dockerNetworkNameMap[switch.name] = subnetMap[subnet]
+            os.chmod(undoFile, 0755)
+            undoOut.close()
+            print "[OK]"
+            return True
+
+        startFile = "%s/startit.sh" % subSwitchDir
+        startOut = open(startFile, "w")
+        startOut.write("#!/bin/bash\n\n")
+        startupCommands = "ovs-vsctl add-br %s &&\n" % switch.name
+        startupCommands += "ip addr add %s/24 dev %s &&\n" % (subnet, switch.name)
+        startupCommands += "ip link set %s up\n" % switch.name
+        startOut.write(startupCommands)
+        os.chmod(startFile, 0755)
+        startOut.close()
+
+        undoOut.write("ovs-vsctl del-br %s\n" % switch.name)
+        os.chmod(undoFile, 0755)
+        undoOut.close()
+
+        runcmd = subprocess.Popen(startFile, shell=True, stdout=subprocess.PIPE)
+        runcmd.communicate()
+        if runcmd.returncode == 0:
+            subnetMap[subnet] = switch.name
+            print "[OK]"
+            return True
+        else:
+            print "[Failed]"
+            return False
+    else:
+        print "[Failed] Cannot find a subnet"
+        undoOut.close()
+        return False
+
 def createVS(myGINI, switchDir):
     "create the switch config file and start the switch"
     # create the main switch directory
     makeDir(switchDir)
 
     for switch in myGINI.switches:
-        print "Starting %s...\t" % switch.name,
         if switch.isOVS:
-            print switch.name + " is an Open virtual switch!"
+            if createOVS(myGINI, switchDir, switch):
+                continue
+            else:
+                print "[Failed] Error when creating Open virtual switch"
+                return False
+
+        print "Starting %s...\t" % switch.name,
         subSwitchDir = switchDir + "/" + switch.name
         makeDir(subSwitchDir)
         undoFile = "%s/stopit.sh" % subSwitchDir
@@ -103,14 +155,6 @@ def createVS(myGINI, switchDir):
                 os.chmod(undoFile, 0755)
                 undoOut.close()
                 continue
-
-            if switch.isOVS:
-                command = "ovs-vsctl add-br %s" % switch.name
-                runcmd = subprocess.Popen(command, shell=True, stdout=subprocess.PIPE)
-                out, err = runcmd.communicate()
-                if runcmd.returncode != 0:
-                    print "[FAILED]"
-                    return False
 
             command = "docker network create %s --subnet %s/24" % (switch.name, subnet)
             runcmd = subprocess.Popen(command, shell=True, stdout=subprocess.PIPE)
@@ -127,8 +171,6 @@ def createVS(myGINI, switchDir):
                     """ % (out, out)
                 )
                 undoOut.write("docker network remove %s\n" % out)
-                if switch.isOVS:
-                    undoOut.write("ovs-vsctl del-br %s" % switch.name)
                 os.chmod(undoFile, 0755)
                 print "[OK]"
             else:
@@ -144,8 +186,6 @@ def createVS(myGINI, switchDir):
                         """ % (out, out)
                     )
                     undoOut.write("docker network remove %s\n" % out)
-                    if switch.isOVS:
-                        undoOut.write("ovs-vsctl del-br %s" % switch.name)
                     os.chmod(undoFile, 0755)
                     print "[OK]"
                 else:
@@ -554,7 +594,7 @@ def checkRouter(myGINI, name):
     return False
 
 
-def  getSwitch2Connect(myGINI, mach):
+def getSwitch2Connect(myGINI, mach):
     # one of the interfaces is
     for nwi in mach.interfaces:
         target = nwi.target
@@ -569,9 +609,8 @@ def  getSwitch2Connect(myGINI, mach):
             swname = findHiddenSwitch(target, mach.name)
             return getDockerNetworkName(swname), nwi.ip
 
-    return ""
+    return (None, None)
 #end - getSwitch2Connect
-
 
 
 def createVM(myGINI, options):
@@ -618,14 +657,19 @@ def createVM(myGINI, options):
         print "Sname " + sname + " IP " + ip
         baseScreenCommand = "screen -d -m -L -S %s " % mach.name
 
-        if (sname != "fail"):
+        if sname is not None:
+            isOVS = False
+            if sname[:3] == "OVS":
+                isOVS = True
+
             # create command line
-            command = "docker run -i --privileged --name %s " % mach.name
+            command = "docker run -it --privileged --name %s " % mach.name
             command += "-v %s/data/%s:/root " % (os.environ["GINI_HOME"], mach.name)
-            command += "--entrypoint /root/entrypoint.sh -it "
-            command += "--network %s " % sname
-            command += "--ip %s" % ip
-            command += " alpine "
+            command += "--entrypoint /root/entrypoint.sh "
+            if not isOVS:
+                command += "--network %s " % sname
+                command += "--ip %s " % ip
+            command += "alpine /bin/ash"
 
             print "<<<<<<< " + baseScreenCommand + command
 
@@ -633,11 +677,27 @@ def createVM(myGINI, options):
             out,err = runcmd.communicate()
 
             if runcmd.returncode == 0:
-                stopOut.write("docker kill %s\n\n" % mach.name)
+                if isOVS:
+                    time.sleep(1)   # Avoid race condition
+                    ovsCommand = "ovs-docker add-port %s eth1 %s --ipaddress=%s/24" % (sname, mach.name, ip)
+                    print ovsCommand
+                    runcmd = subprocess.Popen(ovsCommand, shell=True, stdout=subprocess.PIPE)
+                    stopOut.write("ovs-docker del-port %s eth1 %s\n" % (sname, mach.name))
+                    runcmd.communicate()
+
+                stopOut.write("docker kill %s\n" % mach.name)
                 stopOut.write("docker rm %s\n\n" % mach.name)
-                stopOut.close()
+                if runcmd.returncode != 0:
+                    stopOut.close()
+                    os.chmod("stopit.sh", 0755)
+                    system("./stopit.sh")
+                    print "[Failed] ovs-docker error"
+                    return False
+            else:
+                print "[Failed] Error when creating Docker container"
+                return False
         else:
-            print "No Target found for Machine: %s " % mach.name
+            print "[Failed] No Target found for Machine: %s " % mach.name
             return False
 
         print "[OK]"
@@ -651,6 +711,11 @@ def createVM(myGINI, options):
 
 def createVOFC(myGINI, options):
     "create OpenFlow controller config file, and start the OpenFlow controller"
+
+    # TODO: We need to get the PID of the running VOFC, find out which port it's listening to
+    # via ss -lpn | grep "pid=$PID", then connect open virtual switches to the VOFC device with
+    # ovs-vsctl set-controller <switch name> tcp:$IP:$PORT
+
     makeDir(options.controllerDir)
     print("Controller directory", options.controllerDir)
     for controller in myGINI.vofc:
@@ -891,7 +956,7 @@ def getVRIFOutLine(nwIf, intName):
     if (nwIf.gw):
         outLine += "-gw %s " % nwIf.gw
     if (nwIf.mtu):
-        outLine += "-mtu %s " % mwIf.mtu
+        outLine += "-mtu %s " % nwIf.mtu
     outLine += "\n"
     for route in nwIf.routes:
         outLine += "route add -dev %s " % intName

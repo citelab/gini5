@@ -28,8 +28,8 @@ class PropertyCheckBox(QtGui.QCheckBox):
             if self.item.device_type == "Switch" and self.prop == "OVS mode":
                 # Add OVS indicator to device's name. The if condition is to avoid some weird UI bug
                 name = self.item.getProperty("name")
-                if "OV_" not in name:
-                    self.item.setProperty("name", "OV_" + name)
+                if "OV" not in name:
+                    self.item.setProperty("name", "OV" + name)
         else:
             # If a switch is currently connected to an OpenFlow Controller, we don't
             # allow it to be changed back to normal switch
@@ -39,10 +39,10 @@ class PropertyCheckBox(QtGui.QCheckBox):
                         self.toggle()
                         self.setChecked(QtCore.Qt.Checked)
                         return
-                # Truncate the "OV_" part in the switch's name
+                # Truncate the "OV" part in the switch's name
                 name = self.item.getProperty("name")
-                if "OV_" in name:
-                    self.item.setProperty("name", name[3:])
+                if "OV" in name:
+                    self.item.setProperty("name", name[2:])
             self.item.setProperty(self.prop, "False")
 
 class PropertiesWindow(Dockable):
