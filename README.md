@@ -74,50 +74,22 @@ Once installed, issue the `gbuilder` command to start the graphical interface.
 
 # SSH Key Generation instructions
 
-Please follow the instructions of the case that best suits you.
+Change directory to `$HOME/.ssh`
+Run `ssh-keygen -t rsa` in that directory.
+Press ENTER to select the default options.
+Run `cat id_rsa.pub >> authorized_keys`.
 
-1) The front-end and back-end are running on the same machine:
-- Change directory to $HOME/.ssh
-- Enter "ssh-keygen -t rsa" into the command line
-- Press ENTER for all options
-- Enter "cat id_rsa.pub >> authorized_keys" into the command line
+# Some sanity checks
 
-2) The front-end and back-end are running on two different Linux machines:
-- Change directory to $HOME/.ssh on the front-end
-- Enter "ssh-keygen -t rsa" into the command line
-- Enter "scp id_rsa.pub user@host1:.ssh/host2.pub" into the command line, where host1 is your back-end, host2 is your front-end and user is your username
-- Change directory to $HOME/.ssh on the back-end
-- Enter "cat host2.pub >> authorized_keys" into the command line
-
-3) The front-end is running on Windows:
-- Change directory to $HOME/.ssh on the back-end
-- Enter "ssh-keygen -t rsa" into the command line
-- Enter "cat id_rsa.pub >> authorized_keys" into the command line
-- Copy the file $HOME/.ssh/id_rsa to the front-end
-- Download puttygen (http://www.chiark.greenend.org.uk/~sgtatham/putty/download.html)
-- Load the file id_rsa into puttygen
-- Choose 'Save private key' in puttygen
-- Open putty
-- Expand the 'SSH' category on the left
-- Select 'Auth' and provide the .ppk file you saved earlier
-- Scroll back up and select the 'Session' category on the left
-
-If you only use putty with this program:
-- Select 'Default Settings' under 'Saved Sessions'
-- Press the 'Save' button
-
-Details: What you just did was specify a key that putty will attempt to use by default anytime you use putty for SSH.  This is useful in gBuilder if you frequently change the server location to machines that will authenticate you the same way, such as machines within a school computer lab.
-
-Otherwise, you should use Sessions:
-- Specify the Host Name you want to associate with this session
-- Specify a meaningful Session Name
-- Press the 'Save' button
-
-Details: What you just did was create a putty session identified by the name you provided.  This session holds the Host Name you will connect to, as well as the key used to authenticate you.  The session name can then be provided in gBuilder, who will use it to connect to the back-end.  Note that when providing a session name in gBuilder, the server name will be ignored.
-
+- Check docker is properly installed by running the following command.
+`docker ps`
+- You will see a listing of docker containers that are running for that command. Because there are none running at this time, you will see an empty list with a header. 
+- Check the ssh password less login as follows.
+`ssh localhost` 
+- You should be able to login without password with the proper key setup. If not, check the SSH key configuration. 
 
 # Notes
 
 GINI should work on all Linux distributions with the required dependencies
 installed.  If you have any problems on any distribution and/or
-release, please e-mail the mailing list at gini@cs.mcgill.ca, or open an issue on this repository.
+release, please e-mail maheswar@cs.mcgill.ca, or open an issue on this repository.
