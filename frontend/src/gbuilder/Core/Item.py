@@ -38,7 +38,7 @@ class Item(object):
         """
         Return the specified property of the item.
         """
-        return self.properties[QtCore.QString(propName)]
+        return self.properties.get(QtCore.QString(propName))
 
     def setProperty(self, prop, value):
         """

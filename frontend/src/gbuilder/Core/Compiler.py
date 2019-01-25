@@ -6,6 +6,7 @@ from Core.globals import options, environ, mainWidgets
 from PyQt4 import QtCore
 import os, re, traceback
 
+
 class Compiler:
     def __init__(self, device_list, filename):
         """
@@ -78,7 +79,7 @@ class Compiler:
             self.compile_Mach()
             self.compile_REALM()
             self.compile_mobile()
-            self.compile_OpenFlow_Controller()
+            self.compile_openflow_controller()
 
             self.output.write("</gloader>\n")
             self.output.close()
@@ -629,27 +630,46 @@ class Compiler:
 
             self.output.write("</vmb>\n\n")
 
-    def compile_OpenFlow_Controller(self):
+    def compile_openflow_controller(self):
         """
         Compile all the OpenFlow controllers.
         """
+        if not self.compile_list["OpenFlow_Controller"]:
+            return
+        else:
+            first_ofc = self.compile_list["OpenFlow_Controller"][0]
+            if not os.path.exists("/var/run/netns"):
+                self.generateGenericError(
+                    first_ofc,
+                    "Directory /var/run/netns does not exist.\n\
+                    Please create it with 'sudo mkdir -p /var/run/netns'\n\
+                    and change ownership to your user with 'sudo chown -R $USER:$USER /var/run/netns'"
+                )
+                return
+            else:
+                if not os.access("/var/run/netns", os.W_OK):
+                    self.generateGenericError(
+                        first_ofc,
+                        "You don't have write permission to /var/run/netns."
+                    )
+                    return
+
         for controller in self.compile_list["OpenFlow_Controller"]:
             self.output.write("<vofc name=\"" + controller.getName() + "\">\n")
 
-            routerFound = False
-            for con in controller.edges():
-                node = con.getOtherDevice(controller)
-                if node.device_type == "Router":
-                    self.output.write("\t<router>" + node.getName() + "</router>\n")
-                    routerFound = True
+            ovs_found = False
+            for connection in controller.edges():
+                node = connection.getOtherDevice(controller)
+                if node.getProperty("OVS mode") == "True":
+                    self.output.write("\t<ovs>" + node.getName() + "</ovs>\n")
+                    ovs_found = True
                 else:
-                    self.generateGenericWarning(controller, "has non-router connection; ignored")
+                    self.generateGenericWarning(controller, "has non-OVS connection; ignored.")
 
-            if not routerFound:
-                self.generateGenericWarning(controller, "has no router connections")
+            if not ovs_found:
+                self.generateGenericWarning(controller, "has no OVS connections.")
 
             self.output.write("</vofc>\n\n")
-
 
     def generateGenericError(self, device, message):
         """
@@ -658,7 +678,6 @@ class Compiler:
         self.errors += 1
         message = ' '.join(("Error:", device.getName(), message))
         self.log.append(message)
-
 
     def generateGenericWarning(self, device, message):
         """

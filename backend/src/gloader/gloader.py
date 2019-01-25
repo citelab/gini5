@@ -3,7 +3,7 @@
 # Revised by Daniel Ng
 # Revised to Docker version by Mahesh
 
-import sys, os, signal, time, subprocess, re
+import sys, os, signal, time, subprocess, re, socket
 
 from program import Program
 #import batch_ipcrm
@@ -80,40 +80,39 @@ def findSubnet4Switch(myGINI, sname):
     return ""
 
 
-def createOVS(myGINI, switchDir, switch):
-    """TODO: Create OVS, it is kinda different from docker network since you
-    need to bring the interface up first before connecting"""
+def create_ovs(my_gini, switch_dir, switch):
     print "Starting %s...\t" % switch.name
-    subSwitchDir = switchDir + "/" + switch.name
-    makeDir(subSwitchDir)
-    undoFile = "%s/stopit.sh" % subSwitchDir
-    undoOut = open(undoFile, "w")
-    undoOut.write("#!/bin/bash\n\n")
+    sub_switch_dir = switch_dir + "/" + switch.name
+    makeDir(sub_switch_dir)
+    undo_file = "%s/stopit.sh" % sub_switch_dir
+    undo_out = open(undo_file, "w")
+    undo_out.write("#!/bin/bash\n\n")
 
-    subnet = findSubnet4Switch(myGINI, switch.name)
+    subnet = findSubnet4Switch(my_gini, switch.name)
     if subnet != "":
         if subnetMap.get(subnet):
             dockerNetworkNameMap[switch.name] = subnetMap[subnet]
-            os.chmod(undoFile, 0755)
-            undoOut.close()
+            os.chmod(undo_file, 0755)
+            undo_out.close()
             print "[OK]"
             return True
 
-        startFile = "%s/startit.sh" % subSwitchDir
-        startOut = open(startFile, "w")
-        startOut.write("#!/bin/bash\n\n")
-        startupCommands = "ovs-vsctl add-br %s &&\n" % switch.name
-        startupCommands += "ip addr add %s/24 dev %s &&\n" % (subnet, switch.name)
-        startupCommands += "ip link set %s up\n" % switch.name
-        startOut.write(startupCommands)
-        os.chmod(startFile, 0755)
-        startOut.close()
+        start_file = "%s/startit.sh" % sub_switch_dir
+        start_out = open(start_file, "w")
+        start_out.write("#!/bin/bash\n\n")
+        startup_commands = "ovs-vsctl add-br %s &&\n" % switch.name
+        startup_commands += "ip addr add %s/24 dev %s &&\n" % (subnet, switch.name)
+        startup_commands += "ip link set %s up\n" % switch.name
+        startup_commands += "ovs-vsctl set-fail-mode %s standalone" % switch.name
+        start_out.write(startup_commands)
+        os.chmod(start_file, 0755)
+        start_out.close()
 
-        undoOut.write("ovs-vsctl del-br %s\n" % switch.name)
-        os.chmod(undoFile, 0755)
-        undoOut.close()
+        undo_out.write("ovs-vsctl del-br %s\n" % switch.name)
+        os.chmod(undo_file, 0755)
+        undo_out.close()
 
-        runcmd = subprocess.Popen(startFile, shell=True, stdout=subprocess.PIPE)
+        runcmd = subprocess.Popen(start_file, shell=True, stdout=subprocess.PIPE)
         runcmd.communicate()
         if runcmd.returncode == 0:
             subnetMap[subnet] = switch.name
@@ -134,7 +133,7 @@ def createVS(myGINI, switchDir):
 
     for switch in myGINI.switches:
         if switch.isOVS:
-            if createOVS(myGINI, switchDir, switch):
+            if create_ovs(myGINI, switchDir, switch):
                 continue
             else:
                 print "[Failed] Error when creating Open virtual switch"
@@ -162,6 +161,10 @@ def createVS(myGINI, switchDir):
             if runcmd.returncode == 0:
 
                 subnetMap[subnet] = switch.name
+                if switch.hub:
+                    print "Activating hub mode..."
+                    bridge_name = "br-" + out[:12]
+                    subprocess.call("brctl setageing %s 0" % bridge_name, shell=True)
 
                 undoOut.write(
                     """for i in ` docker network inspect -f '{{range .Containers}}{{.Name}} {{end}}' %s`;
@@ -709,12 +712,22 @@ def createVM(myGINI, options):
 
     return True
 
-def createVOFC(myGINI, options):
-    "create OpenFlow controller config file, and start the OpenFlow controller"
+def check_port_available(port):
+    sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    result = sock.connect_ex(("127.0.0.1", port))
+    if result == 0:
+        return False
+    else:
+        return True
 
-    # TODO: We need to get the PID of the running VOFC, find out which port it's listening to
-    # via ss -lpn | grep "pid=$PID", then connect open virtual switches to the VOFC device with
-    # ovs-vsctl set-controller <switch name> tcp:$IP:$PORT
+def find_available_port(lower_range, upper_range):
+    for port in range(lower_range, upper_range+1):
+        if check_port_available(port):
+            return port
+    return -1
+
+def createVOFC(myGINI, options):
+    "Create OpenFlow controller config file, and start the OpenFlow controller"
 
     makeDir(options.controllerDir)
     print("Controller directory", options.controllerDir)
@@ -723,8 +736,14 @@ def createVOFC(myGINI, options):
         subControllerDir = "%s/%s" % (options.controllerDir, controller.name)
         makeDir(subControllerDir)
 
+        port = find_available_port(6633, 6653)
+        if port == -1:
+            print "[FAILED] Cannot find an unused port"
+            return False
+
         vofcFlags = "py "
-        vofcFlags += "openflow.of_01 --port=0 "
+        vofcFlags += "openflow.of_01 --address=127.0.0.1 --port=%d " % port
+        vofcFlags += "gini.core.forwarding_l2_pairs "
         vofcFlags += "gini.support.gini_pid --pid_file_path='%s/%s/%s.pid' " % (options.controllerDir, controller.name, controller.name)
         vofcFlags += "gini.support.gini_module_load --module_file_path='%s/%s/%s.modules' " % (options.controllerDir, controller.name, controller.name)
 
@@ -732,14 +751,17 @@ def createVOFC(myGINI, options):
         print "VOFC: " + vofcFlags
         print "------------------------------------"
 
+        command = "screen -d -m -L -S %s %s %s\n\n" % (controller.name, VOFC_PROG_BIN, vofcFlags)
 
-        command = "screen -d -m -L -S %s %s %s" % (controller.name, VOFC_PROG_BIN, vofcFlags)
-        print command
+        connect_commands = ""
+        for ovs in controller.open_virtual_switches:
+            connect_commands += "ovs-vsctl set-controller %s tcp:127.0.0.1:%d\n" % (ovs, port)
 
         oldDir = os.getcwd()
         os.chdir(subControllerDir)
         startOut = open("startit.sh", "w")
         startOut.write(command)
+        startOut.write(connect_commands)
         startOut.close()
         os.chmod("startit.sh",0755)
         system("./startit.sh")
@@ -1222,6 +1244,8 @@ def destroyVOFC(controllers, controllerDir):
         if (os.access(pidFile, os.R_OK)):
             # kill the controller
             command = "screen -S %s -X quit" % controller.name
+            system(command)
+            command = "kill -9 `cat %s`" % pidFile
             system(command)
         else:
             pidFileFound = False

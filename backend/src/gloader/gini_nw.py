@@ -74,8 +74,8 @@ class GINI_NW:
             newVOFC = VOFC(vofc.getAttribute("name"))
             for para in vofc.childNodes:
                 if (para.nodeType == para.ELEMENT_NODE):
-                    if (para.tagName.lower() == "router"):
-                        newVOFC.addRouter(self.getTextPart(para))
+                    if (para.tagName.lower() == "ovs"):
+                        newVOFC.add_open_virtual_switch(self.getTextPart(para))
             self.vofc.append(newVOFC)
         return True
 
@@ -192,7 +192,7 @@ class GINI_NW:
                 if (para.tagName.lower() == "target"):
                     myIF.target = self.getTextPart(para)
                 if (para.tagName.lower() == "network"):
-                    myIF.network = self.getTextPart(para)                
+                    myIF.network = self.getTextPart(para)
                 if (para.tagName.lower() == "mac"):
                     myIF.mac = self.getTextPart(para)
                 if (para.tagName.lower() == "ip"):

@@ -13,7 +13,7 @@ realMnumber=3
 deviceTypes = {"Bridge":Bridge, "Firewall":Firewall, "Hub":Hub, "Mobile":Mobile,
                "Router":Router, "Subnet":Subnet, "Switch":Switch, "REALM":REALM,
                "Mach":Mach, "Wireless_access_point":Wireless_access_point, "yRouter":yRouter,
-               "OpenFlow_Controller": OpenFlow_Controller, "OVSwitch": OVSwitch}
+               "OpenFlow_Controller": OpenFlow_Controller, "OVSwitch": OpenVirtualSwitch}
 
 class View(QtGui.QGraphicsView):
     def __init__(self, parent = None):
