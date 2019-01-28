@@ -714,7 +714,7 @@ def createVM(myGINI, options):
 
 def check_port_available(port):
     sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-    result = sock.connect_ex(("127.0.0.1", port))
+    result = sock.connect_ex(("0.0.0.0", port))
     if result == 0:
         return False
     else:
@@ -742,7 +742,7 @@ def createVOFC(myGINI, options):
             return False
 
         vofcFlags = "py "
-        vofcFlags += "openflow.of_01 --address=127.0.0.1 --port=%d " % port
+        vofcFlags += "openflow.of_01 --address=0.0.0.0 --port=%d " % port
         vofcFlags += "gini.core.forwarding_l2_pairs "
         vofcFlags += "gini.support.gini_pid --pid_file_path='%s/%s/%s.pid' " % (options.controllerDir, controller.name, controller.name)
         vofcFlags += "gini.support.gini_module_load --module_file_path='%s/%s/%s.modules' " % (options.controllerDir, controller.name, controller.name)
@@ -755,7 +755,7 @@ def createVOFC(myGINI, options):
 
         connect_commands = ""
         for ovs in controller.open_virtual_switches:
-            connect_commands += "ovs-vsctl set-controller %s tcp:127.0.0.1:%d\n" % (ovs, port)
+            connect_commands += "ovs-vsctl set-controller %s tcp:0.0.0.0:%d\n" % (ovs, port)
 
         oldDir = os.getcwd()
         os.chdir(subControllerDir)

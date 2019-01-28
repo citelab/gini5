@@ -85,9 +85,6 @@ class OpenFlow_Controller(Attachable):
             mainWidgets["log"].append("You must start the topology first!")
             return
 
-        file = open(self.modulesFilePath, "a")
+        file = open(self.modulesFilePath, "w")
         file.write(fullPkgName + "\n")
         file.close()
-
-        print self.modulesFilePath
-        print fullPkgName
