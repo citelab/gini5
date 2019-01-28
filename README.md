@@ -50,7 +50,7 @@ sudo groupadd docker
 sudo usermod -aG docker $USER
 ```
 
-The first command was creating a `docker` group assuming that it did not exist before. The second command was adding your account to the docker group. 
+The first command was creating a `docker` group assuming that it did not exist before. The second command was adding your account to the docker group. After running this command, you may need to log out of your account and log back in (or reboot).
 
 Clone the repository and set up PATH environment variable:
 
