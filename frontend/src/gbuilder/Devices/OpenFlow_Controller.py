@@ -12,6 +12,10 @@ class OpenFlow_Controller(Attachable):
     def __init__(self):
         Attachable.__init__(self)
 
+        # Shortens display name
+        cur_name = self.getProperty("name")
+        self.setProperty("name", cur_name.replace("OpenFlow_Controller", "OFController"))
+
         self.modulesFilePath = os.path.join(GINI_HOME, "data", self.getName(), self.getName() + ".modules")
 
         loadModuleMenu = self.menu.addMenu("Load Module")
@@ -38,6 +42,16 @@ class OpenFlow_Controller(Attachable):
 
     def showSamplesMenu(self):
         self.showMenu(self.samplesMenu, "samples")
+
+    def setIndex(self, index):
+        super(Attachable, self).setIndex(index)
+
+        # Shortens display name
+        cur_name = self.getProperty("name")
+        self.setProperty("name", cur_name.replace("OpenFlow_Controller", "OFController"))
+
+        # Updates module file path
+        self.modulesFilePath = os.path.join(GINI_HOME, "data", self.getName(), self.getName() + ".modules")
 
     # The following code requires a bit of an explanation.
     #
