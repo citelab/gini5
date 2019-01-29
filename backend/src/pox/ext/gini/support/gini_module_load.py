@@ -22,6 +22,15 @@ class ModuleFileReader(threading.Thread):
         # self.launched_modules = []
         self.current_module = None
 
+    def _flush_rules(self):
+        log.info("Remove current handlers and flows..")
+        core.openflow._eventMixin_handlers.clear()
+
+        msg = of.ofp_flow_mod(match=of.ofp_match(), command=of.OFPFC_DELETE)
+        for connection in core.openflow._connections.values():
+            connection.send(msg)
+        del self.current_module
+
     def run(self):
         """
         Rewritten by Trung
@@ -49,14 +58,8 @@ class ModuleFileReader(threading.Thread):
                 elif self.current_module and module == self.current_module.__name__:
                     pass
                 else:
-                    if self.current_module is not None:
-                        log.info("Remove current handlers and flows..")
-                        core.openflow._eventMixin_handlers.clear()
+                    self._flush_rules()
 
-                        msg = of.ofp_flow_mod(match=of.ofp_match(), command=of.OFPFC_DELETE)
-                        for connection in core.openflow._connections.values():
-                            connection.send(msg)
-                        del self.current_module
                     log.info("gini_module_load: loading module - " + module)
                     try:
                         mod = importlib.import_module(module)
