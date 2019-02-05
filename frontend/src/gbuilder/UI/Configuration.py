@@ -291,7 +291,7 @@ class GeneralPage(QtGui.QWidget):
         uiLayout.addWidget(self.moveAlertCheckBox)
         uiLayout.addWidget(self.gnomeTerminalCheckBox)
         uiLayout.addWidget(self.menuModsCheckBox)
-        
+
         uiLayout.addWidget(QtGui.QLabel(self.tr("Grid Color: ")))
         uiLayout.addLayout(gridLayout)
         uiLayout.addWidget(QtGui.QLabel(self.tr("Background: ")))
@@ -729,7 +729,7 @@ class Wizard(QtGui.QWizard):
 
         self.systrayCheckBox = QtGui.QCheckBox("Use system tray (hide on close)")
 
-        self.usernameLine = LineEdit()
+        self.usernameLine = LineEdit(os.getlogin())
         self.usernameLine.setToolTip("This username should be your login username to the\nserver or session you specify below.")
 
         self.serverLine = LineEdit("localhost")
