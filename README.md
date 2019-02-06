@@ -93,4 +93,3 @@ Run `cat id_rsa.pub >> authorized_keys`.
 GINI should work on all Linux distributions with the required dependencies
 installed.  If you have any problems on any distribution and/or
 release, please e-mail maheswar@cs.mcgill.ca, or open an issue on this repository.
->>>>>>> master
