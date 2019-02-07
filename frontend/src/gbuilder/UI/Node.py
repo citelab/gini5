@@ -462,17 +462,17 @@ class Node(DropItem, Item):
         for edge in self.edges():
             edge.delete()
 
-	if self.device_type == "yRouter":
-	    index = self.getID()
-	    yRouter = usedyRouters[index]
-	    availableyRouters.append(yRouter)
-	    availableyRouters.sort(key=lambda YunEntity: YunEntity['ID'])
-	    del usedyRouters[index]
+        if self.device_type == "yRouter":
+            index = self.getID()
+            yRouter = usedyRouters[index]
+            availableyRouters.append(yRouter)
+            availableyRouters.sort(key=lambda YunEntity: YunEntity['ID'])
+            del usedyRouters[index]
 
-	    if mainWidgets["drop"].commonDropArea.yRouterDrop is not None:
-		mainWidgets["drop"].commonDropArea.yRouterDrop.update()
-	    if mainWidgets["drop"].netDropArea.yRouterDrop is not None:
-		mainWidgets["drop"].netDropArea.yRouterDrop.update()
+        if mainWidgets["drop"].commonDropArea.yRouterDrop is not None:
+            mainWidgets["drop"].commonDropArea.yRouterDrop.update()
+        if mainWidgets["drop"].netDropArea.yRouterDrop is not None:
+            mainWidgets["drop"].netDropArea.yRouterDrop.update()
 
         self.scene().removeItem(self)
 

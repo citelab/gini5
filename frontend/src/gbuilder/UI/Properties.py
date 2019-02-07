@@ -25,7 +25,24 @@ class PropertyCheckBox(QtGui.QCheckBox):
     def changeState(self, state):
         if state:
             self.item.setProperty(self.prop, "True")
+            if self.item.device_type == "Switch" and self.prop == "OVS mode":
+                # Add OVS indicator to device's name. The if condition is to avoid some weird UI bug
+                name = self.item.getProperty("name")
+                if "OV" not in name:
+                    self.item.setProperty("name", "OV" + name)
         else:
+            # If a switch is currently connected to an OpenFlow Controller, we don't
+            # allow it to be changed back to normal switch
+            if self.item.device_type == "Switch" and self.prop == "OVS mode":
+                for edge in self.item.edges():
+                    if edge.getOtherDevice(self.item).device_type == "OpenFlow_Controller":
+                        self.toggle()
+                        self.setChecked(QtCore.Qt.Checked)
+                        return
+                # Truncate the "OV" part in the switch's name
+                name = self.item.getProperty("name")
+                if "OV" in name:
+                    self.item.setProperty("name", name[2:])
             self.item.setProperty(self.prop, "False")
 
 class PropertiesWindow(Dockable):
@@ -56,7 +73,7 @@ class PropertiesWindow(Dockable):
                      self.dockChanged)
         self.connect(self.model, QtCore.SIGNAL("dataChanged(QModelIndex,QModelIndex)"), self.changed)
 
-    def addProperty(self, prop, value, editable=True, checkable=False, combo=False):
+    def addProperty(self, prop, value, editable=True, checkable=False, combo=False, enabled=True):
         """
         Add a property to display in the window.
         """
@@ -80,6 +97,7 @@ class PropertiesWindow(Dockable):
             if checkable:
                 index = self.model.indexFromItem(val)
                 checkbox = PropertyCheckBox(self.currentItem, prop)
+                checkbox.setEnabled(enabled)
                 if mainWidgets["main"].isRunning():
                     checkbox.setEnabled(False)
                 self.sourceView.setIndexWidget(index, checkbox)
@@ -144,14 +162,17 @@ class PropertiesWindow(Dockable):
             editable = True
             checkable = False
             combo = False
-            if prop in ["Hub mode", "WLAN"]:
+            enabled = True
+            if prop in ["Hub mode", "WLAN", "OVS mode"]:
                 checkable = True
             elif prop == "Hosts":
                 combo = True
-            elif self.currentItem.device_type == "Switch":
+            elif self.currentItem.device_type in ["Switch", "OVSwitch"]:
                 if prop == "subnet" or prop == "mask":
-                    continue#editable = False
-            self.addProperty(prop, value, editable, checkable, combo)
+                    continue    # editable = False
+            if self.currentItem.device_type == "OVSwitch":
+                enabled = False
+            self.addProperty(prop, value, editable, checkable, combo, enabled)
 
     def clear(self):
         """

@@ -80,9 +80,9 @@ class Interfaceable(Attachable):
         """
         for interface in self.interfaces:
             target = interface[QtCore.QString("target")]
-            if target.device_type == "Switch":
+            if target.device_type in ["Switch", "OVSwitch"]:
                 return interface
-            elif target.device_type == "Router" and node.device_type == "Switch":
+            elif target.device_type == "Router" and node.device_type in ["Switch", "OVSwitch"]:
                 return target.getInterface(node)
 
 
@@ -242,7 +242,8 @@ class Interfaceable(Attachable):
             device, interface = self.searchSubnet(subnet)
             if interface:
                 target = interface[QtCore.QString("target")]
-                if self.device_type != "Mach" and device.device_type == "Router" and target.device_type == "Switch":
+                if self.device_type != "Mach" and device.device_type == "Router" and\
+                    target.device_type in ["Switch", "OVSwitch"]:
                     iface = device.getInterface(target)
                     if iface:
                         gateway = iface[QtCore.QString("ipv4")]
@@ -263,7 +264,7 @@ class Interfaceable(Attachable):
                                   " ",
                                   target)
                 else:
-                    if target.device_type == "Switch":
+                    if target.device_type in ["Switch", "OVSwitch"]:
                         # interfaceable = target.getTarget(self)
                         # gateway = interfaceable.getInterface(target)[QtCore.QString("ipv4")]
                         gateway = target.getGateway()

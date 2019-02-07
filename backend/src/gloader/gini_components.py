@@ -11,6 +11,7 @@ class Switch:
     port = ""
     remote = "localhost"
     hub = False
+    isOVS = False
 
     def __init__(self, sName):
         "Initialize the Switch class"
@@ -28,6 +29,7 @@ class Switch:
         print "[Port: " + self.port + "]",
         print "[Remote: " + self.remote + "]",
         print "[Hub: " + str(self.hub) + "]"
+        print "[IsOVS " + str(self.isOVS) + "]"
 
 
 class VM:
@@ -264,16 +266,16 @@ class VOFC:
     def __init__(self, vofcName):
         "Initialize the VOFC class"
         self.name = vofcName
-        self.routers = []
+        self.open_virtual_switches = []
 
-    def addRouter(self, newRouter):
-        self.routers.append(newRouter)
+    def add_open_virtual_switch(self, new_open_virtual_switch):
+        self.open_virtual_switches.append(new_open_virtual_switch)
 
     def printMe(self):
         print "[Name: " + self.name + "]",
         print ""
         print "[Routers: "
-        for item in self.routers:
+        for item in self.open_virtual_switches:
             print "[Name: " + item + "]"
         print "]"
 

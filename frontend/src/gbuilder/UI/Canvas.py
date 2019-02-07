@@ -12,7 +12,8 @@ import os.path
 realMnumber=3
 deviceTypes = {"Bridge":Bridge, "Firewall":Firewall, "Hub":Hub, "Mobile":Mobile,
                "Router":Router, "Subnet":Subnet, "Switch":Switch, "REALM":REALM,
-               "Mach":Mach, "Wireless_access_point":Wireless_access_point, "yRouter":yRouter, 'OpenFlow_Controller': OpenFlow_Controller}
+               "Mach":Mach, "Wireless_access_point":Wireless_access_point, "yRouter":yRouter,
+               "OpenFlow_Controller": OpenFlow_Controller, "OVSwitch": OpenVirtualSwitch}
 
 class View(QtGui.QGraphicsView):
     def __init__(self, parent = None):
@@ -196,16 +197,16 @@ class View(QtGui.QGraphicsView):
                             if len(dest.edges()) == 1:
                                 return "REALM cannot have more than one connection!"
                         elif dest.device_type == "yRouter":
-                            target =source.getTarget(dest)
-                            yid= dest.getID()
+                            target = source.getTarget(dest)
+                            yid = dest.getID()
                             if target is not None and target.device_type == "Router" and not yRouters[yid]['IsPortal']:
-                                 return "yRouter_%d is not a portal and cannot connect to the host!" %yid
+                                return "yRouter_%d is not a portal and cannot connect to the host!" % yid
                         elif dest.device_type == "Subnet":
                             if len(dest.edges()) == 2:
                                 return "Subnet cannot have more than two connections!"
-                            if source.device_type == "Switch":
+                            if source.device_type in ["Switch", "OVSwitch"]:
                                 for edge in dest.edges():
-                                    if edge.getOtherDevice(dest).device_type == "Switch":
+                                    if edge.getOtherDevice(dest).device_type in ["Switch", "OVSwitch"]:
                                         return "Subnet cannot have more than one Switch!"
                                 for edge in source.edges():
                                     if edge.getOtherDevice(source).device_type == "Subnet":
@@ -214,21 +215,25 @@ class View(QtGui.QGraphicsView):
                                 target = dest.getTarget(source)
                                 yid = source.getID()
                                 if target is not None and target.device_type == "Router" and not yRouters[yid]['IsPortal']:
-                                    return "yRouter_%d is not a portal and cannot connect to the host!" %yid
+                                    return "yRouter_%d is not a portal and cannot connect to the host!" % yid
                             if source.device_type == "Router":
                                 target = dest.getTarget(source)
                                 if target is not None and target.device_type == "yRouter":
                                     yid = target.getID()
                                     if not yRouters[yid]['IsPortal']:
-                                        return "Cannot connect yRouter_%d to the host (not a portal)!" %yid
-
-
+                                        return "Cannot connect yRouter_%d to the host (not a portal)!" % yid
                         elif dest.device_type == "Router":
                             if source.device_type == "OpenFlow_Controller":
                                 for edge in dest.edges():
                                     if edge.getOtherDevice(dest).device_type == "OpenFlow_Controller":
                                         return "Router cannot have more than one OpenFlow Controller!"
                         return True
+                    elif dest.device_type == "Switch" and source.device_type == "OpenFlow_Controller":
+                        if dest.getProperty("OVS mode") == "True":
+                            return True
+                    elif dest.device_type == "OpenFlow_Controller" and source.device_type == "Switch":
+                        if source.getProperty("OVS mode") == "True":
+                            return True
                     return False
 
                 # Don't create an edge between the same node
