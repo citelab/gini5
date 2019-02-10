@@ -84,6 +84,9 @@ def create_ovs(my_gini, switch_dir, switch):
     print "Starting %s...\t" % switch.name
     sub_switch_dir = switch_dir + "/" + switch.name
     makeDir(sub_switch_dir)
+    old_dir = os.getcwd()
+    os.chdir(sub_switch_dir)
+
     undo_file = "%s/stopit.sh" % sub_switch_dir
     undo_out = open(undo_file, "w")
     undo_out.write("#!/bin/bash\n\n")
@@ -95,6 +98,7 @@ def create_ovs(my_gini, switch_dir, switch):
             os.chmod(undo_file, 0755)
             undo_out.close()
             print "[OK]"
+            os.chdir(old_dir)
             return True
 
         start_file = "%s/startit.sh" % sub_switch_dir
@@ -102,13 +106,19 @@ def create_ovs(my_gini, switch_dir, switch):
         start_out.write("#!/bin/bash\n\n")
         startup_commands = "ovs-vsctl add-br %s &&\n" % switch.name
         startup_commands += "ip addr add %s/24 dev %s &&\n" % (subnet, switch.name)
-        startup_commands += "ip link set %s up\n" % switch.name
-        startup_commands += "ovs-vsctl set-fail-mode %s standalone" % switch.name
+        startup_commands += "ip link set %s up &&\n" % switch.name
+        startup_commands += "ovs-vsctl set-fail-mode %s standalone &&" % switch.name
         start_out.write(startup_commands)
+
+        screen_command = "screen -d -m -L -S %s " % switch.name
+        screen_command += "gvirtual-switch %s\n" % switch.name
+        start_out.write(screen_command)
+
         os.chmod(start_file, 0755)
         start_out.close()
 
         undo_out.write("ovs-vsctl del-br %s\n" % switch.name)
+        undo_out.write("screen -S %s -X quit\n" % switch.name)
         os.chmod(undo_file, 0755)
         undo_out.close()
 
@@ -117,13 +127,14 @@ def create_ovs(my_gini, switch_dir, switch):
         if runcmd.returncode == 0:
             subnetMap[subnet] = switch.name
             print "[OK]"
+            os.chdir(old_dir)
             return True
         else:
             print "[Failed]"
             return False
     else:
         print "[Failed] Cannot find a subnet"
-        undoOut.close()
+        undo_out.close()
         return False
 
 def createVS(myGINI, switchDir):

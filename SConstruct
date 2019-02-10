@@ -434,6 +434,29 @@ env.Alias('install-gloader', bindir + '/gserver')
 env.Alias('install-gloader', sharedir + '/gloader' + '/gloader.dtd')
 env.Alias('install','install-gloader')
 
+
+#########################
+# GVirtualSwitchShell #
+#########################
+
+gvirtual_switch_dir = backend_dir + "/src/gvirtual_switch"
+gvirtual_switch_lib_dir = libdir
+
+result = env.Install(gvirtual_switch_lib_dir + "/gvirtual_switch", Glob(gvirtual_switch_dir + "/*.py"))
+
+for file in Glob(gvirtual_switch_lib_dir + "gvirtual_switch/*.py"):
+    compile_python(env, file.abspath, "install-gvirtual_switch")
+env.Clean(gvirtual_switch_lib_dir + "/gvirtual_switch", gvirtual_switch_lib_dir + "/gvirtual_switch")
+post_chmod(gvirtual_switch_lib_dir + "/gvirtual_switch/gvirtual_switch.py")
+
+env.PythonEnvFile(bindir + "/gvirtual-switch", gvirtual_switch_lib_dir + "/gvirtual_switch/gvirtual_switch.py")
+post_chmod(bindir + "/gvirtual-switch")
+
+env.Alias("install-gvirtual-switch", gvirtual_switch_lib_dir + "/gvirtual_switch")
+env.Alias("install-gvirtual-switch", bindir + "/gvirtual-switch")
+env.Alias("install", "install-gvirtual-switch")
+
+
 ##########
 # Kernel #
 ##########
@@ -523,6 +546,7 @@ post_chmod(bindir + "/vtap")
 env.Alias('install-vgini',bindir + '/vtap')
 env.Alias('install-vgini',bindir + '/vtproxy')
 # env.Alias('install','install-vgini')
+
 ############
 # Frontend #
 ############
