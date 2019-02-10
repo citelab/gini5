@@ -12,7 +12,7 @@ class DropArea(QtGui.QGraphicsView):
         """
         QtGui.QGraphicsView.__init__(self)
         self.itemTypes = itemTypes
-	self.yRouterDrop = None
+        self.yRouterDrop = None
 
         scene = QtGui.QGraphicsScene(self)
         scene.setItemIndexMethod(QtGui.QGraphicsScene.NoIndex)
@@ -29,13 +29,14 @@ class DropArea(QtGui.QGraphicsView):
         scene = self.scene()
         scene.clear()
 
+        # print location, QtCore.Qt.LeftDockWidgetArea, QtCore.Qt.RightDockWidgetArea
+        # TODO: Fix icon spacing here
+
         if location == QtCore.Qt.LeftDockWidgetArea \
             or location == QtCore.Qt.RightDockWidgetArea:
             lastnode = None
             for i in range(len(self.itemTypes)):
                 node = DropItem(self.itemTypes[i])
-		if self.itemTypes[i] == "yRouter":
-		    self.yRouterDrop = node
                 if lastnode:
                     node.setPos(0, lastnode.pos().y() + 75)
                 else:
@@ -49,8 +50,6 @@ class DropArea(QtGui.QGraphicsView):
             lastnode = None
             for i in range(len(self.itemTypes)):
                 node = DropItem(self.itemTypes[i])
-		if self.itemTypes[i] == "yRouter":
-		    self.yRouterDrop = node
                 if lastnode:
                     node.setPos(lastnode.pos().x() + 75, 0)
                 else:
@@ -87,7 +86,6 @@ class DropBar(Dockable):
 
         self.toolChanged(self.toolBox.currentIndex())
         self.setFocusPolicy(QtCore.Qt.NoFocus)
-        #self.toolBox.setItemIcon(self.toolBox.currentIndex(), QtGui.QIcon(environ["images"] + "Mach.png"))
 
     def toolChanged(self, index):
         """

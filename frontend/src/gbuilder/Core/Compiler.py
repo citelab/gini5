@@ -60,7 +60,7 @@ class Compiler:
 
             if options["autogen"]:
                 self.autogen_router()
-                self.autogen_yRouter()
+                # self.autogen_yRouter()
                 self.autogen_Mach()
                 self.autogen_REALM()
                 self.autogen_mobile()
@@ -69,13 +69,13 @@ class Compiler:
             if options["autorouting"]:
                 self.routing_table_router()
                 #self.routing_table_wireless_access_point()
-                self.routing_table_yRouter()
+                # self.routing_table_yRouter()
                 self.routing_table_entry()
                 self.routing_table_mach()
                 #self.routing_table_mobile()
 
             self.compile_router()
-            self.compile_yRouter()
+            # self.compile_yRouter()
             self.compile_Mach()
             self.compile_REALM()
             self.compile_mobile()
@@ -513,8 +513,6 @@ class Compiler:
                                 switch_seen.add(node)
                                 Q.append(node)
 
-
-
     def autogen_Mach(self):
         """
         Auto-generate properties for Machs.
@@ -721,9 +719,9 @@ class Compiler:
         """
         Clear all route tables of interfaceable devices.
         """
-	for interfaceable in self.compile_list["yRouter"]:
-	    interfaceable.emptyAdjacentLists()
-	    interfaceable.emptyRouteTable()
+        # for interfaceable in self.compile_list["yRouter"]:
+        #     interfaceable.emptyAdjacentLists()
+        #     interfaceable.emptyRouteTable()
 
         for interfaceable in self.compile_list["Router"]:
             interfaceable.emptyAdjacentLists()
@@ -805,9 +803,9 @@ class Compiler:
         for router in self.compile_list["Router"]:
             for subnet in self.compile_list["Subnet"]:
                 router.addRoutingEntry(subnet.getProperty("subnet"))
-        for yRouter in self.compile_list["yRouter"]:
-            for subnet in self.compile_list["Subnet"]:
-                yRouter.addRoutingEntry(subnet.getProperty("subnet"))
+        # for yRouter in self.compile_list["yRouter"]:
+        #     for subnet in self.compile_list["Subnet"]:
+        #         yRouter.addRoutingEntry(subnet.getProperty("subnet"))
 
     def findAdjacentRouters(self, device):
         """

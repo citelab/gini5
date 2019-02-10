@@ -201,6 +201,7 @@ class ServerPage(QtGui.QWidget):
         self.localPortLine.setText(options["localPort"])
         self.remotePortLine.setText(options["remotePort"])
 
+
 class UpdatePage(QtGui.QWidget):
     def __init__(self, parent=None):
         """
@@ -281,6 +282,9 @@ class GeneralPage(QtGui.QWidget):
         baseThemeLayout.addWidget(self.browseBaseThemeButton)
         baseThemeLayout.addWidget(self.chooseBaseColorButton)
         baseThemeLayout.setAlignment(QtCore.Qt.AlignLeft)
+
+        # TODO: Add configuration option for item spacing here
+        # self.item_spacing_slider = QtGui.QSlider(QtCore.Qt.Horizontal)
 
         uiLayout = QtGui.QVBoxLayout()
         uiLayout.addWidget(self.namesCheckBox)
