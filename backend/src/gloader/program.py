@@ -20,7 +20,7 @@ class Program:
     giniNW = None       # the gini network framework
 
     def __init__(self, pName, fileName):
-        "Initialize the Program class"
+        """Initialize the Program class"""
         self.progName = pName
         self.setupFile = fileName
         self.optParser = OptionParser(usage=self.usage())

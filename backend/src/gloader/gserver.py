@@ -12,6 +12,7 @@ recovery = False
 server = None
 shell = None
 
+
 class Server(QtCore.QObject):
     def __init__(self):
         QtCore.QObject.__init__(self)
@@ -35,7 +36,7 @@ class Server(QtCore.QObject):
     def newConnection(self):
         self.clientConnection = self.tcpServer.nextPendingConnection()
         self.connect(self.clientConnection, QtCore.SIGNAL("disconnected()"), self.stop)
-        #self.connect(self.clientConnection, QtCore.SIGNAL("disconnected()"),
+        # self.connect(self.clientConnection, QtCore.SIGNAL("disconnected()"),
         #             self.clientConnection, QtCore.SLOT("deleteLater()"))
         self.connect(self.clientConnection, QtCore.SIGNAL("readyRead()"), self.read)
 
@@ -135,8 +136,7 @@ class Server(QtCore.QObject):
             statusList.append(status)
             deviceList.append((device, pid))
 
-
-	for status in statusList:
+        for status in statusList:
             if status == "":
                 self.timer.stop()
                 return
@@ -155,8 +155,8 @@ class Server(QtCore.QObject):
         self.clientConnection.disconnectFromHost()
         sys.exit(0)
 
-"""
 
+"""
 class ShellStarter(QtCore.QThread):
     def __init__(self, command):
         QtCore.QThread.__init__(self)
@@ -172,9 +172,11 @@ class ShellStarter(QtCore.QThread):
         self.started = 1
 """
 
+
 class Callable:
     def __init__(self, anycallable):
         self.__call__ = anycallable
+
 
 class Command:
     mutex = QtCore.QMutex()
@@ -195,6 +197,7 @@ class Command:
     def create(commandType, args):
         return commands[commandType](args)
     create = Callable(create)
+
 
 class ReceiveInitStartCommand(Command):
     def execute(self):
@@ -225,6 +228,7 @@ class ReceiveInitStartCommand(Command):
         if not os.access(mobiledir, os.F_OK):
             os.mkdir(mobiledir, 0755)
 
+
 class ReceiveCanvasInfoCommand(Command):
     def execute(self):
         print "writing canvas info..."
@@ -233,6 +237,7 @@ class ReceiveCanvasInfoCommand(Command):
         canvasOut = open(mobiledir + "/canvas.data", "w")
         canvasOut.write(self.args)
         canvasOut.close()
+
 
 class ReceiveMobileInfoCommand(Command):
     def execute(self):
@@ -244,6 +249,7 @@ class ReceiveMobileInfoCommand(Command):
         dataOut = open(mobiledir + "/" + name + ".data", "w")
         dataOut.write(pos)
         dataOut.close()
+
 
 class ReceiveStartCommand(Command):
     def execute(self):
@@ -261,6 +267,7 @@ class ReceiveStartCommand(Command):
 
         subprocess.Popen(["/bin/bash", "-c", command])
 
+
 class ReceiveStopCommand(Command):
     def execute(self):
         print "stopping..."
@@ -268,9 +275,10 @@ class ReceiveStopCommand(Command):
 
         subprocess.Popen(["/bin/bash", "-c", command])
 
+
 class ReceiveAttachDetachCommand(Command):
     def execute(self):
-        #print "attaching and detaching WAP_" + self.args + "..."
+        # print "attaching and detaching WAP_" + self.args + "..."
         command1 = "screen -r WAP_%s" % self.args
         command2 = "screen -d WAP_%s" % self.args
 
@@ -280,6 +288,7 @@ class ReceiveAttachDetachCommand(Command):
 
         subprocess.Popen(["/bin/bash", "-c", command2])
 
+
 class ReceiveFileCommand(Command):
     def execute(self):
         print "receiving file..."
@@ -288,31 +297,38 @@ class ReceiveFileCommand(Command):
         outfile.write(body)
         outfile.close()
 
+
 class SendDeviceStatusCommand(Command):
     def execute(self):
         self.server.send("status " + self.args)
+
 
 class ShowDevicesStatusCommand(Command):
     def execute(self):
         for key, val in self.server.getStatus().iteritems():
             print key, val
 
+
 class ReceiveKillCommand(Command):
     def execute(self):
         subprocess.call(["/bin/bash", "-c", "kill " + self.args])
+
 
 class ListCommand(Command):
     def execute(self):
         subprocess.call(["/bin/bash", "-c", "screen -ls"])
         subprocess.call(["/bin/bash", "-c", "ps auxw | grep uswitch"])
 
+
 class KillallCommand(Command):
     def execute(self):
         subprocess.call(["/bin/bash", "-c", "killall glinux grouter uswitch gwcenter"])
 
+
 class LeftoversCommand(Command):
     def execute(self):
         print self.server.getLeftovers()
+
 
 class FlushBufferCommand(Command):
     def execute(self):
@@ -320,14 +336,16 @@ class FlushBufferCommand(Command):
         for (pid, device), status in self.server.getStatus().iteritems():
             Command.create("status", device + " " + status).execute()
 
+
 class ScreenCommand(Command):
     def execute(self):
         print "executing screen command"
         subprocess.call(["/bin/bash", "-c", "screen " + self.args])
 
+
 class ReceiveRequestWirelessStatsCommand(Command):
     def execute(self):
-        #print "sending stats for " + self.args + "..."
+        # print "sending stats for " + self.args + "..."
         index = self.args.split("_")[-1]
         subprocess.call(["/bin/bash", "-c", "screen -S WAP_1 -X eval 'stuff \"stats show node %s interface\"\\015'" % index])
 
@@ -352,9 +370,10 @@ class ReceiveRequestWirelessStatsCommand(Command):
 
         os.chdir(olddir)
 
+
 class ReceiveRequestRouterStatsCommand(Command):
     def execute(self):
-        #print "sending stats for " + self.args + "..."
+        # print "sending stats for " + self.args + "..."
         index = self.args.split("_")[-1]
 
         olddir = os.getcwd()
@@ -385,12 +404,14 @@ class ReceiveRequestRouterStatsCommand(Command):
         open(filename, "w").close()
         os.chdir(olddir)
 
+
 class ReceiveRequestWiresharkCaptureCommand(Command):
     def execute(self):
-        #print "sending capture for " + self.args + "..."
+        # print "sending capture for " + self.args + "..."
         global shell
         shell = CaptureSender(self.args)
         shell.start()
+
 
 class ReceiveRestartCommand(Command):
     def execute(self):
@@ -456,6 +477,7 @@ class ReceiveRestartCommand(Command):
             print "failed to restart " + self.args
         os.chdir(olddir)
 
+
 class ReceiveTerminateCommand(Command):
     def execute(self):
         print "terminating " + self.args + "..."
@@ -474,9 +496,11 @@ class ReceiveTerminateCommand(Command):
         pidIn.close()
         os.kill(int(pid), signal.SIGTERM)
 
+
 class ShowStatusCommand(Command):
     def execute(self):
         print self.server.getTM().getStatus()
+
 
 class CaptureSender(QtCore.QThread):
     def __init__(self, routername):
@@ -492,30 +516,29 @@ class CaptureSender(QtCore.QThread):
             server.send("wshark " + self.routername + " " + buf)
 
 
-
 commands = \
     {
-        "leftovers":LeftoversCommand,
-        "list":ListCommand,
-        "kill":ReceiveKillCommand,
-        "killall":KillallCommand,
-        "start":ReceiveStartCommand,
-        "stop":ReceiveStopCommand,
-        "file":ReceiveFileCommand,
-        "status":SendDeviceStatusCommand,
-        "statusall":ShowDevicesStatusCommand,
-        "flush":FlushBufferCommand,
-        "screen":ScreenCommand,
-        "init":ReceiveInitStartCommand,
-        "canvas":ReceiveCanvasInfoCommand,
-        "mobile":ReceiveMobileInfoCommand,
-        "wstats":ReceiveRequestWirelessStatsCommand,
-        "rstats":ReceiveRequestRouterStatsCommand,
-        "attachdetach":ReceiveAttachDetachCommand,
-        "wshark":ReceiveRequestWiresharkCaptureCommand,
-        "restart":ReceiveRestartCommand,
-        "terminate":ReceiveTerminateCommand,
-        "tm":ShowStatusCommand
+        "leftovers": LeftoversCommand,
+        "list": ListCommand,
+        "kill": ReceiveKillCommand,
+        "killall": KillallCommand,
+        "start": ReceiveStartCommand,
+        "stop": ReceiveStopCommand,
+        "file": ReceiveFileCommand,
+        "status": SendDeviceStatusCommand,
+        "statusall": ShowDevicesStatusCommand,
+        "flush": FlushBufferCommand,
+        "screen": ScreenCommand,
+        "init": ReceiveInitStartCommand,
+        "canvas": ReceiveCanvasInfoCommand,
+        "mobile": ReceiveMobileInfoCommand,
+        "wstats": ReceiveRequestWirelessStatsCommand,
+        "rstats": ReceiveRequestRouterStatsCommand,
+        "attachdetach": ReceiveAttachDetachCommand,
+        "wshark": ReceiveRequestWiresharkCaptureCommand,
+        "restart": ReceiveRestartCommand,
+        "terminate": ReceiveTerminateCommand,
+        "tm": ShowStatusCommand
     }
 
 if __name__ == "__main__":
