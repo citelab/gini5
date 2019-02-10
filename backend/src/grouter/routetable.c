@@ -37,6 +37,8 @@ int findRouteEntry(route_entry_t route_tbl[], uchar *ip_addr, uchar *nhop, int *
 	int icount;
 	uchar null_ip_addr[] = {0, 0, 0, 0};
 	char tmpbuf[MAX_TMPBUF_LEN];
+	int mindex[] = {-1, -1, -1, -1};
+	int j = 0;
 
 	// Try getting data
 	for (icount = 0; icount < MAX_ROUTES; icount++)
@@ -53,19 +55,39 @@ int findRouteEntry(route_entry_t route_tbl[], uchar *ip_addr, uchar *nhop, int *
 			       IP2Dot(tmpbuf+30, route_tbl[icount].netmask), IP2Dot(tmpbuf+45, route_tbl[icount].nexthop),
 			       route_tbl[icount].interface);
 
-			if (COMPARE_IP(route_tbl[icount].nexthop, null_ip_addr) == 0)
-				COPY_IP(nhop, ip_addr);
-			else
-				COPY_IP(nhop, route_tbl[icount].nexthop);
-
-			*ixface = route_tbl[icount].interface;
-
-			return EXIT_SUCCESS;
+			// save the index count
+			mindex[j++] = icount;
 		}
 	}
 
-	verbose(2, "[findRouteEntry]:: No match for %s in route table", IP2Dot(tmpbuf, ip_addr));
-	return EXIT_FAILURE;
+	int k = -1;
+	int nmlen = 0;
+	for (int i = 0; i < j; i++)
+	{
+		int q = mindex[i];
+		if (nmlen < netMaskLen(route_tbl[q].netmask))
+		{
+			nmlen = netMaskLen(route_tbl[q].netmask);
+			k = q;
+		}
+	}
+
+	if (k >= 0)
+	{
+		if (COMPARE_IP(route_tbl[k].nexthop, null_ip_addr) == 0)
+			COPY_IP(nhop, ip_addr);
+		else
+			COPY_IP(nhop, route_tbl[k].nexthop);
+
+		*ixface = route_tbl[k].interface;
+
+		return EXIT_SUCCESS;
+	}
+	else
+	{
+		verbose(2, "[findRouteEntry]:: No match for %s in route table", IP2Dot(tmpbuf, ip_addr));
+		return EXIT_FAILURE;
+	}
 }
 
 
@@ -189,4 +211,3 @@ void printRouteTable(route_entry_t route_tbl[])
 	printf("      %d number of routes found. \n", rcount);
 	return;
 }
-

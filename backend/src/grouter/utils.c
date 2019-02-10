@@ -16,6 +16,19 @@
 #include <arpa/inet.h>
 
 
+int netMaskLen(uchar nmask[])
+{
+	int len = 0;
+	for (int i = 0; i < 4; i++)
+	{
+		if (nmask[i] > 0)
+			len++;
+	}
+
+	return len;
+}
+
+
 /*
  * determine whether the given IP address is in the network given the
  * netmask
@@ -202,11 +215,3 @@ uint64_t htonll(uint64_t arg)
 	if (htons(0xFE) == 0xEF) return __builtin_bswap64(arg);
 	else return arg;
 }
-
-
-
-
-
-
-
-
