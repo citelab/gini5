@@ -3,10 +3,10 @@
 # Revised by Daniel Ng
 # Revised to Docker version by Mahesh
 
-import sys, os, signal, time, subprocess, re, socket
+import sys, os, signal, time, subprocess, socket
+import json
 
 from program import Program
-#import batch_ipcrm
 
 # set the program names
 VS_PROG = "uswitch"
@@ -22,8 +22,9 @@ GR_PROG_BIN = GR_PROG
 VOFC_PROG_BIN = VOFC_PROG
 GWR_PROG_BIN = GWR_PROG
 MCONSOLE_PROG_BIN = MCONSOLE_PROG
-SRC_FILENAME = "%s/gini_setup" % os.environ["GINI_HOME"] # setup file name
-GINI_TMP_FILE = ".gini_tmp_file" # tmp file used when checking alive Mach
+SRC_FILENAME = "%s/gini_setup" % os.environ["GINI_HOME"]    # setup file name
+GINI_TMP_DIR = "%s/tmp/" % os.environ["GINI_HOME"]
+GINI_TMP_FILE = ".gini_tmp_file"    # tmp file used when checking alive Mach
 nodes = []
 tapNameMap = dict()
 subnetMap = dict()
@@ -32,36 +33,40 @@ dockerNetworkNameMap = dict()
 # set this switch True if running gloader without gbuilder
 independent = False
 
+
 def system(command):
     subprocess.call(["/bin/bash", "-c", command])
+
 
 def popen(command):
     subprocess.Popen(["/bin/bash", "-c", command])
 
+
 def startGINI(myGINI, options):
-    "starting the GINI network components"
+    """starting the GINI network components"""
     # the starting order is important here
     # first switches, then routers, and at last Machs.
     print "\nStarting Docker Switches..."
     success = createVS(myGINI, options.switchDir)
-    #print "\nStarting Mobiles..."
-    #success = success and createVMB(myGINI, options)
+    # print "\nStarting Mobiles..."
+    # success = success and createVMB(myGINI, options)
     print "\nStarting OpenFlow controllers..."
     success = success and createVOFC(myGINI, options)
     print "\nStarting GINI routers..."
     success = success and createVR(myGINI, options)
     print "\nStarting Docker Machines..."
     success = success and createVM(myGINI, options)
-    #print "\nStarting Wireless access points..."
-    #success = success and createVWR(myGINI, options)
-    #print "\nStarting REALMs..."
-    #success = success and createVRM(myGINI, options)
+    # print "\nStarting Wireless access points..."
+    # success = success and createVWR(myGINI, options)
+    # print "\nStarting REALMs..."
+    # success = success and createVRM(myGINI, options)
 
-    if (not success):
+    if not success:
         print "Problem in creating GINI network"
-        print "Terminating the partally started network (if any)"
+        print "Terminating the partially started network (if any)"
         destroyGINI(myGINI, options)
     return success
+
 
 def findSubnet4Switch(myGINI, sname):
 
@@ -137,8 +142,9 @@ def create_ovs(my_gini, switch_dir, switch):
         undo_out.close()
         return False
 
+
 def createVS(myGINI, switchDir):
-    "create the switch config file and start the switch"
+    """create the switch config file and start the switch"""
     # create the main switch directory
     makeDir(switchDir)
 
@@ -158,7 +164,7 @@ def createVS(myGINI, switchDir):
         undoOut.write("#!/bin/bash\n")
 
         subnet = findSubnet4Switch(myGINI, switch.name)
-        if (subnet != ""):
+        if subnet != "":
             # Check if the network is already created under another switch name
             if subnetMap.get(subnet):
                 dockerNetworkNameMap[switch.name] = subnetMap[subnet]
@@ -215,7 +221,7 @@ def createVS(myGINI, switchDir):
         os.chmod(undoFile, 0755)
         undoOut.close()
     return True
-#End - createVS
+# End - createVS
 
 
 def createVWR(myGINI, options):
@@ -311,6 +317,7 @@ def createVWR(myGINI, options):
         print "[OK]"
     return True
 
+
 def get_IF_properties(netWIF, num_nodes):
     wcard = netWIF.wireless_card
     #energy = netWIF.energy     not implemented by GWCenter
@@ -365,7 +372,8 @@ def findHiddenSwitch(rtname, swname):
         return swname
 
     return None
-#End findHiddenSwitch
+# End findHiddenSwitch
+
 
 def findBridgeName(swname):
 
@@ -380,8 +388,8 @@ def findBridgeName(swname):
 
 def createASwitch(rtname, swname, subnet, ofile):
 
-    x,rnum = rtname.split("_")
-    x,snum = swname.split("_")
+    x, rnum = rtname.split("_")
+    x, snum = swname.split("_")
     if x != "Router":
         swname = "Switch_r%sm%s" % (rnum, snum)
     else:
@@ -401,7 +409,7 @@ def createASwitch(rtname, swname, subnet, ofile):
 
     command = "docker network create %s --subnet %s/24" % (swname, subnet)
     q = subprocess.Popen(command, shell=True, stdout=subprocess.PIPE)
-    out,err = q.communicate()
+    out, err = q.communicate()
     if q.returncode == 0:
         subnetMap[subnet] = swname
 
@@ -435,6 +443,7 @@ def createASwitch(rtname, swname, subnet, ofile):
 # NOTE We can use the following command string to pull subne information
 # command = """docker network inspect %s --format='{{index .IPAM.Config 0 "Subnet"}}'""" % swname
 
+
 def setupTapInterface(rtname, swname, brname, ofile):
     # This assumes that the iproute2 (ip) utils work without
     # sudo - you need to turn on the setuid bit
@@ -461,10 +470,9 @@ def setupTapInterface(rtname, swname, brname, ofile):
 
 
 def createVR(myGINI, options):
-    "create router config file, and start the router"
+    """create router config file, and start the router"""
 
     routerDir = options.routerDir
-    switchDir = options.switchDir
     # create the main router directory
     makeDir(routerDir)
     for router in myGINI.vr:
@@ -479,48 +487,54 @@ def createVR(myGINI, options):
         os.chdir(subRouterDir)
         configFile = "%s.conf" % GR_PROG
         # delete confFile if already exists
-        if (os.access(configFile, os.F_OK)):
+        if os.access(configFile, os.F_OK):
             os.remove(configFile)
         # create the config file
         configOut = open(configFile, "w")
         stopOut = open("stopit.sh", "w")
         stopOut.write("#!/bin/bash\n")
 
+        interfaces_map = dict()
+
         for nwIf in router.netIF:
             swname = nwIf.target
             print "Checking switch: " + swname
+            interface_name = ""
             if not checkSwitch(myGINI, swname):
                 print "It is not a switch..."
-                # Router could be conected to a machine
+
+                interface_name = "%s - %s" % (router.name, swname)
+                # Router could be connected to a machine
                 if checkRouter(myGINI, swname):
                     print "It is a router at the other end."
                     # Check whether the other router has already created the hidden switch
                     # If so, this router can just tap into it
-                    x,rnum = router.name.split("_")
-                    x,snum = swname.split("_")
+                    x, rnum = router.name.split("_")
+                    x, snum = swname.split("_")
                     scheck = "Switch_r%sr%s" % (snum, rnum)
                     brname = findBridgeName(scheck)
-                    if (brname == None):
+                    if brname is None:
                         swname, brname = createASwitch(router.name, swname, nwIf.network, stopOut)
-                        if swname == None:
+                        if swname is None:
                             print "[Failed]"
                             return False
                 else:
                     # We are connected to a machine
-
                     swname, brname = createASwitch(router.name, swname, nwIf.network, stopOut)
-                    if swname == None:
+                    if swname is None:
                         print "[Failed]"
                         return False
             else:
                 brname = findBridgeName(swname)
+                interface_name = swname
             tapname = setupTapInterface(router.name, swname, brname, stopOut)
-            if (tapname == "None"):
+            if tapname == "None":
                 print "[Failed]"
                 print "\nRouter %s: unable to create tap interface"  % router.name
                 return False
             else:
                 configOut.write(getVRIFOutLine(nwIf, tapname))
+                interfaces_map[interface_name] = brname
         configOut.write("echo -ne \"\\033]0;" + router.name + "\\007\"")
         configOut.close()
         stopOut.close()
@@ -529,45 +543,8 @@ def createVR(myGINI, options):
         command += "--config=%s.conf " % GR_PROG
         command += "--confpath=" + os.environ["GINI_HOME"] + "/data/" + router.name + " "
         command += "--interactive=1 "
-
-        if router.openFlowController:
-            command += "--openflow="
-            for controller in myGINI.vofc:
-                for r in controller.routers:
-                    if r == router.name:
-                        port = None
-                        try:
-                            # Determine PID of controller and find the netstat entry associated with that PID
-                            print "%s/%s/%s.pid" % (options.controllerDir, controller.name, controller.name)
-                            pid_file = open("%s/%s/%s.pid" % (options.controllerDir, controller.name, controller.name), "r")
-                            cmd = "netstat -tlpn | egrep %s/" % pid_file.read().strip()
-
-                            process = subprocess.Popen(cmd, shell=True,
-                                                       stdout=subprocess.PIPE,
-                                                       stderr=subprocess.PIPE)
-                            out = process.stdout.read().strip()
-                            if out == "":
-                                raise StandardError()
-                            pid_file.close()
-                            process.stdout.close()
-
-                            # Get TCP port number from netstat entry
-                            regex = re.compile("^.+:([0-9]+)[^0-9].*$")
-                            matches = regex.match(out)
-                            if matches and len(matches.groups()) == 1:
-                                port = matches.group(1)
-                            else:
-                                raise StandardError()
-                        except StandardError as e:
-                            print "[Failed]"
-                            print "Failed to identify OpenFlow controller TCP port"
-                            return False
-
-                        # Pass controller port number to router so that router can connect to controller
-                        command += port + " "
-
         command += "%s" % router.name
-        #print command
+
         startOut = open("startit.sh", "w")
         startOut.write(command)
         startOut.close()
@@ -575,12 +552,14 @@ def createVR(myGINI, options):
         os.chmod("stopit.sh",0755)
 
         system("./startit.sh")
-        print "[OK]",
-        if router.openFlowController:
-            print " (OF port: " + port + ")",
-        print ""
-        os.chdir(oldDir)
 
+        # Write switch names and the corresponding bridges for Wireshark
+        router_tmp_file = GINI_TMP_DIR + router.name + ".json"
+        with open(router_tmp_file, "w") as f:
+            f.write(json.dumps(interfaces_map, sort_keys=True, indent=2))
+
+        print "[OK]",
+        os.chdir(oldDir)
 
     return True
 
@@ -623,8 +602,8 @@ def getSwitch2Connect(myGINI, mach):
             swname = findHiddenSwitch(target, mach.name)
             return getDockerNetworkName(swname), nwi.ip
 
-    return (None, None)
-#end - getSwitch2Connect
+    return None, None
+# end - getSwitch2Connect
 
 
 def createVM(myGINI, options):
@@ -653,8 +632,8 @@ def createVM(myGINI, options):
                 if route.gw:
                     command += "gw %s " % route.gw
                 startOut.write(command + "\n")
-            #end each route
-        #end each interface
+            # end each route
+        # end each interface
 
         stopOut = open("stopit.sh", "w")
         stopOut.write("#!/bin/bash\n")
@@ -688,7 +667,7 @@ def createVM(myGINI, options):
             print "<<<<<<< " + baseScreenCommand + command
 
             runcmd = subprocess.Popen(baseScreenCommand + command, shell=True, stdout=subprocess.PIPE)
-            out,err = runcmd.communicate()
+            out, err = runcmd.communicate()
 
             if runcmd.returncode == 0:
                 if isOVS:
@@ -723,6 +702,7 @@ def createVM(myGINI, options):
 
     return True
 
+
 def check_port_available(port):
     sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
     result = sock.connect_ex(("0.0.0.0", port))
@@ -731,11 +711,13 @@ def check_port_available(port):
     else:
         return True
 
+
 def find_available_port(lower_range, upper_range):
     for port in range(lower_range, upper_range+1):
         if check_port_available(port):
             return port
     return -1
+
 
 def createVOFC(myGINI, options):
     "Create OpenFlow controller config file, and start the OpenFlow controller"
@@ -778,6 +760,7 @@ def createVOFC(myGINI, options):
         system("./startit.sh")
         print "[OK]"
     return True
+
 
 def createVMB(myGINI, options):
     "create Mach config file, and start the Mach"
@@ -828,6 +811,7 @@ def createVMB(myGINI, options):
         os.chdir(oldDir)
     return True
 
+
 def createVRM(myGINI, options):
     "create REALM config file, and start the REALM"
     makeDir(options.machDir)
@@ -876,18 +860,13 @@ def createVRM(myGINI, options):
             os.chdir(oldDir)
     return True
 
+
 def makeDir(dirName):
-    "create a directory if not exists"
-    if (not os.access(dirName, os.F_OK)):
+    """create a directory if not exists"""
+    if not os.access(dirName, os.F_OK):
         os.mkdir(dirName, 0755)
     return
 
-
-
-#########################
-# TO DELETE
-# After making it no use from other functions
-#########################
 
 # socket name is defined as:
 # for switch: switchDir/switchName/SOCKET_NAME.ctl
@@ -899,7 +878,7 @@ def getSocketName(nwIf, name, myGINI, options):
     for wap in waps:
         print wap
         # looking for a match in all waps
-        if (wap.name == nwIf.target):
+        if wap.name == nwIf.target:
             oldDir = os.getcwd()
             switch_sharing = False
             for i in range(len(nodes)):
@@ -918,18 +897,18 @@ def getSocketName(nwIf, name, myGINI, options):
                 configOut.close()
                 popen("%s -s %s -l uswitch.log -p uswitch.pid &" % (VS_PROG, newDir+"/gw_socket.ctl"))
                 os.chdir(oldDir)
-            #else:
-                #newDir = os.environ["GINI_HOME"] + "/bin/mach_virtual_switch/VS_%d" % len(nodes)
+            # else:
+                # newDir = os.environ["GINI_HOME"] + "/bin/mach_virtual_switch/VS_%d" % len(nodes)
             return newDir + "/gw_socket.ctl"
 
     routers = myGINI.vr
     for router in routers:
         # looking for a match in all routers
-        if (router.name == nwIf.target):
+        if router.name == nwIf.target:
             for remoteNWIf in router.netIF:
                 # router matches, looking for a reverse match
                 #print remoteNWIf.target, name
-                if (remoteNWIf.target == name):
+                if remoteNWIf.target == name:
                     # all match create and return the socketname
                     targetDir = getFullyQualifiedDir(options.routerDir)
                     return "%s/%s/%s_%s.ctl" % \
@@ -939,13 +918,13 @@ def getSocketName(nwIf, name, myGINI, options):
             return "fail"
     switches = myGINI.switches
     for switch in switches:
-        if (switch.name == nwIf.target):
+        if switch.name == nwIf.target:
             targetDir = getFullyQualifiedDir(options.switchDir)
             return "%s/%s/%s.ctl" % \
                    (targetDir, switch.name, SOCKET_NAME)
     machs = myGINI.vm
     for mach in machs:
-        if (mach.name == nwIf.target):
+        if mach.name == nwIf.target:
             # target matching a Mach; Mach can't create sockets
             # so return value is socket name of the current router
             targetDir = getFullyQualifiedDir(options.routerDir)
@@ -954,21 +933,22 @@ def getSocketName(nwIf, name, myGINI, options):
 
     realms = myGINI.vrm
     for realm in realms:
-        if (realm.name == nwIf.target):
+        if realm.name == nwIf.target:
             targetDir = getFullyQualifiedDir(options.routerDir)
             return "%s/%s/%s_%s.ctl" % \
                        (targetDir, name, SOCKET_NAME, nwIf.name)
     return "fail"
 
+
 def getFullyQualifiedDir(dirName):
-    "get a fully qualified name of a directory"
+    """get a fully qualified name of a directory"""
     targetDir = ""
-    if (dirName[0] == '/'):
+    if dirName[0] == '/':
         # absolute path
         targetDir = dirName
-    elif (dirName[0] == '.'):
+    elif dirName[0] == '.':
         # relative to the current path
-        if (len(dirName) > 1):
+        if len(dirName) > 1:
             targetDir = "%s/%s" % (os.getcwd(), dirName[1:])
         else:
             # just current path
@@ -977,6 +957,7 @@ def getFullyQualifiedDir(dirName):
         # relative path
         targetDir = "%s/%s" % (os.getcwd(), dirName)
     return targetDir
+
 
 def getVRIFOutLine(nwIf, intName):
     "convert the router network interface specs into a string"
@@ -995,18 +976,19 @@ def getVRIFOutLine(nwIf, intName):
         outLine += "route add -dev %s " % intName
         outLine += "-net %s " % route.dest
         outLine += "-netmask %s " % route.netmask
-        if (route.nexthop):
+        if route.nexthop:
             outLine += "-gw %s" % route.nexthop
         outLine += "\n"
     return outLine
+
 
 def getVMIFOutLine(nwIf, socketName, name):
     "convert the Mach network interface specs into a string"
     configFile = "%s/tmp/%s.sh" % (os.environ["GINI_HOME"], nwIf.mac.upper())
     # delete confFile if already exists
     # also checks whether somebody else using the same MAC address
-    if (os.access(configFile, os.F_OK)):
-        if (os.access(configFile, os.W_OK)):
+    if os.access(configFile, os.F_OK):
+        if os.access(configFile, os.W_OK):
             os.remove(configFile)
         else:
             print "Can not create config file for %s" % nwIf.name
@@ -1037,6 +1019,7 @@ def getVMIFOutLine(nwIf, socketName, name):
     outLine += socketName
     return outLine
 
+
 def createMachCmdLine(mach):
     command = "screen -d -m -S %s " % mach.name
     ## mach binary name
@@ -1063,10 +1046,12 @@ def createMachCmdLine(mach):
     command += "hostfs=%s " % os.environ["GINI_HOME"]
     return command
 
+
 def getBaseName(pathName):
     "Extract the filename from the full path"
     pathParts = pathName.split("/")
     return pathParts[len(pathParts)-1]
+
 
 def destroyGINI(myGINI, options):
     result = True
@@ -1107,7 +1092,7 @@ def destroyGINI(myGINI, options):
 #        result = result and  destroyRVM(myGINI.vrm, options.machDir)
 #    except:
 #        pass
-    #system("killall uswitch screen")
+    # system("killall uswitch screen")
     return result
 
 
@@ -1117,6 +1102,7 @@ def destroyVS(switches, switchDir):
         command = "%s/%s/stopit.sh" % (switchDir, switch.name)
         system(command)
     return True
+
 
 def destroyVWR(wrouters, routerDir):
     for wrouter in wrouters:
@@ -1128,13 +1114,11 @@ def destroyVWR(wrouters, routerDir):
         print "\tCleaning the directory...\t",
         try:
             os.remove(subRouterDir+"/wrouter.conf")
-            #os.remove(subRouterDir+"/startit.sh")
             while os.access(subRouterDir+"/wrouter.conf", os.F_OK):
                 pass
             os.rmdir(subRouterDir)
             print "[OK]"
         except:
-
             print "failed"
             return False
 
@@ -1155,6 +1139,7 @@ def destroyVWR(wrouters, routerDir):
         os.chdir(oldDir)
     return True
 
+
 def destroyVR(routers, routerDir):
     for router in routers:
         print "Stopping Router %s..." % router.name
@@ -1164,7 +1149,7 @@ def destroyVR(routers, routerDir):
         pidFile = "%s/%s.pid" % (subRouterDir, router.name)
         # check the validity of the pid file
         pidFileFound = True
-        if (os.access(pidFile, os.R_OK)):
+        if os.access(pidFile, os.R_OK):
             # kill the router
             # routerPID = getPIDFromFile(pidFile)
             # os.kill(routerPID, signal.SIGTERM)
@@ -1174,7 +1159,6 @@ def destroyVR(routers, routerDir):
             pidFileFound = False
             print "[FAILED]"
         system("%s/stopit.sh" % subRouterDir)
-
 
         # clean up the files in the directory
         print "\tCleaning the directory...\t",
@@ -1202,11 +1186,13 @@ def destroyVR(routers, routerDir):
 
     return True
 
+
 def getPIDFromFile(fileName):
     fileIn = open(fileName)
     lines = fileIn.readlines()
     fileIn.close()
     return int(lines[0].strip())
+
 
 def destroyRVM(machs,machDir):
     for mach in machs:
@@ -1217,10 +1203,10 @@ def destroyRVM(machs,machDir):
         subMachDir = "%s/%s" % (machDir, mach.name)
 
         # TODO: Determine if we need any data in this folder.
-        if (os.access(subMachDir, os.F_OK)):
+        if os.access(subMachDir, os.F_OK):
             for file in os.listdir(subMachDir):
                 fileName = "%s/%s" % (subMachDir, file)
-                if (os.access(fileName, os.W_OK)):
+                if os.access(fileName, os.W_OK):
                     os.remove(fileName)
                 else:
                     print "\n\tCould not delete file %s" % (mach.name, fileName)
@@ -1231,17 +1217,18 @@ def destroyRVM(machs,machDir):
         print "[OK]"
         for nwIf in mach.interfaces:
             configFile = "%s/tmp/%s.sh" % (os.environ["GINI_HOME"],nwIf.mac.upper())
-            if (os.access(configFile, os.W_OK)):
+            if os.access(configFile, os.W_OK):
                 os.remove(configFile)
     return True
 
-def destroyVM(machs, machDir, mode):
 
+def destroyVM(machs, machDir, mode):
     for mach in machs:
         # Run the stop command
         command = "%s/%s/stopit.sh" % (machDir, mach.name)
         system(command)
     return True
+
 
 def destroyVOFC(controllers, controllerDir):
     for controller in controllers:
@@ -1252,7 +1239,7 @@ def destroyVOFC(controllers, controllerDir):
         pidFile = "%s/%s.pid" % (subControllerDir, controller.name)
         # check the validity of the pid file
         pidFileFound = True
-        if (os.access(pidFile, os.R_OK)):
+        if os.access(pidFile, os.R_OK):
             # kill the controller
             command = "screen -S %s -X quit" % controller.name
             system(command)
@@ -1263,28 +1250,29 @@ def destroyVOFC(controllers, controllerDir):
             print "[FAILED]"
 
         print "\tCleaning the directory...\t",
-        if (os.access(subControllerDir, os.F_OK)):
-            for file in os.listdir(subControllerDir):
-                fileName = "%s/%s" % (subControllerDir, file)
-                if (os.access(fileName, os.W_OK)):
+        if os.access(subControllerDir, os.F_OK):
+            for f in os.listdir(subControllerDir):
+                fileName = "%s/%s" % (subControllerDir, f)
+                if os.access(fileName, os.W_OK):
                     os.remove(fileName)
                 else:
-                    print "\n\OpenFlow controller %s: Could not delete file %s" % (controller.name, fileName)
+                    print "\nOpenFlow controller %s: Could not delete file %s" % (controller.name, fileName)
                     print "\tCheck your directory"
                     return False
-            if (os.access(subControllerDir, os.W_OK)):
+            if os.access(subControllerDir, os.W_OK):
                 os.rmdir(subControllerDir)
             else:
-                print "\n\OpenFlow controller %s: Could not remove directory" % controller.name
+                print "\nOpenFlow controller %s: Could not remove directory" % controller.name
                 print "\tCheck your directory"
                 return False
         print "[OK]"
-        if (pidFileFound):
+        if pidFileFound:
             print "\tStopping OpenFlow controller %s...\t[OK]" % controller.name
         else:
             print "\tStopping OpenFlow controller %s...\t[FAILED]" % controller.name
             print "\tKill the controller %s manually" % controller.name
     return True
+
 
 def checkProcAlive(procName):
     alive = False
@@ -1312,8 +1300,9 @@ def checkProcAlive(procName):
     os.remove(GINI_TMP_FILE)
     return alive
 
+
 def writeSrcFile(options):
-    "write the configuration in the setup file"
+    """write the configuration in the setup file"""
     outFile = open(SRC_FILENAME, "w")
     outFile.write("%s\n" % options.xmlFile)
     outFile.write("%s\n" % options.switchDir)
@@ -1323,15 +1312,17 @@ def writeSrcFile(options):
     outFile.write("%s\n" % options.controllerDir)
     outFile.close()
 
+
 def deleteSrcFile():
-    "delete the setup file"
-    if (os.access(SRC_FILENAME, os.W_OK)):
+    """"delete the setup file"""
+    if os.access(SRC_FILENAME, os.W_OK):
         os.remove(SRC_FILENAME)
     else:
         print "Could not delete the GINI setup file"
 
+
 def checkAliveGini():
-    "check any of the gini components already running"
+    """check any of the gini components already running"""
     result = False
     if checkProcAlive(VS_PROG_BIN):
         print "At least one of %s is alive" % VS_PROG_BIN
@@ -1359,43 +1350,43 @@ def checkAliveGini():
 #    d) performs some semantic/syntax checkings on
 #       the extracted specification
 myProg = Program(sys.argv[0], SRC_FILENAME)
-if (not myProg.processOptions(sys.argv[1:])):
+if not myProg.processOptions(sys.argv[1:]):
     sys.exit(1)
 options = myProg.options
 
 # set the Mach directory if is not given via -u option
-if (not options.machDir):
+if not options.machDir:
     # set it to the directory pointed by the $Mach_DIR env
     # if no such env variable, set the mach dir to curr dir
-    if (os.environ.has_key("Mach_DIR")):
+    if os.environ.has_key("Mach_DIR"):
         options.machDir = os.environ["Mach_DIR"]
     else:
         options.machDir = "."
 
 # get the binaries
 binDir = options.binDir
-if (binDir):
+if binDir:
     # get the absolute path for binary directory
-    if (binDir[len(binDir)-1] == "/"):
+    if binDir[len(binDir)-1] == "/":
         binDir = binDir[:len(binDir)-1]
     binDir = getFullyQualifiedDir(binDir)
     # assign binary names
     # if the programs are not in the specified binDir
     # they will be assumed to be in the $PATH env.
     VS_PROG_BIN = "%s/%s" % (binDir, VS_PROG)
-    if (not os.access(VS_PROG_BIN, os.X_OK)):
+    if not os.access(VS_PROG_BIN, os.X_OK):
         VS_PROG_BIN = VS_PROG
     VM_PROG_BIN = "%s/%s" % (binDir, VM_PROG)
-    if (not os.access(VM_PROG_BIN, os.X_OK)):
+    if not os.access(VM_PROG_BIN, os.X_OK):
         VM_PROG_BIN = VM_PROG
     GR_PROG_BIN = "%s/%s" % (binDir, GR_PROG)
-    if (not os.access(GR_PROG_BIN, os.X_OK)):
+    if not os.access(GR_PROG_BIN, os.X_OK):
         GR_PROG_BIN = GR_PROG
     MCONSOLE_PROG_BIN = "%s/%s" % (binDir, MCONSOLE_PROG)
-    if (not os.access(MCONSOLE_PROG_BIN, os.X_OK)):
+    if not os.access(MCONSOLE_PROG_BIN, os.X_OK):
         MCONSOLE_PROG_BIN = MCONSOLE_PROG
     VOFC_PROG_BIN = "%s/%s" % (binDir, VOFC_PROG)
-    if (not os.access(VOFC_PROG_BIN, os.X_OK)):
+    if not os.access(VOFC_PROG_BIN, os.X_OK):
         VOFC_PROG_BIN = VOFC_PROG
 
 # get the populated GINI network class
@@ -1404,18 +1395,18 @@ myGINI = myProg.giniNW
 
 # create or terminate GINI network
 print ""
-if (myProg.destroyOpt):
+if myProg.destroyOpt:
     # terminate the current running specification
     print "Terminating GINI network..."
     success = destroyGINI(myGINI, options)
-    if (success):
+    if success:
         print "\nGINI network is terminated!!\n"
     else:
         print "\nThere are errors in GINI network termination\n"
         sys.exit(1)
 else:
     # create the GINI instance
-    if (not options.keepOld):
+    if not options.keepOld:
         # fail if a GINI already alive
         if checkAliveGini():
             print "\nA Gini is already running"
@@ -1426,11 +1417,11 @@ else:
         print "environment variable $GINI_HOME not set, please set it for GINI to run properly"
         sys.exit(1)
 
-    # create network with current specifcation
+    # create network with current specification
     print "Creating GINI network..."
     success = startGINI(myGINI, options)
     writeSrcFile(options)
-    if (success):
+    if success:
         print "\nGINI network up and running!!\n"
     else:
         print "\nGINI network start failed!!\n"

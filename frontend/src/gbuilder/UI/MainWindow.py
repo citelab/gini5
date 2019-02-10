@@ -475,7 +475,6 @@ class MainWindow(Systray):
         command = ""
         gserver = "WGINI Server"
 
-
         command += "rxvt -T \"" + gserver + "\" -e " + base + tunnel + " \" " + server + "\""
 
         command1 = 'route add -net 192.168.0.0 gw 192.168.54.24 netmask 255.255.255.0 eth1' #change accordingly!
@@ -523,7 +522,7 @@ class MainWindow(Systray):
         Run the current topology.
         """
         print "???????????????????????????????????????????????????"
-        if not self.server or self.server.poll() != None:
+        if not self.server or self.server.poll() is not None:
             self.log.append("Please start the server first!")
             return
         if not self.client or not self.client.isConnected():
@@ -555,12 +554,14 @@ class MainWindow(Systray):
         print ">>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>> "
         self.tm.show()
 
-        #self.progressBar.setValue(0)
+        # self.progressBar.setValue(0)
         self.client.process("file . " + xmlFile)
         self.client.send("init " + self.project.split("/")[-1].strip(".gproj"))
         self.client.send("canvas %d,%d" % (scene.width(), scene.height()))
         for item in items:
-            if item.device_type == "Mobile" or item.device_type == "Wireless_access_point":
+            if item.device_type == "Router":
+                item.load_wireshark_interfaces()
+            elif item.device_type == "Mobile" or item.device_type == "Wireless_access_point":
                 x = item.pos().x()
                 y = item.pos().y()
                 self.client.send("mobile %s %d,%d" % (item.getName(), x, y))
@@ -580,7 +581,7 @@ class MainWindow(Systray):
         """
         Stop the current running topology.
         """
-        if not self.server or self.server.poll() != None:
+        if not self.server or self.server.poll() is not None:
             self.log.append("Please start the server first!")
             return
         if not self.isRunning():

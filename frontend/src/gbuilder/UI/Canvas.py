@@ -6,7 +6,6 @@ from Core.globals import options, mainWidgets, yRouters
 from Core.Connection import *
 from Core.Wireless_Connection import *
 from Core.Item import *
-import os.path
 
 
 realMnumber=3
@@ -14,6 +13,7 @@ deviceTypes = {"Bridge":Bridge, "Firewall":Firewall, "Hub":Hub, "Mobile":Mobile,
                "Router":Router, "Subnet":Subnet, "Switch":Switch, "REALM":REALM,
                "Mach":Mach, "Wireless_access_point":Wireless_access_point, "yRouter":yRouter,
                "OpenFlow_Controller": OpenFlow_Controller, "OVSwitch": OpenVirtualSwitch}
+
 
 class View(QtGui.QGraphicsView):
     def __init__(self, parent = None):
@@ -99,9 +99,9 @@ class View(QtGui.QGraphicsView):
         rightShadow = QtCore.QRectF(sceneRect.right(), sceneRect.top() + 5, 5, sceneRect.height())
         bottomShadow = QtCore.QRectF(sceneRect.left() + 5, sceneRect.bottom(), sceneRect.width(), 5)
         if rightShadow.intersects(rect) or rightShadow.contains(rect):
-	        painter.fillRect(rightShadow, QtCore.Qt.darkGray)
+            painter.fillRect(rightShadow, QtCore.Qt.darkGray)
         if bottomShadow.intersects(rect) or bottomShadow.contains(rect):
-	        painter.fillRect(bottomShadow, QtCore.Qt.darkGray)
+            painter.fillRect(bottomShadow, QtCore.Qt.darkGray)
 
         # Fill
         painter.setBrush(QtCore.Qt.NoBrush)
@@ -275,6 +275,7 @@ class View(QtGui.QGraphicsView):
 
         QtGui.QGraphicsView.mouseReleaseEvent(self, event)
 
+
 class Canvas(View):
     def dragEnterEvent(self, event):
         """
@@ -307,6 +308,7 @@ class Canvas(View):
 
     def dragLeaveEvent(self, event):
         pass
+
 
 class Scene(QtGui.QGraphicsScene):
     def __init__(self, parent = None):

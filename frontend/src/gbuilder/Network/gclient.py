@@ -2,6 +2,7 @@ from PyQt4 import QtNetwork, QtCore
 import os, sys, time
 from Core.globals import environ, mainWidgets
 
+
 class Client(QtCore.QThread):
     def __init__(self, parent = None):
         QtCore.QThread.__init__(self)
@@ -53,11 +54,11 @@ class Client(QtCore.QThread):
             mainWidgets["log"].append("The connection was lost while a topology was running.\nYou can attempt to re-establish the connection by restarting the server.  You can then press run to resume the previous running topology, or stop to stop it.")
             mainWidgets["canvas"].scene().pauseRefresh()
 
-        if socketError ==  QtNetwork.QAbstractSocket.RemoteHostClosedError:
+        if socketError == QtNetwork.QAbstractSocket.RemoteHostClosedError:
             print "Lost connection to server."
-        elif socketError ==  QtNetwork.QAbstractSocket.HostNotFoundError:
+        elif socketError == QtNetwork.QAbstractSocket.HostNotFoundError:
             print "The host was not found. Please check the host name and port settings."
-        elif socketError ==  QtNetwork.QAbstractSocket.ConnectionRefusedError:
+        elif socketError == QtNetwork.QAbstractSocket.ConnectionRefusedError:
             print "The connection was refused by the peer. Make sure the server is running,"
             print "and check that the host name and port settings are correct."
         else:
@@ -137,6 +138,7 @@ class Client(QtCore.QThread):
 
         self.disconnect()
 
+
 """
 class ShellStarter(QtCore.QThread):
     def __init__(self, command):
@@ -153,9 +155,11 @@ class ShellStarter(QtCore.QThread):
         self.started = 1
 """
 
+
 class Callable:
     def __init__(self, anycallable):
         self.__call__ = anycallable
+
 
 class Command:
     def __init__(self, args):
@@ -170,10 +174,12 @@ class Command:
         return commands[commandType](args)
     create = Callable(create)
 
+
 class ReceivePathCommand(Command):
     def execute(self):
         print "setting remote path to " + self.args
         environ["remotepath"] = self.args + "/"
+
 
 class SendFileCommand(Command):
     def execute(self):
@@ -184,21 +190,25 @@ class SendFileCommand(Command):
         self.client.send("file " + targetDir + "/" + filename + " " + infile.read())
         infile.close()
 
+
 class SendStartCommand(Command):
     def execute(self):
         filename = self.isolateFilename(self.args)
         print "sending start " + filename
         self.client.send("start " + filename)
 
+
 class SendStopCommand(Command):
     def execute(self):
         print "sending stop"
         self.client.send("stop")
 
+
 class SendKillCommand(Command):
     def execute(self):
         print "killing " + self.args
         self.client.send("kill " + self.args)
+
 
 class ReceiveDeviceStatusCommand(Command):
     def execute(self):
@@ -215,11 +225,13 @@ class ReceiveDeviceStatusCommand(Command):
 
         tm.update(device, pid, status)
 
+
 class ReceiveWirelessStatsCommand(Command):
     def execute(self):
         name, stats = self.args.split(" ", 1)
         scene = mainWidgets["canvas"].scene()
         scene.findItem(name).setWirelessStats(stats)
+
 
 class ReceiveRouterStatsCommand(Command):
     def execute(self):
@@ -227,32 +239,23 @@ class ReceiveRouterStatsCommand(Command):
         scene = mainWidgets["canvas"].scene()
         scene.findItem(name).setRouterStats(queue, size, rate)
 
-class ReceiveYRouterStatsCommand(Command):
-    def execute(self):
-	name, queue, size, rate = self.args.split(" ", 3)
-	scene = mainWidgets["canvas"].scene()
-	scene.findItem(name).setYRouterStats(queue, size, rate)
 
 class ReceiveWiresharkCaptureCommand(Command):
     def execute(self):
-        name, capture = self.args.split(" ", 1)
-        outfile = environ["tmp"] + name + ".out"
-        fd = open(outfile, "ab")
-        fd.write(capture)
-        fd.close()
+        pass
+
 
 commands = \
     {
-        "start":SendStartCommand,
-        "stop":SendStopCommand,
-        "path":ReceivePathCommand,
-        "file":SendFileCommand,
-        "status":ReceiveDeviceStatusCommand,
-        "kill":SendKillCommand,
-        "wstats":ReceiveWirelessStatsCommand,
-        "rstats":ReceiveRouterStatsCommand,
-        "yrstats":ReceiveYRouterStatsCommand,
-        "wshark":ReceiveWiresharkCaptureCommand
+        "start": SendStartCommand,
+        "stop": SendStopCommand,
+        "path": ReceivePathCommand,
+        "file": SendFileCommand,
+        "status": ReceiveDeviceStatusCommand,
+        "kill": SendKillCommand,
+        "wstats": ReceiveWirelessStatsCommand,
+        "rstats": ReceiveRouterStatsCommand,
+        "wshark": ReceiveWiresharkCaptureCommand
     }
 client = None
 

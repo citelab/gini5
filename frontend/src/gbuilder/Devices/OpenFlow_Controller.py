@@ -6,6 +6,7 @@ from PyQt4.QtGui import QGraphicsObject
 from Core.Attachable import *
 import os, re
 
+
 class OpenFlow_Controller(Attachable):
     device_type = "OpenFlow_Controller"
 
