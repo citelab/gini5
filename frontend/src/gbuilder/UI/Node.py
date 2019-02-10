@@ -12,6 +12,7 @@ from Properties import *
 from Core.Item import *
 # from StatsWindow import *
 
+
 class DropItem(QtGui.QGraphicsItem):
 
     def __init__(self, itemType=None):
@@ -26,8 +27,8 @@ class DropItem(QtGui.QGraphicsItem):
         if self.image.isNull():
             mainWidgets["log"].append("Unknown node type " + str(self.device_type))
             return
-        #matrix = QtGui.QMatrix(40.0/image.width(),0,0,40.0/image.height(),0,0)
-        #self.image = image.transformed(matrix, QtCore.Qt.SmoothTransformation)
+        # matrix = QtGui.QMatrix(40.0/image.width(),0,0,40.0/image.height(),0,0)
+        # self.image = image.transformed(matrix, QtCore.Qt.SmoothTransformation)
 
         self.setCursor(QtCore.Qt.OpenHandCursor)
         if itemType in unimplementedTypes:
@@ -77,6 +78,7 @@ class DropItem(QtGui.QGraphicsItem):
         drag.setHotSpot(QtCore.QPoint(15, 30))
 
         drag.start()
+
 
 class Node(DropItem, Item):
 
@@ -128,14 +130,6 @@ class Node(DropItem, Item):
         self.menu = QtGui.QMenu()
         self.menu.setPalette(defaultOptions["palette"])
         self.menu.addAction("Delete", self.delete)
-
-#       if self.device_type == "Mobile":
-#           self.wstatsWindow = StatsWindow(self.getName(), mainWidgets["canvas"])
-#           self.setAcceptsHoverEvents(True)
-#       elif self.device_type == "Router":
-#           self.tail = None
-#           self.wshark = None
-#           self.rstatsWindow = None
 
         scene = mainWidgets["canvas"].scene()
         QtCore.QObject.connect(scene.getTimer(), QtCore.SIGNAL("timeout()"), self.updateColor)
@@ -511,12 +505,13 @@ class Node(DropItem, Item):
         Handle special stop actions on a stopped topology.
         """
         try:
-            if self.rstatsWindow: # FIXME
+            if self.rstatsWindow:   # FIXME
                 self.rstatsWindow.close()
             if self.tail:   # FIXME
                 self.tail.terminate()
-            if self.wshark: # FIXME
-                self.wshark.terminate()
+            if self.wshark:     # FIXME
+                for session in self.wshark:
+                    session.terminate()
         except Exception, inst:
             print type(inst)
             print inst
