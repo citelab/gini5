@@ -9,8 +9,7 @@ class OpenVirtualSwitch(Switch, Attachable):
     device_type = "OVSwitch"
 
     def __init__(self):
-        Switch.__init__(self)
-        Attachable.__init__(self)
+        super(OpenVirtualSwitch, self).__init__()
         self.setProperty("OVS mode", "True")
 
         self.lightPoint = QPoint(-10,-5)
