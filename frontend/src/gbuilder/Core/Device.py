@@ -2,6 +2,7 @@
 
 from UI.Node import *
 
+
 class Device(Node):
 
     def __init__(self):
