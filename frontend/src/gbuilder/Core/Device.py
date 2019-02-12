@@ -9,7 +9,7 @@ class Device(Node):
         """
         Create a logical side to the node.
         """
-        Node.__init__(self)
+        super(Device, self).__init__()
         self.connection = []
 
     def __str__(self):

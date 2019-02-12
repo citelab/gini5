@@ -12,7 +12,7 @@ realMnumber=3
 deviceTypes = {"Bridge":Bridge, "Firewall":Firewall, "Hub":Hub, "Mobile":Mobile,
                "Router":Router, "Subnet":Subnet, "Switch":Switch, "REALM":REALM,
                "Mach":Mach, "Wireless_access_point":Wireless_access_point, "yRouter":yRouter,
-               "OpenFlow_Controller": OpenFlow_Controller, "OVSwitch": OpenVirtualSwitch}
+               "OpenFlowController": OpenFlowController, "OVSwitch": OpenVirtualSwitch}
 
 
 class View(QtGui.QGraphicsView):
@@ -223,15 +223,15 @@ class View(QtGui.QGraphicsView):
                                     if not yRouters[yid]['IsPortal']:
                                         return "Cannot connect yRouter_%d to the host (not a portal)!" % yid
                         elif dest.device_type == "Router":
-                            if source.device_type == "OpenFlow_Controller":
+                            if source.device_type == "OpenFlowController":
                                 for edge in dest.edges():
-                                    if edge.getOtherDevice(dest).device_type == "OpenFlow_Controller":
+                                    if edge.getOtherDevice(dest).device_type == "OpenFlowController":
                                         return "Router cannot have more than one OpenFlow Controller!"
                         return True
-                    elif dest.device_type == "Switch" and source.device_type == "OpenFlow_Controller":
+                    elif dest.device_type == "Switch" and source.device_type == "OpenFlowController":
                         if dest.getProperty("OVS mode") == "True":
                             return True
-                    elif dest.device_type == "OpenFlow_Controller" and source.device_type == "Switch":
+                    elif dest.device_type == "OpenFlowController" and source.device_type == "Switch":
                         if source.getProperty("OVS mode") == "True":
                             return True
                     return False

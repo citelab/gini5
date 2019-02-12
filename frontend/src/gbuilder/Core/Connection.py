@@ -8,7 +8,7 @@ from Devices.Subnet import *
 from Devices.Switch import *
 from Devices.Mach import *
 from UI.Edge import *
-from Devices.OpenFlow_Controller import *
+from Devices.OpenFlowController import *
 from Devices.OpenVirtualSwitch import *
 
 # The connection rules for building topologies
@@ -23,7 +23,7 @@ connection_rule[Mach.device_type] = (
 )
 connection_rule[Router.device_type] = (
     Subnet.device_type,
-    OpenFlow_Controller.device_type,
+    OpenFlowController.device_type,
     Switch.device_type,
     OpenVirtualSwitch.device_type
 )
@@ -39,7 +39,7 @@ connection_rule[OpenVirtualSwitch.device_type] = (
     Subnet.device_type,
     Switch.device_type,
     Router.device_type,
-    OpenFlow_Controller.device_type,
+    OpenFlowController.device_type,
     OpenVirtualSwitch.device_type
 )
 connection_rule[Bridge.device_type] = (
@@ -60,7 +60,7 @@ connection_rule[Subnet.device_type] = (
     OpenVirtualSwitch.device_type
 )
 connection_rule[Firewall.device_type] = (Subnet.device_type,)
-connection_rule[OpenFlow_Controller.device_type] = (
+connection_rule[OpenFlowController.device_type] = (
     Router.device_type,
     OpenVirtualSwitch.device_type
 )
@@ -73,7 +73,7 @@ class Connection(Edge):
         """
         Create a connection to link devices together.
         """
-        Edge.__init__(self, source, dest)
+        super(Connection, self).__init__(source, dest)
 
     def getOtherDevice(self, node):
         """

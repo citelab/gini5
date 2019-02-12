@@ -1,13 +1,11 @@
-from Core.Connection import *
 from Core.Device import *
 
-##
-# Class: the bridge device. Not fully implemented yet
+
 class Bridge(Device):
-    device_type="Bridge"
+    device_type = "Bridge"
 
     def __init__(self):
-        Device.__init__(self)
+        super(Bridge, self).__init__()
 
         self.setProperty("port", "")
         self.setProperty("monitor", "")

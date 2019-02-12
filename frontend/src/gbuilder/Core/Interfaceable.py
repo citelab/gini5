@@ -9,7 +9,7 @@ class Interfaceable(Attachable):
         """
         Create a device that can have interfaces.
         """
-        Attachable.__init__(self)
+        super(Interfaceable, self).__init__()
 
         self.adjacentRouterList = []
         self.adjacentSubnetList = []

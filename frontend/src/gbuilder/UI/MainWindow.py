@@ -560,7 +560,7 @@ class MainWindow(Systray):
         self.client.send("canvas %d,%d" % (scene.width(), scene.height()))
         for item in items:
             if item.device_type == "Router":
-                item.load_wireshark_interfaces()
+                item.load_wireshark_menu()
             elif item.device_type == "Mobile" or item.device_type == "Wireless_access_point":
                 x = item.pos().x()
                 y = item.pos().y()

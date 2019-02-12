@@ -173,7 +173,7 @@ class Compiler:
             for con in router.edges():
                 i += 1
                 node = con.getOtherDevice(router)
-                if node.device_type == "OpenFlow_Controller":
+                if node.device_type == "OpenFlowController":
                     continue
                 node = node.getTarget(router)
 
@@ -192,7 +192,7 @@ class Compiler:
             controllerFound = False
             for con in router.edges():
                 node = con.getOtherDevice(router)
-                if node.device_type == "OpenFlow_Controller":
+                if node.device_type == "OpenFlowController":
                     if controllerFound:
                         self.generate_generic_error(router, " is connected to multiple OpenFlow controllers")
                         return
@@ -205,7 +205,7 @@ class Compiler:
 
             for con in edges:
                 node = con.getOtherDevice(router)
-                if node.device_type == "OpenFlow_Controller":
+                if node.device_type == "OpenFlowController":
                     continue
                 node = node.getTarget(router)
 
@@ -363,10 +363,10 @@ class Compiler:
         """
         Compile all the OpenFlow controllers.
         """
-        if not self.compile_list["OpenFlow_Controller"]:
+        if not self.compile_list["OpenFlowController"]:
             return
         else:
-            first_ofc = self.compile_list["OpenFlow_Controller"][0]
+            first_ofc = self.compile_list["OpenFlowController"][0]
             if not os.path.exists("/var/run/netns"):
                 self.generate_generic_error(
                     first_ofc,
@@ -383,7 +383,7 @@ class Compiler:
                     )
                     return
 
-        for controller in self.compile_list["OpenFlow_Controller"]:
+        for controller in self.compile_list["OpenFlowController"]:
             self.output.write("<vofc name=\"" + controller.getName() + "\">\n")
 
             ovs_found = False

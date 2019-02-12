@@ -9,7 +9,7 @@ class Attachable(Device):
         """
         Create a device that can be attached to.
         """
-        Device.__init__(self)
+        super(Attachable, self).__init__()
 
         self.menu.addAction("Restart", self.restart)
         self.menu.addAction("Stop", self.terminate)

@@ -35,7 +35,7 @@ class PropertyCheckBox(QtGui.QCheckBox):
             # allow it to be changed back to normal switch
             if self.item.device_type == "Switch" and self.prop == "OVS mode":
                 for edge in self.item.edges():
-                    if edge.getOtherDevice(self.item).device_type == "OpenFlow_Controller":
+                    if edge.getOtherDevice(self.item).device_type == "OpenFlowController":
                         self.toggle()
                         self.setChecked(QtCore.Qt.Checked)
                         return
