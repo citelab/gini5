@@ -4,18 +4,19 @@ from Core.globals import environ, mainWidgets, GINI_ROOT, GINI_HOME, defaultOpti
 from PyQt4.QtCore import QPoint
 from PyQt4.QtGui import QGraphicsObject
 from Core.Attachable import *
-import os, re
+import os
+import re
 
 
-class OpenFlow_Controller(Attachable):
-    device_type = "OpenFlow_Controller"
+class OpenFlowController(Attachable):
+    device_type = "OpenFlowController"
 
     def __init__(self):
         Attachable.__init__(self)
 
         # Shortens display name
         cur_name = self.getProperty("name")
-        self.setProperty("name", cur_name.replace("OpenFlow_Controller", "OFController"))
+        self.setProperty("name", cur_name.replace("OpenFlowController", "OFController"))
 
         self.modulesFilePath = os.path.join(GINI_HOME, "data", self.getName(), self.getName() + ".modules")
 
@@ -49,7 +50,7 @@ class OpenFlow_Controller(Attachable):
 
         # Shortens display name
         cur_name = self.getProperty("name")
-        self.setProperty("name", cur_name.replace("OpenFlow_Controller", "OFController"))
+        self.setProperty("name", cur_name.replace("OpenFlowController", "OFController"))
 
         # Updates module file path
         self.modulesFilePath = os.path.join(GINI_HOME, "data", self.getName(), self.getName() + ".modules")
@@ -66,7 +67,7 @@ class OpenFlow_Controller(Attachable):
     # required and launch it.
     #
     # Unfortunately, for some reason, this doesn't work. We can't add a signal handler to the
-    # OpenFlow_Controller class, since it doesn't extend QObject and won't have access
+    # OpenFlowController class, since it doesn't extend QObject and won't have access
     # to the sender() function. We can't have this class inherit from QObject, nor can we
     # create a separate class that extends QObject, because we keep getting cryptic error
     # messages when we try to do this or access sender().
@@ -93,7 +94,7 @@ class OpenFlow_Controller(Attachable):
             self.loadModule(fullPkgName)
 
         loadModuleFunction.__name__ = "loadModule_" + safeFullPkgName
-        setattr(OpenFlow_Controller, loadModuleFunction.__name__, loadModuleFunction)
+        setattr(OpenFlowController, loadModuleFunction.__name__, loadModuleFunction)
 
     def loadModule(self, fullPkgName):
         if not mainWidgets["main"].isRunning():
