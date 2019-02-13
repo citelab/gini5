@@ -1,26 +1,22 @@
 """The canvas to create topologies on"""
 
-from PyQt4 import QtCore, QtGui
-from Node import *
-from Core.globals import options, mainWidgets, yRouters
+from Core.globals import options, mainWidgets
 from Core.Connection import *
-from Core.Wireless_Connection import *
 from Core.Item import *
 
 
-realMnumber=3
-deviceTypes = {"Bridge":Bridge, "Firewall":Firewall, "Hub":Hub, "Mobile":Mobile,
-               "Router":Router, "Subnet":Subnet, "Switch":Switch, "REALM":REALM,
-               "Mach":Mach, "Wireless_access_point":Wireless_access_point, "yRouter":yRouter,
+realMnumber = 3
+deviceTypes = {"Bridge": Bridge, "Firewall": Firewall, "Hub": Hub, "Router": Router,
+               "Subnet": Subnet, "Switch": Switch, "Mach": Mach,
                "OpenFlowController": OpenFlowController, "OVSwitch": OpenVirtualSwitch}
 
 
 class View(QtGui.QGraphicsView):
-    def __init__(self, parent = None):
+    def __init__(self, parent=None):
         """
         Create the view component of the canvas.
         """
-        QtGui.QGraphicsView.__init__(self, parent)
+        super(View, self).__init__(parent)
 
         # Connections
         self.sourceNode = None
@@ -111,7 +107,7 @@ class View(QtGui.QGraphicsView):
         if not options["grid"]:
             return
         try:
-            r,g,b = str(options["gridColor"]).strip("()").split(",", 2)
+            r, g, b = str(options["gridColor"]).strip("()").split(",", 2)
             painter.setPen(QtGui.QColor(int(r), int(g), int(b)))
         except:
             return
@@ -137,7 +133,7 @@ class View(QtGui.QGraphicsView):
         Clear the pending connection attempt.
         """
         self.sourceNode = None
-        if self.line != None:
+        if self.line is not None:
             self.scene().removeItem(self.line)
             self.line = None
 
@@ -148,7 +144,7 @@ class View(QtGui.QGraphicsView):
         if mainWidgets["main"].isRunning():
             return
 
-        scene = self.scene()
+        self.scene()
         self.sourceNode = node
         self.line = QtGui.QGraphicsLineItem(QtCore.QLineF(node.pos(), node.pos()))
         self.scene().addItem(self.line)
@@ -157,10 +153,7 @@ class View(QtGui.QGraphicsView):
         """
         Create a connection between sourceNode and item.
         """
-        if sourceNode.device_type == "Mobile" or item.device_type == "Mobile":
-            con = Wireless_Connection(sourceNode, item)
-        else:
-            con = Connection(sourceNode, item)
+        con = Connection(sourceNode, item)
         self.scene().addItem(con)
         item.nudge()
 
@@ -168,13 +161,13 @@ class View(QtGui.QGraphicsView):
         """
         Handle mouse movement for connection purposes.
         """
-        if self.line == None:
+        if self.line is not None:
             QtGui.QGraphicsView.mouseMoveEvent(self, event)
             return
         # Draw Connection line and right click drag
         if event.buttons() == QtCore.Qt.RightButton:
             scene = self.scene()
-            item = scene.itemAt(self.mapToScene(event.pos()))
+            scene.itemAt(self.mapToScene(event.pos()))
             self.line.setLine(QtCore.QLineF(self.line.line().p1(), self.mapToScene(event.pos())))
 
     def mouseReleaseEvent(self, event):
@@ -182,7 +175,6 @@ class View(QtGui.QGraphicsView):
         Handle mouse button release for connection and context menu.
         """
         if event.button() == QtCore.Qt.RightButton:
-
             scene = self.scene()
             item = scene.itemAt(self.mapToScene(event.pos()))
 
@@ -193,14 +185,6 @@ class View(QtGui.QGraphicsView):
                         if dest.device_type == "Mach":
                             if len(dest.edges()) == 1:
                                 return "Mach cannot have more than one connection!"
-                        elif dest.device_type == "REALM":
-                            if len(dest.edges()) == 1:
-                                return "REALM cannot have more than one connection!"
-                        elif dest.device_type == "yRouter":
-                            target = source.getTarget(dest)
-                            yid = dest.getID()
-                            if target is not None and target.device_type == "Router" and not yRouters[yid]['IsPortal']:
-                                return "yRouter_%d is not a portal and cannot connect to the host!" % yid
                         elif dest.device_type == "Subnet":
                             if len(dest.edges()) == 2:
                                 return "Subnet cannot have more than two connections!"
@@ -211,17 +195,6 @@ class View(QtGui.QGraphicsView):
                                 for edge in source.edges():
                                     if edge.getOtherDevice(source).device_type == "Subnet":
                                         return "Switch cannot have more than one Subnet!"
-                            if source.device_type == "yRouter":
-                                target = dest.getTarget(source)
-                                yid = source.getID()
-                                if target is not None and target.device_type == "Router" and not yRouters[yid]['IsPortal']:
-                                    return "yRouter_%d is not a portal and cannot connect to the host!" % yid
-                            if source.device_type == "Router":
-                                target = dest.getTarget(source)
-                                if target is not None and target.device_type == "yRouter":
-                                    yid = target.getID()
-                                    if not yRouters[yid]['IsPortal']:
-                                        return "Cannot connect yRouter_%d to the host (not a portal)!" % yid
                         elif dest.device_type == "Router":
                             if source.device_type == "OpenFlowController":
                                 for edge in dest.edges():
@@ -244,11 +217,10 @@ class View(QtGui.QGraphicsView):
                 edges = self.sourceNode.edges()
                 for edge in edges:
                     if (edge.sourceNode() == self.sourceNode and edge.destNode() == item) \
-                       or (edge.sourceNode() == item and edge.destNode() == self.sourceNode):
+                            or (edge.sourceNode() == item and edge.destNode() == self.sourceNode):
                         return
 
                 # Check if connection rules are satisfied
-                #print self.sourceNode, item
                 valid = isValid(self.sourceNode, item)
                 if valid is True:
                     valid = isValid(item, self.sourceNode)
@@ -287,7 +259,6 @@ class Canvas(View):
         """
         Handle a drop.
         """
-
         mime = event.mimeData()
         node = deviceTypes[str(mime.text())]
         try:
@@ -311,7 +282,7 @@ class Canvas(View):
 
 
 class Scene(QtGui.QGraphicsScene):
-    def __init__(self, parent = None):
+    def __init__(self, parent=None):
         """
         Create a scene for the view.
         """
@@ -404,10 +375,6 @@ class Scene(QtGui.QGraphicsScene):
             interfaces.setCurrent(item)
             routes.setCurrent(item)
             properties.display()
-            if type(item) == "Router" or type(item) == "Mach" or type(item) == "Mobile" or type(item) == "yRouter":
+            if type(item) in ("Router", "Mach"):
                 interfaces.display()
                 routes.display()
-            elif type(item) == "REALM":
-                interfaces.display()
-                routes.dispaly()
-            break

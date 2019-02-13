@@ -5,12 +5,13 @@ from PyQt4 import QtCore, QtGui
 from Core.globals import *
 from Tutorial import Tutorial
 
+
 class Systray(QtGui.QMainWindow):
-    def __init__(self, parent = None):
+    def __init__(self, parent=None):
         """
         Create a system tray window to appear in the taskbar.
         """
-        QtGui.QMainWindow.__init__(self, parent)
+        super(Systray, self).__init__(parent)
 
         self.project = ""
 
@@ -19,11 +20,11 @@ class Systray(QtGui.QMainWindow):
         self.icon = QtGui.QIcon(environ["images"] + "giniLogo.png")
         self.setIcon(self.icon)
 
-        #QtCore.QObject.connect(self.trayIcon,
-                #QtCore.SIGNAL("messageClicked()"), self.messageClicked)
-        QtCore.QObject.connect(self.trayIcon,
-                QtCore.SIGNAL("activated(QSystemTrayIcon::ActivationReason)"),
-                self.iconActivated)
+        QtCore.QObject.connect(
+            self.trayIcon,
+            QtCore.SIGNAL("activated(QSystemTrayIcon::ActivationReason)"),
+            self.iconActivated
+        )
 
     def quit(self):
         """
@@ -45,7 +46,7 @@ class Systray(QtGui.QMainWindow):
             return
 
         elif self.canvas.scene().items():
-            if not self.closeTopology(usedyRouters):
+            if not self.closeTopology():
                 event.ignore()
                 return
 
@@ -129,7 +130,13 @@ class Systray(QtGui.QMainWindow):
             elif text == "False":
                 return False
             else:
-                areas = [QtCore.Qt.LeftDockWidgetArea, QtCore.Qt.RightDockWidgetArea, QtCore.Qt.TopDockWidgetArea, QtCore.Qt.BottomDockWidgetArea, QtCore.Qt.LeftDockWidgetArea]
+                areas = [
+                    QtCore.Qt.LeftDockWidgetArea,
+                    QtCore.Qt.RightDockWidgetArea,
+                    QtCore.Qt.TopDockWidgetArea,
+                    QtCore.Qt.BottomDockWidgetArea,
+                    QtCore.Qt.LeftDockWidgetArea
+                ]
                 for area in areas:
                     if int(text) == area:
                         return area
@@ -169,7 +176,6 @@ class Systray(QtGui.QMainWindow):
                 elif prop == "location":
                     self.addDockWidget(parse(val), window)
 
-
     def setVisible(self, visible):
         """
         Set the visibility of the window and the tray.
@@ -208,37 +214,40 @@ class Systray(QtGui.QMainWindow):
         Show a message from the system tray.
         """
         self.trayIcon.showMessage(title,
-                message, QtGui.QSystemTrayIcon.Information,
-                15 * 1000)
+                                  message, QtGui.QSystemTrayIcon.Information,
+                                  15 * 1000)
 
     def messageClicked(self):
         """
         Handle mouse clicks to the message.
         """
-        QtGui.QMessageBox.information(None, self.tr("Systray"),
-                self.tr("Goto whatever"))
+        QtGui.QMessageBox.information(None,
+                                      self.tr("Systray"),
+                                      self.tr("Goto whatever"))
 
     def createTrayActions(self):
         """
         Create the right click tray actions.
         """
-        self.minimizeAction = QtGui.QAction(self.tr("Mi&nimize"), self)
+        self.minimizeAction = QtGui.QAction(self.tr("&Minimize"), self)
         QtCore.QObject.connect(self.minimizeAction,
-                QtCore.SIGNAL("triggered()"), self, QtCore.SLOT("hide()"))
+                               QtCore.SIGNAL("triggered()"),
+                               self, QtCore.SLOT("hide()"))
 
-        self.maximizeAction = QtGui.QAction(self.tr("Ma&ximize"), self)
+        self.maximizeAction = QtGui.QAction(self.tr("&Maximize"), self)
         QtCore.QObject.connect(self.maximizeAction,
-                QtCore.SIGNAL("triggered()"), self,
-                QtCore.SLOT("showMaximized()"))
+                               QtCore.SIGNAL("triggered()"), self,
+                               QtCore.SLOT("showMaximized()"))
 
         self.restoreAction = QtGui.QAction(self.tr("&Restore"), self)
         QtCore.QObject.connect(self.restoreAction,
-                QtCore.SIGNAL("triggered()"), self,
-                QtCore.SLOT("showNormal()"))
+                               QtCore.SIGNAL("triggered()"), self,
+                               QtCore.SLOT("showNormal()"))
 
         self.quitAction = QtGui.QAction(self.tr("&Quit"), self)
-        QtCore.QObject.connect(self.quitAction, QtCore.SIGNAL("triggered()"),
-                QtGui.qApp, QtCore.SLOT("quit()"))
+        QtCore.QObject.connect(self.quitAction,
+                               QtCore.SIGNAL("triggered()"),
+                               QtGui.qApp, QtCore.SLOT("quit()"))
 
     def createTrayIcon(self):
         """
@@ -255,7 +264,8 @@ class Systray(QtGui.QMainWindow):
         self.trayIcon = QtGui.QSystemTrayIcon(self)
         self.trayIcon.setContextMenu(self.trayIconMenu)
 
-if __name__=='__main__':
+
+if __name__ == '__main__':
     app = QtGui.QApplication(sys.argv)
     systray = Systray()
     systray.show()

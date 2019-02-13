@@ -4,12 +4,13 @@ from PyQt4 import QtGui, QtCore
 from Core.globals import mainWidgets
 from Dockable import *
 
+
 class TaskManagerWindow(Dockable):
-    def __init__(self, parent = None):
+    def __init__(self, parent=None):
         """
         Create a task manager window.
         """
-        Dockable.__init__(self, parent=parent)
+        super(TaskManagerWindow, self).__init__(parent)
 
         self.widget = QtGui.QWidget()
         self.layout = QtGui.QVBoxLayout()

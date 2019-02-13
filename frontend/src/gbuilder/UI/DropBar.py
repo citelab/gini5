@@ -5,12 +5,13 @@ from Node import *
 from Core.globals import options
 from Dockable import *
 
+
 class DropArea(QtGui.QGraphicsView):
     def __init__(self, itemTypes):
         """
-        Create a page of droppable nodes.
+        Create a page of dropable nodes.
         """
-        QtGui.QGraphicsView.__init__(self)
+        super(DropArea, self).__init__()
         self.itemTypes = itemTypes
         self.yRouterDrop = None
 
@@ -33,38 +34,39 @@ class DropArea(QtGui.QGraphicsView):
         # TODO: Fix icon spacing here
 
         if location == QtCore.Qt.LeftDockWidgetArea \
-            or location == QtCore.Qt.RightDockWidgetArea:
-            lastnode = None
+                or location == QtCore.Qt.RightDockWidgetArea:
+            last_node = None
             for i in range(len(self.itemTypes)):
                 node = DropItem(self.itemTypes[i])
-                if lastnode:
-                    node.setPos(0, lastnode.pos().y() + 75)
+                if last_node:
+                    node.setPos(0, last_node.pos().y() + 75)
                 else:
                     node.setPos(0, 0)
                 scene.addItem(node)
-                lastnode = node
+                last_node = node
 
-            self.setSceneRect(-35, -35, 75, lastnode.pos().y() + 100)
+            self.setSceneRect(-35, -35, 75, last_node.pos().y() + 100)
 
         else:
-            lastnode = None
+            last_node = None
             for i in range(len(self.itemTypes)):
                 node = DropItem(self.itemTypes[i])
-                if lastnode:
-                    node.setPos(lastnode.pos().x() + 75, 0)
+                if last_node:
+                    node.setPos(last_node.pos().x() + 75, 0)
                 else:
                     node.setPos(0, 0)
                 scene.addItem(node)
-                lastnode = node
+                last_node = node
 
             self.setSceneRect(0, -35, 400, 75)
+
 
 class DropBar(Dockable):
     def __init__(self, title, parent):
         """
         Create a drag and drop toolbar.
         """
-        Dockable.__init__(self, title, parent)
+        super(DropBar, self).__init__(title, parent)
         self.parent = parent
 
         self.toolBox = QtGui.QToolBox()
@@ -92,60 +94,13 @@ class DropBar(Dockable):
         Handle the page change.
         """
         widget = self.widget()
-        droparea = widget.currentWidget()
-        droparea.refactorLocation(self.location)
+        drop_area = widget.currentWidget()
+        drop_area.refactorLocation(self.location)
 
     def locationChanged(self, location):
         """
         Handle the dock location change.
         """
-        droparea = self.widget().currentWidget()
-        droparea.refactorLocation(location)
+        drop_area = self.widget().currentWidget()
+        drop_area.refactorLocation(location)
         Dockable.locationChanged(self, location)
-
-
-"""Not being used"""
-class DropBar2(QtGui.QDockWidget):
-    def __init__(self, title, parent):
-        QtGui.QDockWidget.__init__(self, title, parent)
-        self.parent = parent
-        self.currentLocation = None
-
-        self.tabWidget = QtGui.QTabWidget()
-        self.tabWidget.setTabPosition(QtGui.QTabWidget.West)
-        self.setWidget(self.tabWidget)
-
-        dropArea = DropArea(hostTypes.keys())
-        dropArea2 = DropArea(netTypes.keys())
-        dropArea3 = DropArea(customTypes.keys())
-        self.tabWidget.addTab(dropArea, self.tr("&Host Element"))
-        self.tabWidget.addTab(dropArea2, self.tr("&Net Element"))
-        self.tabWidget.addTab(dropArea3, self.tr("&Custom Element"))
-
-        self.connect(self,
-                     QtCore.SIGNAL("dockLocationChanged(Qt::DockWidgetArea)"),
-                     self.locationChanged)
-        self.connect(self.tabWidget,
-                     QtCore.SIGNAL("currentChanged(int)"),
-                     self.tabChanged)
-
-    def locationChanged(self, location):
-        self.sizeHint()
-        widget = self.widget()
-        droparea = widget.currentWidget()
-        droparea.refactorLocation(location, self.parent)
-        self.currentLocation = location
-
-        if location == QtCore.Qt.LeftDockWidgetArea:
-            self.tabWidget.setTabPosition(QtGui.QTabWidget.West)
-        elif location == QtCore.Qt.RightDockWidgetArea:
-            self.tabWidget.setTabPosition(QtGui.QTabWidget.East)
-        elif location == QtCore.Qt.TopDockWidgetArea:
-            self.tabWidget.setTabPosition(QtGui.QTabWidget.North)
-        elif location == QtCore.Qt.BottomDockWidgetArea:
-            self.tabWidget.setTabPosition(QtGui.QTabWidget.South)
-
-    def tabChanged(self, index):
-        widget = self.widget()
-        droparea = widget.currentWidget()
-        droparea.refactorLocation(self.currentLocation, self.parent)

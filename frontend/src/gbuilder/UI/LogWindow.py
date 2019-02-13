@@ -4,12 +4,13 @@ from PyQt4 import QtGui
 from Dockable import *
 from Core.globals import defaultOptions
 
+
 class TextEdit(QtGui.QTextEdit):
     def __init__(self, parent=None):
         """
         Create a custom TextEdit so that the context menu is visible.
         """
-        QtGui.QTextEdit.__init__(self, parent)
+        super(TextEdit, self).__init__(parent)
 
     def contextMenuEvent(self, event):
         """
@@ -19,12 +20,13 @@ class TextEdit(QtGui.QTextEdit):
         menu.setPalette(defaultOptions["palette"])
         menu.exec_(event.globalPos())
 
+
 class LogWindow(Dockable):
-    def __init__(self, title, parent = None):
+    def __init__(self, title, parent=None):
         """
         Create a log window to append messages to.
         """
-        Dockable.__init__(self, title, parent)
+        super(LogWindow, self).__init__(title, parent)
 
         self.parent = parent
         self.log = TextEdit(self)

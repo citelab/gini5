@@ -7,18 +7,20 @@ from Core.Interfaceable import Interfaceable
 from Core.globals import mainWidgets
 import math
 
+
 class Arrow(QtGui.QGraphicsItem):
     def __init__(self, angle):
         """
         Create an indicator arrow for the tutorial.
         """
-        QtGui.QGraphicsItem.__init__(self)
+        super(Arrow, self).__init__()
         self.angle = angle
         self.image = QtGui.QImage(environ["images"] + "arrow.png").transformed(self.getRotationMatrix())
         self.timer = QtCore.QTimer()
         self.tl = QtCore.QTimeLine(1000)
         self.tl.setFrameRange(0, 100)
         self.tl.setLoopCount(0)
+        self.a = None
 
     def getRotationMatrix(self):
         """
@@ -59,12 +61,13 @@ class Arrow(QtGui.QGraphicsItem):
         rect = self.image.rect()
         return QtCore.QRectF(rect.left() - rect.width()/2, rect.top() - rect.height()/2, rect.right(), rect.bottom())
 
+
 class TextItem(QtGui.QGraphicsTextItem):
     def __init__(self, text):
         """
         Create a fancy text item to display instructions on.
         """
-        QtGui.QGraphicsTextItem.__init__(self, text)
+        super(TextItem, self).__init__(text)
         self.shining = True
         self.offset = -50
         self.gradientRect = QtCore.QRectF()
@@ -88,7 +91,7 @@ class TextItem(QtGui.QGraphicsTextItem):
         Shift the gradient gradually.
         """
         if self.shining:
-            adjusted = self.boundingRect().adjusted(-5,-5,5,5)
+            adjusted = self.boundingRect().adjusted(-5, -5, 5, 5)
             left = adjusted.left() + self.offset
             width = 50
             if left < -5:
@@ -102,12 +105,12 @@ class TextItem(QtGui.QGraphicsTextItem):
                 self.shining = False
                 return
 
-            gradient = QtGui.QLinearGradient(self.offset,0,rightGradient,0)
+            gradient = QtGui.QLinearGradient(self.offset, 0, rightGradient, 0)
             self.offset += 8
 
-            gradient.setColorAt(0, QtGui.QColor(160,160,160,128))
-            gradient.setColorAt(0.5, QtGui.QColor(255,255,255,128))
-            gradient.setColorAt(1, QtGui.QColor(160,160,160,128))
+            gradient.setColorAt(0, QtGui.QColor(160, 160, 160, 128))
+            gradient.setColorAt(0.5, QtGui.QColor(255, 255, 255, 128))
+            gradient.setColorAt(1, QtGui.QColor(160, 160, 160, 128))
             self.gradientBrush = QtGui.QBrush(gradient)
             self.update()
 
@@ -125,20 +128,21 @@ class TextItem(QtGui.QGraphicsTextItem):
         Draw the text item.
         """
         self.center()
-        color = QtGui.QColor(128,128,128,128)
-        adjusted = self.boundingRect().adjusted(-5,-5,5,5)
+        color = QtGui.QColor(128, 128, 128, 128)
+        adjusted = self.boundingRect().adjusted(-5, -5, 5, 5)
         painter.fillRect(adjusted, color)
         if self.shining:
             painter.fillRect(self.gradientRect, self.gradientBrush)
-        painter.fillRect(self.boundingRect(), QtGui.QColor(255,255,255,192))
+        painter.fillRect(self.boundingRect(), QtGui.QColor(255, 255, 255, 192))
         QtGui.QGraphicsTextItem.paint(self, painter, option, widget)
+
 
 class TutorialEdge(Edge):
     def __init__(self, startItem, endItem):
         """
         Create an edge specific to this tutorial.
         """
-        Edge.__init__(self, startItem, endItem)
+        super(TutorialEdge, self).__init__(startItem, endItem)
         self.setFlag(QtGui.QGraphicsItem.ItemIsSelectable, False)
         self.p1 = startItem.pos()
         self.p2 = endItem.pos()
@@ -160,12 +164,13 @@ class TutorialEdge(Edge):
     def contextMenu(self, pos):
         pass
 
+
 class TutorialNode(Node):
     def __init__(self, itemType):
         """
         Create a node specific to this tutorial.
         """
-        Node.__init__(self, itemType)
+        super(TutorialNode, self).__init__(itemType)
         self.setFlag(QtGui.QGraphicsItem.ItemIsMovable, False)
         self.setFlag(QtGui.QGraphicsItem.ItemIsSelectable, False)
         self.setAcceptDrops(True)
@@ -179,7 +184,7 @@ class TutorialNode(Node):
         painter.drawImage(QtCore.QPoint(-self.image.width()/2, -self.image.height()/2), self.image)
         if not self.dragOver:
             transparency = QtGui.QImage(self.image)
-            transparency.fill(QtGui.qRgba(0,0,0,50))
+            transparency.fill(QtGui.qRgba(0, 0, 0, 50))
             painter.drawImage(QtCore.QPoint(-self.image.width()/2, -self.image.height()/2), transparency)
 
         if options["names"]:
@@ -229,12 +234,13 @@ class TutorialNode(Node):
     def contextMenu(self, pos):
         pass
 
+
 class Tutorial(View):
-    def __init__(self, parent = None):
+    def __init__(self, parent=None):
         """
         Create an interactive tutorial on how to use this program.
         """
-        View.__init__(self, parent)
+        super(Tutorial, self).__init__(parent)
         self.arrows = []
         self.messages = []
         self.currentArrow = None
@@ -257,13 +263,12 @@ class Tutorial(View):
         self.connect(mainWidgets["main"].runAct, QtCore.SIGNAL("triggered()"), self.run)
         self.connect(mainWidgets["main"].stopAct, QtCore.SIGNAL("triggered()"), self.stop)
 
-
     def addStep(self, message, angle, pos=QtCore.QPoint()):
         """
         Add a step to the tutorial.
         """
         self.messages.append(message)
-        if angle == None:
+        if angle is None:
             self.arrows.append(None)
             return
 
@@ -276,31 +281,31 @@ class Tutorial(View):
         Start the tutorial.
         """
         self.addStep("First, fill in the following topology by dragging elements from the\nDrag & Drop Toolbar indicated by the arrow and dropping them into\na spot of the corresponding element type.",
-                     math.pi, QtCore.QPointF(-160,0))
+                     math.pi, QtCore.QPointF(-160, 0))
         self.addStep("Next, connect the elements together by holding right-click from a\nsource element, and releasing on top of the destination element.",
                      None)
         self.addStep("Now select the targeted subnet element in the topology.",
-                     3 * math.pi / 2, QtCore.QPointF(50,-90))
+                     3 * math.pi / 2, QtCore.QPointF(50, -90))
         self.addStep("This window is used to display and modify item properties.\nModify the 'subnet' property to '192.168.X.0', where X is the subnet ID\nnumber given in the name (Subnet_X).",
-                     0, QtCore.QPointF(160,-95))
+                     0, QtCore.QPointF(160, -95))
         self.addStep("Now select the targeted router element in the topology.",
-                     math.pi, QtCore.QPointF(60,-80))
+                     math.pi, QtCore.QPointF(60, -80))
         self.addStep("This window will display the properties of a given interface\nof an element such as a router.  Try navigating to the next\ninterface using the right arrow button.",
-                     0, QtCore.QPointF(160,55))
+                     0, QtCore.QPointF(160, 55))
         self.addStep("The toolbar provides easy access to several commands.  The\none we are interested in now is compiling the topology.  Press\nthe compile button now, and be sure to provide a save filename.",
-                     3 * math.pi / 4, QtCore.QPointF(155,-155))
+                     3 * math.pi / 4, QtCore.QPointF(155, -155))
         self.addStep("The log window provides messages to let you know if certain\ncommands have been executed properly.  If the compile was\nsuccessful, a message should indicate so.",
-                     3 * math.pi / 2, QtCore.QPointF(0,145))
+                     3 * math.pi / 2, QtCore.QPointF(0, 145))
         self.addStep("The tab name indicates the current project you have open.  The\npurpose of a project is to share Machs between topologies.  The\nproject name determines where the topology data is stored.",
-                     3 * math.pi / 4, QtCore.QPointF(-155,-145))
+                     3 * math.pi / 4, QtCore.QPointF(-155, -145))
         self.addStep("To run this topology, we will need a server which has the\nbackend installed.  Make sure there is a valid server and host name\nin the server options, and then press the start server button.",
-                     3 * math.pi / 4, QtCore.QPointF(155,-155))
+                     3 * math.pi / 4, QtCore.QPointF(155, -155))
         self.addStep("If the server started properly, and the compilation step before\nwas successful, then pressing the run button should start the\ntopology.",
                      3 * math.pi / 4, QtCore.QPointF(155,-155))
         self.addStep("If the topology started properly, you should be able to see some\nstatus lights on certain devices.  The ones that have lights\ncan be attached to by double-clicking on them.  Try one now.",
                      None)
         self.addStep("After you are finished with this topology, press the stop button\nto stop the running topology.",
-                     3 * math.pi / 4, QtCore.QPointF(155,-155))
+                     3 * math.pi / 4, QtCore.QPointF(155, -155))
         self.addStep("The tutorial is finished.  Most of the basics have been covered.\nFor more information, please consult the FAQ in the help menu.\nYou can exit the tutorial by closing this topology.",
                      None)
 

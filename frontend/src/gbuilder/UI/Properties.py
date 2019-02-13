@@ -4,20 +4,21 @@ from PyQt4 import QtCore, QtGui
 from Core.globals import mainWidgets
 from Dockable import *
 from PropertyComboBox import PropertyComboBox
-#from Devices.REALM import ConncetM
 
-class ConnectM():
-    def __init__ (self,name,ip,mac,port):
-        self.name=name
-        self.ip=ip
-        self.mac=mac
-        self.port=port
-        alist={"m1":ConnectM("m1","ip1","mac1","port1"),"m2":ConnectM("m1","ip2","mac2","port2")}
+
+class ConnectM:
+    def __init__(self, name, ip, mac, port):
+        self.name = name
+        self.ip = ip
+        self.mac = mac
+        self.port = port
+        self.alist = {"m1": ConnectM("m1", "ip1", "mac1", "port1"),
+                      "m2": ConnectM("m1", "ip2", "mac2", "port2")}
 
 
 class PropertyCheckBox(QtGui.QCheckBox):
-    def __init__(self, item, prop, parent = None):
-        QtGui.QCheckBox.__init__(self, parent)
+    def __init__(self, item, prop, parent=None):
+        super(PropertyCheckBox).__init__(parent)
         self.item = item
         self.prop = prop
         self.connect(self, QtCore.SIGNAL("stateChanged(int)"), self.changeState)
@@ -45,12 +46,14 @@ class PropertyCheckBox(QtGui.QCheckBox):
                     self.item.setProperty("name", name[2:])
             self.item.setProperty(self.prop, "False")
 
+
 class PropertiesWindow(Dockable):
-    def __init__(self, parent = None):
+    def __init__(self, parent=None):
         """
         Create a properties window to display properties of selected items.
         """
         Dockable.__init__(self, parent=parent)
+        super(PropertiesWindow, self).__init__(parent)
         self.createView()
         self.setWidget(self.sourceView)
 
@@ -117,11 +120,11 @@ class PropertiesWindow(Dockable):
         prop = self.model.data(propertyIndex)
         if prop.toString() == "id":
             name = str(value.toString())
-	    devType, index = name.rsplit("_", 1)
-            if not devType == "yRouter" and name.find(self.currentItem.device_type + "_") == 0:
+            if name.find(self.currentItem.device_type + "_") == 0:
                 try:
+                    devType, index = name.rsplit("_", 1)
                     index = int(index)
-                    if index - 1 in range(126) and mainWidgets["canvas"].scene().findItem(name) == None:
+                    if index - 1 in range(126) and mainWidgets["canvas"].scene().findItem(name) is not None:
                         self.currentItem.setIndex(index)
                         return
                 except:
@@ -129,12 +132,9 @@ class PropertiesWindow(Dockable):
 
             popup = mainWidgets["popup"]
             popup.setWindowTitle("Invalid Name Change")
-	    if devType == "yRouter":
-		popup.setText("Cannot change the index of a yRouter!")
-	    else:
-                popup.setText("Only the index of the name can be changed! The index must be unique and in the range 1-126.")
+            popup.setText("Only the index of the name can be changed!  The index must be unique and in the range 1-126.")
             popup.show()
-	else:
+        else:
             self.currentItem.setProperty(prop.toString(), value.toString())
 
     def dockChanged(self, floating):
@@ -143,7 +143,6 @@ class PropertiesWindow(Dockable):
         """
         if floating:
             self.setWindowOpacity(0.8)
-
 
     def setCurrent(self, item):
         """
@@ -189,12 +188,13 @@ class PropertiesWindow(Dockable):
         if count:
             self.model.removeRows(0, count)
 
+
 class InterfacesWindow(PropertiesWindow):
     def __init__(self, parent = None):
         """
         Create an interfaces window.
         """
-        Dockable.__init__(self, parent=parent)
+        super(InterfacesWindow, self).__init__(parent)
         self.createView()
 
         self.currentInterface = 1
@@ -236,8 +236,6 @@ class InterfacesWindow(PropertiesWindow):
         elif prop == "target":
             value = value.getName()
             editable = False
-        elif not self.currentItem.device_type == "Wireless_access_point" and prop in ["subnet", "mask"]:
-            return#editable = False
 
         PropertiesWindow.addProperty(self, prop, value, editable)
 
@@ -290,7 +288,7 @@ class InterfacesWindow(PropertiesWindow):
         self.currentInterface += inc
         interface = interfaces[self.currentInterface-1]
         self.setWindowTitle("Interface %d" % self.currentInterface)
-	for prop, value in interface.iteritems():
+        for prop, value in interface.iteritems():
             self.addProperty(prop, value)
 
     def changed(self, index, index2):
@@ -300,8 +298,6 @@ class InterfacesWindow(PropertiesWindow):
         value = self.model.data(index)
         propertyIndex = self.model.index(index.row(), index.column()-1)
         prop = self.model.data(propertyIndex)
-        #interfaces = self.currentItem.getInterfaces()
-        #interfaces[self.currentInterface - 1][prop.toString()] = value.toString()
         self.currentItem.setInterfaceProperty(prop.toString(), value.toString(), index=self.currentInterface - 1)
 
     def clear(self):
@@ -319,12 +315,13 @@ class InterfacesWindow(PropertiesWindow):
         """
         return self.currentItem
 
+
 class RoutesWindow(InterfacesWindow):
-    def __init__(self, interfacesWindow, parent = None):
+    def __init__(self, interfacesWindow, parent=None):
         """
         Create a routes window.
         """
-        InterfacesWindow.__init__(self, parent=parent)
+        super(RoutesWindow, self).__init__(parent)
         self.interfacesWindow = interfacesWindow
         self.currentInterface = 1
         self.currentRoute = 1
@@ -366,7 +363,6 @@ class RoutesWindow(InterfacesWindow):
 
         self.currentRoute = 1
         self.display(1)
-
 
     def display(self, interfaceInc=0, routeInc=0):
         """

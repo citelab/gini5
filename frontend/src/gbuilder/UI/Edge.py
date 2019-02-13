@@ -3,14 +3,16 @@
 import math
 from PyQt4 import QtCore, QtGui
 from Core.Item import *
+from Tutorial import Tutorial
 from Core.globals import options, mainWidgets, defaultOptions
+
 
 class Edge(QtGui.QGraphicsLineItem, Item):
     def __init__(self, startItem, endItem, parent=None, scene=None):
         """
         Create an edge between two nodes, linking them together graphically.
         """
-        QtGui.QGraphicsLineItem.__init__(self, parent, scene)
+        super(Edge, self).__init__(parent, scene)
 
         self.source = startItem
         self.dest = endItem
@@ -93,14 +95,9 @@ class Edge(QtGui.QGraphicsLineItem, Item):
         """
         Draw the representation.
         """
-        if (self.source.collidesWithItem(self.dest)):
+        if self.source.collidesWithItem(self.dest):
             return
         painter.setRenderHint(QtGui.QPainter.Antialiasing, options["smoothing"])
-
-        if self.device_type == "Wireless_Connection":
-            pen = QtGui.QPen()
-            pen.setDashPattern([10,10])
-            painter.setPen(pen)
 
         painter.drawLine(self.line())
 
@@ -123,7 +120,6 @@ class Edge(QtGui.QGraphicsLineItem, Item):
             mainWidgets["log"].append("You cannot delete items from a running topology!")
             return
 
-        from Tutorial import Tutorial
         if isinstance(mainWidgets["canvas"], Tutorial):
             mainWidgets["log"].append("You cannot delete items from the tutorial!")
             return

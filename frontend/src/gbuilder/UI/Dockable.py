@@ -2,12 +2,13 @@
 
 from PyQt4 import QtGui, QtCore
 
+
 class Dockable(QtGui.QDockWidget):
-    def __init__(self, title = QtCore.QString(), parent = None):
+    def __init__(self, title=QtCore.QString(), parent=None):
         """
         Create a dockable window.
         """
-        QtGui.QDockWidget.__init__(self, title, parent)
+        super(Dockable, self).__init__(title, parent)
         self.location = None
         self.chosenSize = None
         self.timer = QtCore.QTimer()

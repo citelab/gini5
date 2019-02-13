@@ -4,8 +4,8 @@ from Core.globals import environ, mainWidgets
 
 
 class Client(QtCore.QThread):
-    def __init__(self, parent = None):
-        QtCore.QThread.__init__(self)
+    def __init__(self, parent=None):
+        super(Client, self).__init__()
         self.tcpSocket = QtNetwork.QTcpSocket(parent)
         self.connected = False
         self.leftovers = ""
@@ -118,11 +118,11 @@ class Client(QtCore.QThread):
 
         self.process(self.waitForMessage(""))
 
-    def send(self, text):
-        length = str(len(text))
-        self.tcpSocket.writeData(length + " " + text)
+    def send(self, message):
+        length = str(len(message))
+        self.tcpSocket.writeData(length + " " + message)
 
-    def disconnect(self):
+    def disconnect(self, *args):
         self.tcpSocket.disconnectFromHost()
 
     def run(self):
@@ -131,29 +131,12 @@ class Client(QtCore.QThread):
             time.sleep(1)
         print "connected!"
 
-        text = raw_input("gclient> ")
-        while text != "exit":
-            self.process(text)
-            text = raw_input("gclient> ")
+        message = raw_input("gclient> ")
+        while message != "exit":
+            self.process(message)
+            message = raw_input("gclient> ")
 
         self.disconnect()
-
-
-"""
-class ShellStarter(QtCore.QThread):
-    def __init__(self, command):
-        QtCore.QThread.__init__(self)
-        self.command = str(command)
-        self.started = -1
-
-    def startStatus(self):
-        return self.started
-
-    def run(self):
-        self.started = 0
-        os.system(self.command)
-        self.started = 1
-"""
 
 
 class Callable:
@@ -167,11 +150,14 @@ class Command:
         self.args = args
         self.client = client
 
-    def isolateFilename(self, path):
+    @staticmethod
+    def isolateFilename(path):
         return path.split("/")[-1].split("\\")[-1]
 
-    def create(commandType, args):
-        return commands[commandType](args)
+    @staticmethod
+    def create(command_type, args):
+        return commands[command_type](args)
+
     create = Callable(create)
 
 
@@ -217,20 +203,11 @@ class ReceiveDeviceStatusCommand(Command):
         device, pid, status = self.args.split(" ", 2)
 
         name = device
-        if device.find("WAP") == 0:
-            name = "Wireless_access_point_" + device.split("_")[-1]
         item = scene.findItem(name)
         if item is not None:
             item.setStatus(status)
 
         tm.update(device, pid, status)
-
-
-class ReceiveWirelessStatsCommand(Command):
-    def execute(self):
-        name, stats = self.args.split(" ", 1)
-        scene = mainWidgets["canvas"].scene()
-        scene.findItem(name).setWirelessStats(stats)
 
 
 class ReceiveRouterStatsCommand(Command):
@@ -245,18 +222,17 @@ class ReceiveWiresharkCaptureCommand(Command):
         pass
 
 
-commands = \
-    {
-        "start": SendStartCommand,
-        "stop": SendStopCommand,
-        "path": ReceivePathCommand,
-        "file": SendFileCommand,
-        "status": ReceiveDeviceStatusCommand,
-        "kill": SendKillCommand,
-        "wstats": ReceiveWirelessStatsCommand,
-        "rstats": ReceiveRouterStatsCommand,
-        "wshark": ReceiveWiresharkCaptureCommand
-    }
+commands = {
+    "start": SendStartCommand,
+    "stop": SendStopCommand,
+    "path": ReceivePathCommand,
+    "file": SendFileCommand,
+    "status": ReceiveDeviceStatusCommand,
+    "kill": SendKillCommand,
+    "rstats": ReceiveRouterStatsCommand,
+    "wshark": ReceiveWiresharkCaptureCommand
+}
+
 client = None
 
 if __name__ == "__main__":
