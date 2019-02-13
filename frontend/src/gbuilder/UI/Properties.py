@@ -18,7 +18,7 @@ class ConnectM:
 
 class PropertyCheckBox(QtGui.QCheckBox):
     def __init__(self, item, prop, parent=None):
-        super(PropertyCheckBox).__init__(parent)
+        super(PropertyCheckBox, self).__init__(parent)
         self.item = item
         self.prop = prop
         self.connect(self, QtCore.SIGNAL("stateChanged(int)"), self.changeState)
