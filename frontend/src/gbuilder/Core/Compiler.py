@@ -1,8 +1,8 @@
 """The compiler that turns topologies into xml network definitions"""
 
-from .Item import nodeTypes
-from .Device import Device
-from .globals import options, environ, mainWidgets
+from Core.Item import nodeTypes
+from Core.Device import Device
+from Core.globals import options, environ, mainWidgets
 from PyQt4 import QtCore
 import os
 import re

@@ -10,9 +10,7 @@ from Node import *
 from Edge import *
 from Configuration import *
 from Core.globals import *
-import thread
 import socket
-import atexit
 import fcntl
 import struct
 from ExportWindow import *
@@ -93,7 +91,6 @@ class MainWindow(Systray):
             self.defaultLayout = False
 
         self.loadProject()
-        atexit.register(self.cleanup)
 
     def center(self):
         """
@@ -216,7 +213,6 @@ class MainWindow(Systray):
         self.properties.clear()
         self.interfaces.clear()
         self.routes.clear()
-        self.server.terminate()     # TODO: verify this
 
         return True
 
@@ -395,10 +391,11 @@ class MainWindow(Systray):
 
     def startBackend(self):
         """
-        Start the backend server.
+        Start the backend server. Wait for 2000ms after startServer() and start
+        the Gini client, that way gBuilder is attached to the gServer terminal.
         """
         self.startServer()
-        # self.startClient()
+        QtCore.QTimer.singleShot(2000, self.startClient)
 
     def setRecovery(self, recovery):
         """
@@ -420,12 +417,6 @@ class MainWindow(Systray):
             self.log.append("A server is already running!")
             return
 
-        # base = "ssh -t " + options["username"] + "@" + options["server"]
-        # tunnel = " -L " + options["localPort"] + ":localhost:" + options["remotePort"]
-        # server = "bash -c -i 'gserver " + options["remotePort"] + "' || sleep 5"
-        # command = ""
-        # gserver = "gserver"
-
         base = "ssh -t %s@%s" % (options["username"], options["server"])
         tunnel = " -L %s:localhost:%s" % (options["localPort"], options["remotePort"])
         server = "bash -c -i 'gserver %s' || sleep 5" % options["remotePort"]
@@ -442,14 +433,12 @@ class MainWindow(Systray):
         """
         self.client = Client(self)
         self.client.connectTo("localhost", int(options["localPort"]), 10)
-        # self.client.start()
         mainWidgets["client"] = self.client
 
     def compile(self):
         """
         Compile the current topology.
         """
-        self.log.append("Compiling topology...")
         if self.running:
             self.log.append("You cannot compile a topology when one is still running!")
             return False
@@ -466,11 +455,9 @@ class MainWindow(Systray):
         self.routes.display()
 
         if xmlFile:
-            self.log.append("Compiled")
             self.statusBar().showMessage(self.tr("Compiled '%1'").arg(xmlFile), 2000)
             return True
         else:
-            self.log.append("Compile failed")
             self.statusBar().showMessage(self.tr("Compile failed"), 2000)
             return False
 
@@ -478,7 +465,6 @@ class MainWindow(Systray):
         """
         Run the current topology.
         """
-        self.log.append("Running topology...")
         if not self.server or self.server.poll() is not None:
             self.log.append("Please start the server first!")
             return
@@ -524,6 +510,8 @@ class MainWindow(Systray):
         self.properties.clear()
         self.interfaces.clear()
         self.routes.clear()
+
+        self.statusBar().showMessage(self.tr("Network is up and running!"), 2000)
 
     def stop(self):
         """
@@ -578,6 +566,8 @@ class MainWindow(Systray):
             except:
                 continue
         os.chdir(old_dir)
+
+        self.statusBar().showMessage(self.tr("Stopped!"), 2000)
 
     def loadFile(self, filetype):
         """
@@ -732,7 +722,7 @@ class MainWindow(Systray):
 
         def loadIntoScene(line, *args):
             scene = self.canvas.scene()
-            itemType,arg = line.split(":")
+            itemType, arg = line.split(":")
             args = str(arg).strip("()").split(",")
 
             if itemType == "edge":
@@ -1284,10 +1274,25 @@ class MainWindow(Systray):
                 dock.setFloating(not dock.isFloating())
         elif key == QtCore.Qt.Key_F10:
             self.debugWindow.show()
+        else:
+            super(MainWindow, self).keyPressEvent(event)
 
-    def cleanup(self):
-        if self.server is not None:
-            self.server.kill()
+    def stop_server(self):
+        if self.server and self.server.poll() is None:
+            self.server.terminate()
+
+    def quit(self):
+        return super(MainWindow, self).quit()
+
+    def closeEvent(self, event):
+        """
+        Handle close event
+        """
+        if super(MainWindow, self).closeEvent(event):
+            self.stop_server()
+            event.accept()
+        else:
+            event.ignore()
 
 
 class DebugWindow(QtGui.QWidget):

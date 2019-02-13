@@ -52,8 +52,7 @@ class PropertiesWindow(Dockable):
         """
         Create a properties window to display properties of selected items.
         """
-        Dockable.__init__(self, parent=parent)
-        super(PropertiesWindow, self).__init__(parent)
+        super(PropertiesWindow, self).__init__(parent=parent)
         self.createView()
         self.setWidget(self.sourceView)
 

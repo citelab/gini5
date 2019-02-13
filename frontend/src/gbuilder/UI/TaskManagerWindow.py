@@ -10,7 +10,7 @@ class TaskManagerWindow(Dockable):
         """
         Create a task manager window.
         """
-        super(TaskManagerWindow, self).__init__(parent)
+        super(TaskManagerWindow, self).__init__(parent=parent)
 
         self.widget = QtGui.QWidget()
         self.layout = QtGui.QVBoxLayout()

@@ -3,7 +3,6 @@
 import math
 from PyQt4 import QtCore, QtGui
 from Core.Item import *
-from Tutorial import Tutorial
 from Core.globals import options, mainWidgets, defaultOptions
 
 
@@ -120,6 +119,7 @@ class Edge(QtGui.QGraphicsLineItem, Item):
             mainWidgets["log"].append("You cannot delete items from a running topology!")
             return
 
+        from UI.Tutorial import Tutorial
         if isinstance(mainWidgets["canvas"], Tutorial):
             mainWidgets["log"].append("You cannot delete items from the tutorial!")
             return

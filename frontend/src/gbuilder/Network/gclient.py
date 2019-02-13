@@ -150,11 +150,9 @@ class Command:
         self.args = args
         self.client = client
 
-    @staticmethod
-    def isolateFilename(path):
+    def isolateFilename(self, path):
         return path.split("/")[-1].split("\\")[-1]
 
-    @staticmethod
     def create(command_type, args):
         return commands[command_type](args)
 

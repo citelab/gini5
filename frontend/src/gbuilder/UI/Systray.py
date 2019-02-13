@@ -43,15 +43,17 @@ class Systray(QtGui.QMainWindow):
             self.hide()
             self.trayIcon.show()
             event.ignore()
-            return
+            return False
 
         elif self.canvas.scene().items():
             if not self.closeTopology():
                 event.ignore()
-                return
+                return False
 
         if options["restore"]:
             self.saveLayout()
+
+        return True
 
     def resetLayout(self, default=False):
         """

@@ -561,7 +561,7 @@ class ConfigDialog(QtGui.QDialog):
         self.setWindowIcon(QtGui.QIcon(environ["images"] + "giniLogo.png"))
 
         if not self.wizard and options["autoconnect"]:
-            mainWidgets["main"].startServer()
+            mainWidgets["main"].startBackend()
 
     def loadOptions(self):
         """
