@@ -1,4 +1,4 @@
-"""The main window for gbuilder 2.0"""
+"""The main window for gbuilder"""
 
 import os, time, math, subprocess, sys
 from PyQt4.QtCore import *
@@ -25,26 +25,22 @@ from TabWidget import *
 from Tutorial import *
 from TaskManagerWindow import *
 import Core.globals
-from Wireless.ClientAPI import *
-from Wireless.ServerAPI import *
+
 
 class MainWindow(Systray):
-    def __init__(self,app):
+    def __init__(self, app):
         """
         Create a main window for the application
         """
-        defaultOptions["palette"]=app.palette()
-        Systray.__init__(self)
+        defaultOptions["palette"] = app.palette()
+        super(MainWindow, self).__init__()
 
-        self.expansions=0
-        self.client=None
-        self.server=None
-        self.wserverIP=None
-        self.wserverPort=None
-        self.wgini_client=None
-        self.wgini_server=None
-        self.running=False
-        self.recovery=False
+        self.expansions = 0
+        self.client = None
+        self.server = None
+        self.running = False
+        self.recovery = False
+        self.filename = ""
         mainWidgets["main"] = self
         mainWidgets["app"] = app
 
@@ -55,7 +51,6 @@ class MainWindow(Systray):
         mainWidgets["tab"] = self.tabWidget
 
         self.setCentralWidget(self.tabWidget)
-        #self.setCentralWidget(self.canvas)
 
         self.createActions()
         self.createMenus()
@@ -97,11 +92,8 @@ class MainWindow(Systray):
             self.loadLayout()
             self.defaultLayout = False
 
-
-
         self.loadProject()
         atexit.register(self.cleanup)
-
 
     def center(self):
         """
@@ -166,22 +158,20 @@ class MainWindow(Systray):
         for dock in self.docks.values():
             dock.setFeatures(dock.DockWidgetClosable | dock.DockWidgetMovable | dock.DockWidgetFloatable)
 
-    def faq(self):
+    @staticmethod
+    def faq():
         """
         Open the FAQ in the default browser.
         """
-        olddir = os.getcwd()
+        old_dir = os.getcwd()
         os.chdir(environ["doc"])
-        loadpath = os.getcwd()
-        os.chdir(olddir)
+        load_path = os.getcwd()
+        os.chdir(old_dir)
 
-        if environ["os"] == "Windows":
-            url = QtCore.QUrl("file:///" + loadpath + "/FAQ.html")
-        else:
-            url = QtCore.QUrl("file://" + loadpath + "/FAQ.html")
+        url = QtCore.QUrl("file://" + load_path + "/FAQ.html")
         QtGui.QDesktopServices.openUrl(url)
 
-    def closeTopology(self,usedyRouters=usedyRouters):
+    def closeTopology(self):
         """
         Close the current topology.
         """
@@ -191,7 +181,12 @@ class MainWindow(Systray):
 
         scene = self.canvas.scene()
         if scene and scene.items():
-            reply = QtGui.QMessageBox.warning(self, self.tr(Core.globals.PROG_NAME), self.tr("Save before closing?"), QtGui.QMessageBox.Yes | QtGui.QMessageBox.No | QtGui.QMessageBox.Cancel)
+            reply = QtGui.QMessageBox.warning(
+                self,
+                self.tr(Core.globals.PROG_NAME),
+                self.tr("Save before closing?"),
+                QtGui.QMessageBox.Yes | QtGui.QMessageBox.No | QtGui.QMessageBox.Cancel
+            )
             if reply == QtGui.QMessageBox.Yes:
                 if not self.saveTopology():
                     return False
@@ -218,15 +213,10 @@ class MainWindow(Systray):
             itemTypes = nodeTypes[nodeType]
             itemTypes[nodeType] = 0
 
-	    if usedyRouters:
-	        for yunid, yun in usedyRouters.iteritems():
-		        availableyRouters.append(yun)
-		        availableyRouters.sort(key=lambda YunEntity: YunEntity['ID'])
-	        usedyRouters = {}
-
         self.properties.clear()
         self.interfaces.clear()
         self.routes.clear()
+        self.server.terminate()     # TODO: verify this
 
         return True
 
@@ -234,7 +224,7 @@ class MainWindow(Systray):
         """
         Start a process to select and send a file to the server.
         """
-        if not self.server or self.server.poll() != None:
+        if not self.server or self.server.poll() is not None:
             self.log.append("Please start the server first!")
             return
         if not self.client or not self.client.isConnected():
@@ -259,7 +249,7 @@ class MainWindow(Systray):
             self.log.append("You cannot create a new topology during the tutorial!")
             return
 
-        if not self.closeTopology(usedyRouters):
+        if not self.closeTopology():
             return
 
         self.expandScene()
@@ -292,10 +282,10 @@ class MainWindow(Systray):
         if filename.isEmpty():
             return
 
-        projectname = str(filename).split("/")[-1].strip(".gproj")
+        project_name = str(filename).split("/")[-1].strip(".gproj")
         from Core.Item import nodeTypes
         for nodeType in nodeTypes:
-            if projectname.startswith(nodeType + "_"):
+            if project_name.startswith(nodeType + "_"):
                 self.popup.setWindowTitle("Invalid Project Name")
                 self.popup.setText("You cannot name a project starting with the name of a device and underscore!")
                 self.popup.show()
@@ -327,13 +317,13 @@ class MainWindow(Systray):
 
         QtGui.QApplication.restoreOverrideCursor()
 
-        self.tabWidget.addTab(self.canvas, projectname)
+        self.tabWidget.addTab(self.canvas, project_name)
 
     def openProject(self):
         """
         Load an existing project for device sharing.
         """
-        if self.running:
+        if self.isRunning():
             self.log.append("You cannot open a project when one is still running!")
             return
 
@@ -352,7 +342,6 @@ class MainWindow(Systray):
         """
         Load project file data into options.
         """
-
         if not self.project:
             self.tabWidget.addTab(self.canvas, "Default Project")
             return
@@ -377,14 +366,14 @@ class MainWindow(Systray):
         self.configWindow.updateSettings()
 
         QtGui.QApplication.restoreOverrideCursor()
-        projectname = self.project.split("/")[-1].strip(".gproj")
-        self.tabWidget.addTab(self.canvas, projectname)
+        project_name = self.project.split("/")[-1].strip(".gproj")
+        self.tabWidget.addTab(self.canvas, project_name)
 
     def closeProject(self):
         """
         Close the current project.
         """
-        if self.running:
+        if self.isRunning():
             self.log.append("You cannot close a project when it is still running!")
             return
 
@@ -409,7 +398,8 @@ class MainWindow(Systray):
         Start the backend server.
         """
         self.startServer()
-        #self.startClient()
+        # self.startClient()
+
     def setRecovery(self, recovery):
         """
         Set the recovering state of the topology.
@@ -422,65 +412,29 @@ class MainWindow(Systray):
         """
         return self.running
 
-    def startWServer(self):
-        """
-        Call the startwgini_server function
-        """
-        self.startwgini_server()
-        #thread.join()
-
     def startServer(self):
         """
         Start the server backend of gbuilder, which controls running topologies.
         """
-        if self.server and self.server.poll() == None:
+        if self.server and self.server.poll() is None:
             self.log.append("A server is already running!")
             return
 
-        base = "ssh -t " + options["username"] + "@" + options["server"]
-        tunnel = " -L " + options["localPort"] + ":localhost:" + options["remotePort"]
-        server = "bash -c -i 'gserver " + options["remotePort"] + "' || sleep 5"
+        # base = "ssh -t " + options["username"] + "@" + options["server"]
+        # tunnel = " -L " + options["localPort"] + ":localhost:" + options["remotePort"]
+        # server = "bash -c -i 'gserver " + options["remotePort"] + "' || sleep 5"
+        # command = ""
+        # gserver = "gserver"
+
+        base = "ssh -t %s@%s" % (options["username"], options["server"])
+        tunnel = " -L %s:localhost:%s" % (options["localPort"], options["remotePort"])
+        server = "bash -c -i 'gserver %s' || sleep 5" % options["remotePort"]
         command = ""
         gserver = "gserver"
 
-        if environ["os"] == "Windows":
-            startpath = environ["tmp"] + "gserver.start"
-            try:
-                startFile = open(startpath, "w")
-                startFile.write("echo -ne \"\\033]0;" + gserver + "\\007\"\n")
-                startFile.write(server)
-                startFile.close()
-            except:
-                self.log.append("Failed to write to start file!")
-                return
+        command += "xterm -fa 'Monospace' -fs 14 -title \"" + gserver + "\" -e " + base + tunnel + " \" " + server + "\""
 
-            command += "putty -"
-            if options["session"]:
-                command += "load " + options["session"] + " -l " + options["username"] + " -t"
-            else:
-                command += base
-            command += tunnel + " -m \"" + startpath + "\""
-        else:
-            command += "xterm -fa 'Monospace' -fs 14 -title \"" + gserver + "\" -e " + base + tunnel + " \" " + server + "\""
-
-        self.server = subprocess.Popen(str(command), shell=True,preexec_fn=os.setpgrp)
-
-    def startwgini_server(self):
-        """
-        Start the wireless GINI server
-        """
-        base = "ssh -t " + options["username"] + "@" + options["wserver"]
-        tunnel = " -L " + options["wlocalPort"] + ":localhost:" + options["wremotePort"]
-        server = "bash -c -i 'ServerAPI'"
-        command = ""
-        gserver = "WGINI Server"
-
-        command += "rxvt -T \"" + gserver + "\" -e " + base + tunnel + " \" " + server + "\""
-
-        command1 = 'route add -net 192.168.0.0 gw 192.168.54.24 netmask 255.255.255.0 eth1' #change accordingly!
-        p = os.system('echo %s|sudo -S %s' % (sudoPassword, command1))
-
-        self.wgini_server = subprocess.Popen(str(command), shell=True,preexec_fn=os.setpgrp)
+        self.server = subprocess.Popen(str(command), shell=True, preexec_fn=os.setpgrp)
 
     def startClient(self):
         """
@@ -488,18 +442,19 @@ class MainWindow(Systray):
         """
         self.client = Client(self)
         self.client.connectTo("localhost", int(options["localPort"]), 10)
-        #self.client.start()
+        # self.client.start()
         mainWidgets["client"] = self.client
 
     def compile(self):
         """
         Compile the current topology.
         """
+        self.log.append("Compiling topology...")
         if self.running:
             self.log.append("You cannot compile a topology when one is still running!")
             return False
 
-        if self.saveTopology() == False:
+        if not self.saveTopology():
             return False
 
         scene = self.canvas.scene()
@@ -511,9 +466,11 @@ class MainWindow(Systray):
         self.routes.display()
 
         if xmlFile:
+            self.log.append("Compiled")
             self.statusBar().showMessage(self.tr("Compiled '%1'").arg(xmlFile), 2000)
             return True
         else:
+            self.log.append("Compile failed")
             self.statusBar().showMessage(self.tr("Compile failed"), 2000)
             return False
 
@@ -521,7 +478,7 @@ class MainWindow(Systray):
         """
         Run the current topology.
         """
-        print "???????????????????????????????????????????????????"
+        self.log.append("Running topology...")
         if not self.server or self.server.poll() is not None:
             self.log.append("Please start the server first!")
             return
@@ -551,20 +508,11 @@ class MainWindow(Systray):
             self.log.append("Please compile the topology first!")
             return
 
-        print ">>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>> "
         self.tm.show()
 
-        # self.progressBar.setValue(0)
         self.client.process("file . " + xmlFile)
         self.client.send("init " + self.project.split("/")[-1].strip(".gproj"))
         self.client.send("canvas %d,%d" % (scene.width(), scene.height()))
-        for item in items:
-            if item.device_type == "Router":
-                item.load_wireshark_menu()
-            elif item.device_type == "Mobile" or item.device_type == "Wireless_access_point":
-                x = item.pos().x()
-                y = item.pos().y()
-                self.client.send("mobile %s %d,%d" % (item.getName(), x, y))
         self.client.process("start " + xmlFile)
 
         self.running = True
@@ -589,10 +537,6 @@ class MainWindow(Systray):
             return
         if not self.client or not self.client.isConnected():
             self.startClient()
-
-        if (self.wgini_client is not None) and usedyRouters:
-            status = self.wgini_client.Delete()
-            self.log.append(status)
 
         if self.recovery:
             self.recovery = False
@@ -624,16 +568,16 @@ class MainWindow(Systray):
         self.tm.hide()
         self.canvas.setAcceptDrops(True)
 
-        olddir = os.getcwd()
+        old_dir = os.getcwd()
         os.chdir(environ["tmp"])
-        for tmpfile in os.listdir("."):
-            if tmpfile.startswith("."):
+        for tmp_file in os.listdir("."):
+            if tmp_file.startswith("."):
                 continue
             try:
-                os.remove(tmpfile)
+                os.remove(tmp_file)
             except:
                 continue
-        os.chdir(olddir)
+        os.chdir(old_dir)
 
     def loadFile(self, filetype):
         """
@@ -641,18 +585,19 @@ class MainWindow(Systray):
         """
         # Qt is very picky in the filename structure but python is not, so we use python
         # to form the correct path which will work for both Windows and Linux
-        olddir = os.getcwd()
+        old_dir = os.getcwd()
         os.chdir(environ["sav"])
-        loadpath = os.getcwd()
-        os.chdir(olddir)
+        load_path = os.getcwd()
+        os.chdir(old_dir)
 
-        filename = QtGui.QFileDialog.getOpenFileName(self,
-                    self.tr("Choose a file name"), loadpath,
-                    self.tr(filetype))
+        filename = QtGui.QFileDialog.getOpenFileName(
+            self,
+            self.tr("Choose a file name"), load_path,
+            self.tr(filetype))
 
         return filename
 
-    def loadrealTopologyfile(self, filetype):
+    def loadRealTopologyFile(self, filetype):
         """
         Load a real topology name
         """
@@ -662,26 +607,25 @@ class MainWindow(Systray):
         self.popup.show()
         retval = self.popup.exec_()
 
-        if retval==1024:
-            olddir = os.getcwd()
+        if retval == 1024:
+            old_dir = os.getcwd()
             os.chdir(environ["sav"])
             os.chdir("exist")
-            loadpath = os.getcwd()
-            os.chdir(olddir)
+            load_path = os.getcwd()
+            os.chdir(old_dir)
 
-            filename = QtGui.QFileDialog.getOpenFileName(self,
-                        self.tr("Choose a file name"), loadpath,
-                        self.tr(filetype))
+            filename = QtGui.QFileDialog.getOpenFileName(
+                self,
+                self.tr("Choose a file name"), load_path,
+                self.tr(filetype))
 
             return filename
 
-
-
-    def loadrealTopology(self):
+    def loadRealTopology(self):
         """
         Load a real topology.
         """
-        if self.running:
+        if self.isRunning():
             self.log.append("You cannot load a topology when one is still running!")
             return
 
@@ -691,16 +635,13 @@ class MainWindow(Systray):
 
         def loadIntoScene(line, *args):
             scene = self.canvas.scene()
-            itemType,arg = line.split(":")
+            itemType, arg = line.split(":")
             args = str(arg).strip("()").split(",")
 
             if itemType == "edge":
                 source = scene.findItem(args[0])
                 dest = scene.findItem(args[1])
-                if source.device_type == "Mobile" or dest.device_type == "Mobile":
-                    item = Wireless_Connection(source, dest)
-                else:
-                    item = Connection(source, dest)
+                item = Connection(source, dest)
                 scene.addItem(item)
             else:
                 devType, index = str(itemType).rsplit("_", 1)
@@ -736,35 +677,24 @@ class MainWindow(Systray):
                     elif count == 5:
                         item.setEntryProperty(prop, value, currentRouteSubnet, currentInterfaceTarget)
 
-        filename = self.loadrealTopologyfile("GSAV (*.gsav)")
+        filename = self.loadRealTopologyFile("GSAV (*.gsav)")
         if not filename:
             return
 
         file = QtCore.QFile(filename)
         if not file.open(QtCore.QFile.ReadOnly | QtCore.QFile.Text):
-            QtGui.QMessageBox.warning(self, self.tr("Load Error"),
-                                      self.tr("Cannot read file %1:\n%2.")
-                                      .arg(filename)
-                                      .arg(file.errorString()))
+            QtGui.QMessageBox.warning(
+                self,
+                self.tr("Load Error"),
+                self.tr("Cannot read file %1:\n%2.")
+                .arg(filename)
+                .arg(file.errorString()))
             return
 
         self.newScene()
         self.filename = str(filename)
 
         _in = QtCore.QTextStream(file)
-
-        yRouters = False
-        if "yRouter" in str(_in.readAll()):
-	        yRouters = True
-	        QtGui.QMessageBox.warning(self, self.tr("Load Warning"), self.tr("This file contains yRouters, which may not be physically available right now. Any yRouters no longer physically available will automatically be removed from the topology."))
-
-	        if not self.wgini_server:
-		        if not self.startWGINIClient():
-		            QtGui.QMessageBox.warning(self, self.tr("Load Error"), self.tr("Cannot open file with yRouters without connecting to wireless server."))
-		        return
-
-        if yRouters:
-	        self.discover()
 
         QtGui.QApplication.setOverrideCursor(QtCore.Qt.WaitCursor)
 
@@ -774,11 +704,11 @@ class MainWindow(Systray):
         lines = []
 
         while not _in.atEnd():
-            item=loadIntoScene(line)
-            line=str(_in.readLine())
+            item = loadIntoScene(line)
+            line = str(_in.readLine())
             while line.find("\t") == 0:
                 lines.append(line)
-                line=str(_in.readLine())
+                line = str(_in.readLine())
             itemDict[item] = lines
             lines = []
 
@@ -788,14 +718,11 @@ class MainWindow(Systray):
 
         self.statusBar().showMessage(self.tr("Loaded '%1'").arg(filename), 2000)
 
-
-
-
     def loadTopology(self):
         """
         Load a topology.
         """
-        if self.running:
+        if self.isRunning():
             self.log.append("You cannot load a topology when one is still running!")
             return
 
@@ -811,10 +738,7 @@ class MainWindow(Systray):
             if itemType == "edge":
                 source = scene.findItem(args[0])
                 dest = scene.findItem(args[1])
-                if source.device_type == "Mobile" or dest.device_type == "Mobile":
-                    item = Wireless_Connection(source, dest)
-                else:
-                    item = Connection(source, dest)
+                item = Connection(source, dest)
                 scene.addItem(item)
             else:
                 devType, index = str(itemType).rsplit("_", 1)
@@ -856,29 +780,18 @@ class MainWindow(Systray):
 
         file = QtCore.QFile(filename)
         if not file.open(QtCore.QFile.ReadOnly | QtCore.QFile.Text):
-            QtGui.QMessageBox.warning(self, self.tr("Load Error"),
-                                      self.tr("Cannot read file %1:\n%2.")
-                                      .arg(filename)
-                                      .arg(file.errorString()))
+            QtGui.QMessageBox.warning(
+                self,
+                self.tr("Load Error"),
+                self.tr("Cannot read file %1:\n%2.")
+                .arg(filename)
+                .arg(file.errorString()))
             return
 
         self.newScene()
         self.filename = str(filename)
 
         _in = QtCore.QTextStream(file)
-
-        yRouters = False
-        if "yRouter" in str(_in.readAll()):
-	        yRouters = True
-	        QtGui.QMessageBox.warning(self, self.tr("Load Warning"), self.tr("This file contains yRouters, which may not be physically available right now. Any yRouters no longer physically available will automatically be removed from the topology."))
-
-	        if not self.wgini_server:
-		        if not self.startWGINIClient():
-		            QtGui.QMessageBox.warning(self, self.tr("Load Error"), self.tr("Cannot open file with yRouters without connecting to wireless server."))
-		        return
-
-        if yRouters:
-	        self.discover()
 
         QtGui.QApplication.setOverrideCursor(QtCore.Qt.WaitCursor)
 
@@ -888,11 +801,11 @@ class MainWindow(Systray):
         lines = []
 
         while not _in.atEnd():
-            item=loadIntoScene(line)
-            line=str(_in.readLine())
+            item = loadIntoScene(line)
+            line = str(_in.readLine())
             while line.find("\t") == 0:
                 lines.append(line)
-                line=str(_in.readLine())
+                line = str(_in.readLine())
             itemDict[item] = lines
             lines = []
 
@@ -906,14 +819,15 @@ class MainWindow(Systray):
         """
         Save a file through a file dialog.
         """
-        olddir = os.getcwd()
+        old_dir = os.getcwd()
         os.chdir(environ["sav"])
-        savepath = os.getcwd()
-        os.chdir(olddir)
+        save_path = os.getcwd()
+        os.chdir(old_dir)
 
-        filename = QtGui.QFileDialog.getSaveFileName(self,
-                    self.tr("Choose a file name"), savepath,
-                    self.tr(filetype.upper() + " (*.%s)" % filetype))
+        filename = QtGui.QFileDialog.getSaveFileName(
+            self,
+            self.tr("Choose a file name"), save_path,
+            self.tr(filetype.upper() + " (*.%s)" % filetype))
 
         if filename.isEmpty():
             return filename
@@ -943,27 +857,24 @@ class MainWindow(Systray):
         """
         Save a topology.
         """
-        scene=self.canvas.scene()
+        scene = self.canvas.scene()
 
         if not scene.items():
             self.log.append("There is nothing to save!")
             return False
 
-        #for first time used
+        # for first time use
         if not self.filename:
             return self.saveTopologyAs()
 
-	    if usedyRouters:
-	        self.popup.setWindowTitle("Save Warning")
-	        self.popup.setText("This topology contains yRouters, which may not be available when loading the project later.")
-	        self.popup.show()
-
         file = QtCore.QFile(self.filename)
         if not file.open(QtCore.QFile.WriteOnly | QtCore.QFile.Text):
-            QtGui.QMessageBox.warning(self, self.tr("Save Error"),
-                                      self.tr("Cannot write file %1:\n%2.")
-                                      .arg(self.filename)
-                                      .arg(file.errorString()))
+            QtGui.QMessageBox.warning(
+                self,
+                self.tr("Save Error"),
+                self.tr("Cannot write file %1:\n%2.")
+                .arg(self.filename)
+                .arg(file.errorString()))
             return False
 
         out = QtCore.QTextStream(file)
@@ -996,47 +907,6 @@ class MainWindow(Systray):
         """
         self.configWindow.show()
 
-    def startWGINIClient(self):
-        """
-	    Start wireless GINI client
-	    """
-        ok=None
-        if not self.server or self.server.poll() is not None:
-            self.log.append("You must start the main server before you can start the wireless client!")
-        elif not self.wgini_server or self.wgini_server.poll() is not None:
-            self.popup.setWindowTitle("Start server")
-            self.popup.setText("You must start the WGINI server first! Please start it from the system tray above canvas.")
-            self.popup.show()
-        elif self.wgini_client is not None:
-	        self.log.append("Wireless GINI client is already running!")
-        else:
-	        windowTitle = "Client data"
-	        labelText = "Enter wireless client IP:"
-	        text, ok = self.inputDialog.getText(self.inputDialog, windowTitle, labelText)
-
-        if ok:
-            if not text:
-                self.log.append("Nothing entered; starting wireless GINI client cancelled!")
-                return False
-            else:
-                ipportip=text
-                if not (socket.inet_aton(str(ipportip))):
-                    self.log.append("Invalid entry, starting wireless GINI client cancelled.")
-                    return False
-                self.wserverIP = get_ip_address('eth1')
-                self.wserverPort = '60000'
-                wclientIP = str(ipportip)
-                try:
-                    self.wgini_client= WGINI_Client(self.wserverIP,self.wserverPort,wclientIP)
-                    mainWidgets["wgini_client"]=self.wgini_client
-                    self.log.append("Wireless GINI client connected at %s" %(ipportip[0]))
-                    return True
-                except:
-                    self.log.append("Starting wireless GINI client failed.")
-                    return False
-        else:
-            return False
-
     def get_ip_address(ifname):
         s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
         return socket.inet_ntoa(fcntl.ioctl(
@@ -1044,89 +914,6 @@ class MainWindow(Systray):
             0x8915,  # SIOCGIFADDR
             struct.pack('256s', ifname[:15])
         )[20:24])
-
-    def discover(self):
-        """
-        Add yRouters within range of topology
-        """
-        if self.wgini_client is None:
-            self.log.append("You must connect to the wireless server before you can discover any new devices!")
-            if not self.startWGINIClient():
-                return
-
-        if self.isRunning() and not self.recovery:
-            self.log.append("A topology is currently running, please stop it before discovering any new devices!")
-            return
-
-        if isinstance(mainWidgets["canvas"],Tutorial):
-            self.log.append("You cannot discover any new devices during this tutorial!")
-            return
-
-        if not self.client or not self.client.isConnected():
-            self.startClient()
-
-        self.popup.setWindowTitle("yRouter discovery")
-
-        tempList=self.wgini_client.Check()
-        scene=self.canvas.scene()
-
-        removed = 0
-        for yid, yun in usedyRouters.iteritems():
-            if (yun not in tempList) or (yun in tempList and ((yun['MaxWlan'] - yun['CurrWlan']) == 0)):
-                self.popup.setText("yRouter_%d is no longer available. It will be removed from the topology." %yid)
-                self.popup.show()
-                yRouter=scene.findItem(self.device_type + "_%d" %yid)
-                yRouter.delete()
-                del usedyRouters[yid]
-                removed += 1
-
-        found=0
-        updated=0
-        for yun in tempList:
-            openYun = yun['MaxWlan'] - yun['CurrWlan']
-            if ((yun['MaxWlan'] - yun['CurrWlan']) == 0):
-                if yun['ID'] in usedyRouters.keys():
-                    self.popup.setText("yRouter_%d is no longer available. It will be removed from the topology." %yun['ID'])
-                    self.popup.show()
-                    yRouter = scene.findItem(self.device_type + "_%d" %yun['ID'])
-                    yRouter.delete()
-                    del usedyRouters[yun['ID']]
-                    removed += 1
-                else:
-                    continue
-            elif (yun['ID'] not in yRouters.keys()):
-                yRouters[yun['ID']] = yun
-                availableyRouters.append(yun)
-                found += 1
-            else:
-                if not yRouters[yun['ID']] == yun:
-                    yRouters[yun['ID']] = yun
-                    yRouter = (y for y in availableyRouters if y['ID'] == yun['ID'])
-                    availableyRouters.remove(yRouter)
-                    availableyRouters.append(yun)
-                    updated +=1
-        availableyRouters.sort(key=lambda YunEntity: YunEntity['ID'])
-        if found == 0 and updated == 0 and removed == 0:
-            text = "No yRouters found, updated, or removed."
-        else:
-            if found == 0:
-                text = "No yRouters found, "
-            else:
-                text = "%d yRouters found, " %found
-            if updated == 0:
-                text += "no yRouters updated, "
-            else:
-                text += "%d yRouters updated, " %updated
-            if removed == 0:
-                text += "no yRouters removed."
-            else:
-                text += "%d yRouters removed." %removed
-            if mainWidgets["drop"].commonDropArea.yRouterDrop is not None:
-                mainWidgets["drop"].commonDropArea.yRouterDrop.update()
-            if mainWidgets["drop"].netDropArea.yRouterDrop is not None:
-                mainWidgets["drop"].netDropArea.yRouterDrop.update()
-
-        self.log.append(text)
 
     def arrange(self):
         """
@@ -1148,11 +935,11 @@ class MainWindow(Systray):
         """
         QtGui.QMessageBox.about(self,
                                 self.tr("About %s %s"
-                                    % (Core.globals.PROG_NAME,
-                                       Core.globals.PROG_VERSION)),
+                                        % (Core.globals.PROG_NAME,
+                                            Core.globals.PROG_VERSION)),
                                 self.tr("<b>%s %s</b><br>Written by Daniel Ng<br>under the supervision of Muthucumaru Maheswaran"
-                                    % (Core.globals.PROG_NAME,
-                                       Core.globals.PROG_VERSION)))
+                                        % (Core.globals.PROG_NAME,
+                                            Core.globals.PROG_VERSION)))
 
     def createActions(self):
         """
@@ -1198,16 +985,6 @@ class MainWindow(Systray):
         self.copyAct.setStatusTip(self.tr("Copy the selected text"))
         self.connect(self.copyAct, QtCore.SIGNAL("triggered()"), self.copy)
 
-        # self.startWGINIClientAct = QtGui.QAction(QtGui.QIcon(environ["images"] + "startClient.png"), self.tr("&Start WGINI Client"), self)
-        # self.startWGINIClientAct.setShortcut(self.tr("Ctrl+W"))
-        # self.startWGINIClientAct.setStatusTip(self.tr("Start wireless GINI client"))
-        # self.connect(self.startWGINIClientAct, QtCore.SIGNAL("triggered()"), self.startWGINIClient)
-
-    	self.discoverAct = QtGui.QAction(QtGui.QIcon(environ["images"] + "discover.png"), self.tr("&Discover"), self)
-    	self.discoverAct.setShortcut(self.tr("Ctrl+Shift+Y"))
-    	self.discoverAct.setStatusTip(self.tr("Discover nearby yRouters"))
-    	self.connect(self.discoverAct, QtCore.SIGNAL("triggered()"), self.discover)
-
         self.compileAct = QtGui.QAction(QtGui.QIcon(environ["images"] + "compile.png"), self.tr("&Compile"), self)
         self.compileAct.setShortcut(self.tr("Ctrl+E"))
         self.compileAct.setStatusTip(self.tr("Compile the current topology"))
@@ -1227,11 +1004,6 @@ class MainWindow(Systray):
         self.startServerAct.setShortcut(self.tr("Ctrl+T"))
         self.startServerAct.setStatusTip(self.tr("Start the server"))
         self.connect(self.startServerAct, QtCore.SIGNAL("triggered()"), self.startBackend)
-
-        # self.startwServerAct = QtGui.QAction(QtGui.QIcon(environ["images"] + "startServer.png"), self.tr("&Start WGINI Server"), self)
-        # self.startwServerAct.setShortcut(self.tr("Ctrl+W"))
-        # self.startwServerAct.setStatusTip(self.tr("Start the WGINI server"))
-        # self.connect(self.startwServerAct, QtCore.SIGNAL("triggered()"), self.startWServer)
 
         self.optionsAct = QtGui.QAction(QtGui.QIcon(environ["images"] + "options.png"), self.tr("&Options"), self)
         self.optionsAct.setShortcut(self.tr("F2"))
@@ -1317,13 +1089,10 @@ class MainWindow(Systray):
 
         self.runMenu = self.menuBar().addMenu(self.tr("&Run"))
         self.runMenu.setPalette(defaultOptions["palette"])
-        # self.runMenu.addAction(self.startWGINIClientAct)
-        self.runMenu.addAction(self.discoverAct)
         self.runMenu.addAction(self.compileAct)
         self.runMenu.addAction(self.runAct)
         self.runMenu.addAction(self.stopAct)
         self.runMenu.addAction(self.startServerAct)
-        # self.runMenu.addAction(self.startwServerAct)
 
         self.configMenu = self.menuBar().addMenu(self.tr("&Config"))
         self.configMenu.setPalette(defaultOptions["palette"])
@@ -1365,12 +1134,9 @@ class MainWindow(Systray):
 
         self.runToolBar = self.addToolBar(self.tr("Run"))
         self.runToolBar.addAction(self.startServerAct)
-        self.runToolBar.addAction(self.discoverAct)
         self.runToolBar.addAction(self.compileAct)
         self.runToolBar.addAction(self.runAct)
         self.runToolBar.addAction(self.stopAct)
-        # self.runToolBar.addAction(self.startWGINIClientAct)
-        # self.runToolBar.addAction(self.startwServerAct)
 
     def createStatusBar(self):
         """
@@ -1398,10 +1164,9 @@ class MainWindow(Systray):
         count = 0.0
         for item in self.canvas.scene().items():
             if isinstance(item, Interfaceable):
-                if item.device_type != "REALM":
-                    if alive and item.status in ("", "dead"):
-                        continue
-                    count += 1.0
+                if alive and item.status in ("", "dead"):
+                    continue
+                count += 1.0
 
         return count
 
@@ -1462,7 +1227,9 @@ class MainWindow(Systray):
         self.debugWindow = QtGui.QDockWidget(self.tr("Debug Window"))
         self.debugWindow.setWidget(DebugWindow(self))
 
-        self.docks = {"Components":self.dropbar, "Log":self.log, "Properties":self.properties, "Interfaces":self.interfaces, "Routes":self.routes, "Task Manager":self.tm}
+        self.docks = {"Components": self.dropbar, "Log": self.log,
+                      "Properties": self.properties, "Interfaces": self.interfaces,
+                      "Routes": self.routes, "Task Manager": self.tm}
 
         self.addDockWidget(QtCore.Qt.LeftDockWidgetArea, self.dropbar)
         self.addDockWidget(QtCore.Qt.BottomDockWidgetArea, self.log)
@@ -1519,30 +1286,32 @@ class MainWindow(Systray):
             self.debugWindow.show()
 
     def cleanup(self):
-        if self.server != None:
+        if self.server is not None:
             self.server.kill()
+
 
 class DebugWindow(QtGui.QWidget):
     def __init__(self, parent):
-        QtGui.QWidget.__init__(self)
+        super(DebugWindow, self).__init__()
 
         self.parent = parent
         self.layout = QtGui.QVBoxLayout()
-        #self.list = QtGui.QListWidget()
+        # self.list = QtGui.QListWidget()
         self.button = QtGui.QPushButton("Execute")
-        self.lineedit = QtGui.QLineEdit()
-        #self.layout.addWidget(self.list)
-        self.layout.addWidget(self.lineedit)
+        self.line_edit = QtGui.QLineEdit()
+        # self.layout.addWidget(self.list)
+        self.layout.addWidget(self.line_edit)
         self.layout.addWidget(self.button)
         self.setLayout(self.layout)
 
         self.windows = {}
         for key, val in mainWidgets.iteritems():
-            if key != "app" and key != "client" and val != None:
+            if key != "app" and key != "client" and val is not None:
                 self.windows[key] = val
 
         self.connect(self.button, QtCore.SIGNAL("clicked()"), self.execute)
 
+    @staticmethod
     def fill(self):
         scene = mainWidgets["canvas"].scene()
         for i in range(125):
@@ -1550,17 +1319,9 @@ class DebugWindow(QtGui.QWidget):
 
     def execute(self):
         canvas = mainWidgets["canvas"]
-        scene = canvas.scene()
-        #self.list.clear()
-        #for item in scene.items():
-        #    try:
-        #        self.list.addItem(item.getName() + "(%d,%d)" % (item.pos().x(), item.pos().y()))
-        #    except:
-        #        pass
-        #for name, window in self.windows.iteritems():
-        #    self.list.addItem(name + ":" + str(window.geometry()))
+        canvas.scene()
 
-        text = str(self.lineedit.text())
+        text = str(self.line_edit.text())
         if text:
             lines = text.split(";")
             for line in lines:

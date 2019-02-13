@@ -5,7 +5,8 @@ import os
 
 # Check python version number
 # TODO: At the moment Gini works on 2.7, will verify and make it compatible with Python3
-if sys.version_info[:2] != (2, 7):
+if sys.version_info[:2] < (2, 7):
+    print("Python version <2.7 is not supported.")
     sys.exit(1)
 
 # Check if PyQt4 is installed

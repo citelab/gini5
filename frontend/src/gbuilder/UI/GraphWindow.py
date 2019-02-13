@@ -94,7 +94,7 @@ class GraphWindow(Dockable):
             client.send("rstats " + self.name)
 
     def updateStats(self, queueName, size, rate):
-        if queueName not in self.queues
+        if queueName not in self.queues:
             self.queues[queueName] = RouterQueue()
         queue = self.queues[queueName]
         queue.addPoint(float(size), float(rate))
