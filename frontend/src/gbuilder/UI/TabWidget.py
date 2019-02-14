@@ -2,12 +2,13 @@
 
 from PyQt4 import QtCore, QtGui
 
+
 class TabWidget(QtGui.QTabWidget):
-    def __init__(self, parent = None):
+    def __init__(self, parent=None):
         """
         Create a project tab widget.
         """
-        QtGui.QTabWidget.__init__(self, parent)
+        super(TabWidget, self).__init__(parent)
         self.chosenSize = None
         self.setMinimumSize(400, 300)
         self.timer = QtCore.QTimer()

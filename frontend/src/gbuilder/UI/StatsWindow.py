@@ -4,19 +4,20 @@ from PyQt4 import QtCore, QtGui
 from Core.globals import mainWidgets
 from Dockable import *
 
+
 class StatsWindow(Dockable):
-    def __init__(self, name, parent = None):
+    def __init__(self, name, parent=None):
         """
         Create a stats window to view mobile statistics.
         """
-        Dockable.__init__(self, name + " stats", parent)
+        super(StatsWindow, self).__init__(name + "stats", parent)
 
         self.name = name
         self.statsText = QtGui.QTextEdit(self)
         self.statsText.setReadOnly(True)
         self.setWidget(self.statsText)
 
-        self.resize(200,100)
+        self.resize(200, 100)
         self.setFloating(True)
 
         self.timer = QtCore.QTimer()

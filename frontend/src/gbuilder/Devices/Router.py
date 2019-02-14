@@ -1,4 +1,3 @@
-from Core.Connection import *
 from Core.Interfaceable import *
 from Core.globals import environ
 from PyQt4.QtCore import QPoint
@@ -12,16 +11,28 @@ class Router(Interfaceable):
     device_type = "Router"
 
     def __init__(self):
-        Interfaceable.__init__(self)
+        super(Router, self).__init__()
         self.menu.addAction("Graph", self.graph)
-        self.tail = None
-        self.wshark = []
-        self.rstatsWindow = None
+        self.wireshark_sessions = []
+        self.router_stats_window = None
 
         self.wireshark_menu = self.menu.addMenu("Wireshark")
-        self.wireshark_menu.aboutToShow.connect(self.load_wireshark_interfaces)
+        self.wireshark_menu.aboutToShow.connect(self.load_wireshark_menu)
 
-        self.lightPoint = QPoint(-19,-6)
+        self.lightPoint = QPoint(-19, -6)
+
+    def stop(self):
+        """
+        Override parent class' stop method
+        """
+        super(Router, self).stop()
+        try:
+            if self.router_stats_window:
+                self.router_stats_window.close()
+            for session in self.wireshark_sessions:
+                session.terminate()
+        except:
+            print "Error occurred when stopping %s" % self.getName()
 
     def graph(self):
         """
@@ -38,17 +49,18 @@ class Router(Interfaceable):
                 mainWidgets["log"].append(
                         "Error: matplotlib required for graphing capabilities")
             else:
-                self.rstatsWindow = GraphWindow(self.getName(),
-                                                mainWidgets["canvas"])
-                self.rstatsWindow.show()
+                self.router_stats_window = GraphWindow(self.getName(),
+                                                       mainWidgets["canvas"])
+                self.router_stats_window.show()
 
-    def load_wireshark_interfaces(self):
+    def load_wireshark_menu(self):
         """Get connected interfaces and display as options on Wireshark menu"""
+
+        # TODO: see if I can send this information through TCP sockets instead of writing to files.
         self.wireshark_menu.clear()
         router_tmp_file = environ["tmp"] + self.getName() + ".json"
         if not os.access(router_tmp_file, os.R_OK):
             return
-        interfaces_map = dict()
         with open(router_tmp_file, "r") as f:
             interfaces_map = json.load(f, encoding="utf-8")
 
@@ -60,11 +72,13 @@ class Router(Interfaceable):
         """
         Open wireshark with the running device.
         """
+        # TODO: Check user permissions to run wireshark as non-root
+
         program_name = "wireshark"
 
         command_to_execute = [program_name, "-k", "-i", interface]
         wireshark_process = subprocess.Popen(command_to_execute)
         if Core.util.progExists(program_name):
-            self.wshark.append(wireshark_process)
+            self.wireshark_sessions.append(wireshark_process)
         else:
             mainWidgets["log"].append("Error: wireshark not found in path!")

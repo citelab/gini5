@@ -1,6 +1,6 @@
 import numpy
 import warnings
-warnings.simplefilter('ignore',numpy.RankWarning)
+warnings.simplefilter('ignore', numpy.RankWarning)
 
 from numpy.lib.polynomial import *
 from matplotlib.backends.backend_qt4agg import FigureCanvasQTAgg as FigureCanvas
@@ -11,11 +11,13 @@ from PyQt4 import QtCore, QtGui
 from Core.globals import mainWidgets
 from Dockable import *
 
+
 class RouterQueue:
     def __init__(self):
         self.lastIndex = 0
         self.x = []
-        self.y = {"size":[], "rate":[]}
+        self.y = {"size": [], "rate": []}
+        self.name = None
 
     def getName(self):
         return self.name
@@ -47,12 +49,13 @@ class RouterQueue:
     def getX(self):
         return self.x
 
+
 class GraphWindow(Dockable):
     def __init__(self, name, parent = None):
         """
         Create a stats window to view mobile statistics.
         """
-        Dockable.__init__(self, "Graph of " + name, parent)
+        super(GraphWindow, self).__init__("Graph of" + name, parent)
 
         self.name = name
         self.setMinimumSize(600,500)
@@ -63,9 +66,10 @@ class GraphWindow(Dockable):
 
         self.smoothing = False
         self.lastIndex = 0
-        self.queues = {"outputQueue":RouterQueue(),
-                       "default":RouterQueue()
-                       }
+        self.queues = {
+            "outputQueue": RouterQueue(),
+            "default":RouterQueue()
+        }
 
         self.setWidget(self.main_frame)
 
@@ -90,7 +94,7 @@ class GraphWindow(Dockable):
             client.send("rstats " + self.name)
 
     def updateStats(self, queueName, size, rate):
-        if not self.queues.has_key(queueName):
+        if queueName not in self.queues:
             self.queues[queueName] = RouterQueue()
         queue = self.queues[queueName]
         queue.addPoint(float(size), float(rate))

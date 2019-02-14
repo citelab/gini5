@@ -2,6 +2,7 @@ from Core.Attachable import *
 from .Switch import Switch
 from PyQt4.QtCore import QPoint
 
+
 class OpenVirtualSwitch(Switch, Attachable):
     """
     Class definition for Open Virtual Switch devices
@@ -12,4 +13,4 @@ class OpenVirtualSwitch(Switch, Attachable):
         super(OpenVirtualSwitch, self).__init__()
         self.setProperty("OVS mode", "True")
 
-        self.lightPoint = QPoint(-10,-5)
+        self.lightPoint = QPoint(-10, -5)

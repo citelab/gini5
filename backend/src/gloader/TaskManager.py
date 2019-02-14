@@ -1,10 +1,12 @@
 from PyQt4 import QtCore
-import os, time
+import os
+import time
 
-devFilter = ["WAP_", "Mach_", "Router_", "Mobile_", "REALM_", "OpenFlow_Controller_", "yRouter_", "OVSwitch_"]
+devFilter = ["Mach_", "Router_", "OpenFlowController_", "OVSwitch_"]
+
 
 class TaskManager(QtCore.QThread):
-    def __init__(self, server):
+    def __init__(self, server=None):
         QtCore.QThread.__init__(self)
         self.server = server
         self.running = False
@@ -47,6 +49,7 @@ class TaskManager(QtCore.QThread):
             time.sleep(1)
 
         os.system("rm %s/tmp/screenPID" % os.environ["GINI_HOME"])
+
 
 if __name__ == "__main__":
     TaskManager().manage()
