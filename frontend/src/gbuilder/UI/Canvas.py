@@ -161,7 +161,7 @@ class View(QtGui.QGraphicsView):
         """
         Handle mouse movement for connection purposes.
         """
-        if self.line is not None:
+        if self.line is None:
             QtGui.QGraphicsView.mouseMoveEvent(self, event)
             return
         # Draw Connection line and right click drag
