@@ -19,41 +19,41 @@
 
 
 <!-- Virtual wireless router -->
-<!ELEMENT vwr (netif_wireless*, netif*, cli?)>
-<!ATTLIST vwr name CDATA #REQUIRED>
-<!-- wireless network interface definition -->
-<!ELEMENT netif_wireless (network, nic, ip, wireless_card*, energy*, mac_layer*, antenna*, mobility*, rtentry*)>
-<!ELEMENT wireless_card (w_type, freq, bandwidth, Pt, Pt_c, Pr_c, P_idle, P_sleep, P_off, RX, CS, CP, module)>
-<!ELEMENT energy (power, PSM, energy_amount)>
-<!ELEMENT mac_layer (mac_type, trans)>
-<!ELEMENT antenna (a_type, ant_h, ant_g, ant_l, JAM)>
-<!ELEMENT mobility (m_type, ran_max, ran_min)>
-<!ELEMENT w_type (#PCDATA)>
-<!ELEMENT freq (#PCDATA)>
-<!ELEMENT bandwidth (#PCDATA)>
-<!ELEMENT Pt (#PCDATA)>
-<!ELEMENT Pt_c (#PCDATA)>
-<!ELEMENT Pr_c (#PCDATA)>
-<!ELEMENT P_idle (#PCDATA)>
-<!ELEMENT P_sleep (#PCDATA)>
-<!ELEMENT P_off (#PCDATA)>
-<!ELEMENT RX (#PCDATA)>
-<!ELEMENT CS (#PCDATA)>
-<!ELEMENT CP (#PCDATA)>
-<!ELEMENT module (#PCDATA)>
-<!ELEMENT power (#PCDATA)>
-<!ELEMENT PSM (#PCDATA)>
-<!ELEMENT energy_amount (#PCDATA)>
-<!ELEMENT mac_type (#PCDATA)>
-<!ELEMENT trans (#PCDATA)>
-<!ELEMENT a_type (#PCDATA)>
-<!ELEMENT ant_h (#PCDATA)>
-<!ELEMENT ant_g (#PCDATA)>
-<!ELEMENT ant_l (#PCDATA)>
-<!ELEMENT JAM (#PCDATA)>
-<!ELEMENT m_type (#PCDATA)>
-<!ELEMENT ran_max (#PCDATA)>
-<!ELEMENT ran_min (#PCDATA)>
+<!--<!ELEMENT vwr (netif_wireless*, netif*, cli?)>-->
+<!--<!ATTLIST vwr name CDATA #REQUIRED>-->
+<!--&lt;!&ndash; wireless network interface definition &ndash;&gt;-->
+<!--<!ELEMENT netif_wireless (network, nic, ip, wireless_card*, energy*, mac_layer*, antenna*, mobility*, rtentry*)>-->
+<!--<!ELEMENT wireless_card (w_type, freq, bandwidth, Pt, Pt_c, Pr_c, P_idle, P_sleep, P_off, RX, CS, CP, module)>-->
+<!--<!ELEMENT energy (power, PSM, energy_amount)>-->
+<!--<!ELEMENT mac_layer (mac_type, trans)>-->
+<!--<!ELEMENT antenna (a_type, ant_h, ant_g, ant_l, JAM)>-->
+<!--<!ELEMENT mobility (m_type, ran_max, ran_min)>-->
+<!--<!ELEMENT w_type (#PCDATA)>-->
+<!--<!ELEMENT freq (#PCDATA)>-->
+<!--<!ELEMENT bandwidth (#PCDATA)>-->
+<!--<!ELEMENT Pt (#PCDATA)>-->
+<!--<!ELEMENT Pt_c (#PCDATA)>-->
+<!--<!ELEMENT Pr_c (#PCDATA)>-->
+<!--<!ELEMENT P_idle (#PCDATA)>-->
+<!--<!ELEMENT P_sleep (#PCDATA)>-->
+<!--<!ELEMENT P_off (#PCDATA)>-->
+<!--<!ELEMENT RX (#PCDATA)>-->
+<!--<!ELEMENT CS (#PCDATA)>-->
+<!--<!ELEMENT CP (#PCDATA)>-->
+<!--<!ELEMENT module (#PCDATA)>-->
+<!--<!ELEMENT power (#PCDATA)>-->
+<!--<!ELEMENT PSM (#PCDATA)>-->
+<!--<!ELEMENT energy_amount (#PCDATA)>-->
+<!--<!ELEMENT mac_type (#PCDATA)>-->
+<!--<!ELEMENT trans (#PCDATA)>-->
+<!--<!ELEMENT a_type (#PCDATA)>-->
+<!--<!ELEMENT ant_h (#PCDATA)>-->
+<!--<!ELEMENT ant_g (#PCDATA)>-->
+<!--<!ELEMENT ant_l (#PCDATA)>-->
+<!--<!ELEMENT JAM (#PCDATA)>-->
+<!--<!ELEMENT m_type (#PCDATA)>-->
+<!--<!ELEMENT ran_max (#PCDATA)>-->
+<!--<!ELEMENT ran_min (#PCDATA)>-->
 
 
 <!-- virtual switch definition -->
@@ -84,16 +84,16 @@
 
 
 <!-- virtual wireless machine definition -->
-<!ELEMENT vmb (filesystem, mem?, kernel?, boot?, if*, location?, map?)>
-<!ATTLIST vmb name CDATA #REQUIRED>
-<!ELEMENT location (x,y)>
-<!ELEMENT x (#PCDATA)>
-<!ELEMENT y (#PCDATA)>
+<!--<!ELEMENT vmb (filesystem, mem?, kernel?, boot?, if*, location?, map?)>-->
+<!--<!ATTLIST vmb name CDATA #REQUIRED>-->
+<!--<!ELEMENT location (x,y)>-->
+<!--<!ELEMENT x (#PCDATA)>-->
+<!--<!ELEMENT y (#PCDATA)>-->
 
 
-<!-- real remote machine definition -->
-<!ELEMENT vrm (filesystem, mem?, kernel?, boot?, if*)>
-<!ATTLIST vrm name CDATA #REQUIRED>
+<!--&lt;!&ndash; real remote machine definition &ndash;&gt;-->
+<!--<!ELEMENT vrm (filesystem, mem?, kernel?, boot?, if*)>-->
+<!--<!ATTLIST vrm name CDATA #REQUIRED>-->
 
 <!-- OpenFlow controller definition -->
 <!ELEMENT vofc (router*)>

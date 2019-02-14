@@ -23,7 +23,6 @@ connection_rule[Mach.device_type] = (
 )
 connection_rule[Router.device_type] = (
     Subnet.device_type,
-    OpenFlowController.device_type,
     Switch.device_type,
     OpenVirtualSwitch.device_type
 )
@@ -61,8 +60,7 @@ connection_rule[Subnet.device_type] = (
 )
 connection_rule[Firewall.device_type] = (Subnet.device_type,)
 connection_rule[OpenFlowController.device_type] = (
-    Router.device_type,
-    OpenVirtualSwitch.device_type
+    OpenVirtualSwitch.device_type,
 )
 
 

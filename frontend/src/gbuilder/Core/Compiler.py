@@ -565,7 +565,7 @@ class Compiler:
             gateway = "\" nexthop=\""
             footer = "</rtentry>\n"
 
-        # Because of gloader's getVMIFOutLine, we must preserve a specific order of the routes
+        # Because of gloader's get_virtual_machine_interface_outline, we must preserve a specific order of the routes
         outstring = ""
         outstring2 = ""
         for route in routes:
