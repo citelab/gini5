@@ -53,7 +53,7 @@ def start_GINI(gini, opts):
     # the starting order is important here
     # first switches, then routers, and at last Machs.
     print "\nStarting Switches..."
-    status = create_virtual_switches(gini, opts.switchDir)
+    status = create_virtual_switches(gini, opts)
     print "\nStarting OpenFlow controllers..."
     status = status and create_open_flow_controllers(gini, opts)
     print "\nStarting GINI routers..."
@@ -97,14 +97,6 @@ def create_open_virtual_switches(gini, switch_dir, switch):
 
     subnet = find_subnet_for_switch(gini, switch.name)
     if subnet != "":
-        if subnet_map.get(subnet):
-            network_name_map[switch.name] = subnet_map[subnet]
-            os.chmod(undo_file, 0755)
-            undo_out.close()
-            print "[OK]"
-            os.chdir(old_dir)
-            return True
-
         start_file = "%s/startit.sh" % sub_switch_dir
         start_out = open(start_file, "w")
         start_out.write("#!/bin/bash\n\n")
@@ -142,9 +134,10 @@ def create_open_virtual_switches(gini, switch_dir, switch):
         return False
 
 
-def create_virtual_switches(gini, switch_dir):
+def create_virtual_switches(gini, opts):
     """create the switch config file and start the switch"""
     # create the main switch directory
+    switch_dir = opts.switchDir
     make_dir(switch_dir)
 
     for switch in gini.switches:
@@ -178,7 +171,6 @@ def create_virtual_switches(gini, switch_dir):
 
                 subnet_map[subnet] = switch.name
                 if switch.hub:
-                    print "Activating hub mode..."
                     bridge_name = "br-" + out[:12]
                     subprocess.call("brctl setageing %s 0" % bridge_name, shell=True)
 
@@ -350,7 +342,6 @@ def set_up_tap_interface(router_name, switch_name, bridge_name, out_file, is_ovs
 def create_virtual_routers(gini, opts):
     """Create router config file, and start the router"""
     routerDir = opts.routerDir
-    # create the main router directory
     make_dir(routerDir)
     for router in gini.vr:
         print "\tStarting %s...\t" % router.name,
@@ -465,7 +456,7 @@ def get_switch_to_connect(gini, machine):
     for nwi in machine.interfaces:
         target = nwi.target
         if check_switch(gini, target):
-            return get_network_name(target), nwi.ip
+            return get_network_name(target), nwi.ip, nwi.mac
 
     for nwi in machine.interfaces:
         target = nwi.target
@@ -473,9 +464,9 @@ def get_switch_to_connect(gini, machine):
             # create a 'hidden' switch because docker needs a
             # switch to connect to the router
             swname = find_hidden_switch(target, machine.name)
-            return get_network_name(swname), nwi.ip
+            return get_network_name(swname), nwi.ip, nwi.mac
 
-    return None, None
+    return None, None, None
 
 
 def create_virtual_machines(gini, opts):
@@ -490,42 +481,43 @@ def create_virtual_machines(gini, opts):
         oldDir = os.getcwd()
         os.chdir(subMachDir)
 
-        # Write an init script to run at docker startup
-        startOut = open("entrypoint.sh", "w")
-        startOut.write("#!/bin/ash\n\n")
-        for nwIf in mach.interfaces:
-            for route in nwIf.routes:
-                command = "route add -%s %s " % (route.type, route.dest)
-                command += "netmask %s " % route.netmask
-                if route.gw:
-                    command += "gw %s " % route.gw
-                startOut.write(command + "\n")
-            # end each route
-        # end each interface
-
-        stopOut = open("stopit.sh", "w")
-        stopOut.write("#!/bin/bash\n")
-        # Get switch to connect
-        sname, ip = get_switch_to_connect(gini, mach)
-
-        # Export command prompt for VM, start shell inside docker container
-        startOut.write("\nexport PS1='root@%s >> '\n" % ip)
-        startOut.write("/bin/ash\n")
-        startOut.close()
-        os.chmod("entrypoint.sh", 0755)
-
-        baseScreenCommand = "screen -d -m -L -S %s " % mach.name
+        sname, ip, mac = get_switch_to_connect(gini, mach)
 
         if sname is not None:
-            isOVS = False
+            is_ovs = False
             if sname[:3] == "OVS":
-                isOVS = True
+                is_ovs = True
+
+            # Write an init script to run at docker startup
+            startOut = open("entrypoint.sh", "w")
+            startOut.write("#!/bin/ash\n\n")
+            for nwIf in mach.interfaces:
+                if is_ovs:
+                    startOut.write("sleep 3\n\n")
+                for route in nwIf.routes:
+                    command = "route add -%s %s " % (route.type, route.dest)
+                    command += "netmask %s " % route.netmask
+                    if route.gw:
+                        command += "gw %s " % route.gw
+                    startOut.write(command + "\n")
+
+            stopOut = open("stopit.sh", "w")
+            stopOut.write("#!/bin/bash\n")
+
+            # Export command prompt for VM, start shell inside docker container
+            startOut.write("\nexport PS1='root@%s >> '\n" % ip)
+            startOut.write("/bin/ash\n")
+            startOut.close()
+            os.chmod("entrypoint.sh", 0755)
+
+            baseScreenCommand = "screen -d -m -L -S %s " % mach.name
 
             # create command line
             command = "docker run -it --privileged --name %s " % mach.name
             command += "-v %s/data/%s:/root " % (os.environ["GINI_HOME"], mach.name)
             command += "--entrypoint /root/entrypoint.sh "
-            if not isOVS:
+            command += "--mac-address %s " % mac
+            if not is_ovs:
                 command += "--network %s " % sname
                 command += "--ip %s " % ip
             command += "alpine /bin/ash"
@@ -534,12 +526,11 @@ def create_virtual_machines(gini, opts):
             runcmd.communicate()
 
             if runcmd.returncode == 0:
-                if isOVS:
+                if is_ovs:
                     time.sleep(1)   # Avoid race condition
-                    ovsCommand = "ovs-docker add-port %s eth1 %s --ipaddress=%s/24" % (sname, mach.name, ip)
-                    print ovsCommand
+                    ovsCommand = "ovs-docker add-port %s eth0 %s --ipaddress=%s/24" % (sname, mach.name, ip)
                     runcmd = subprocess.Popen(ovsCommand, shell=True, stdout=subprocess.PIPE)
-                    stopOut.write("ovs-docker del-port %s eth1 %s\n" % (sname, mach.name))
+                    stopOut.write("ovs-docker del-port %s eth0 %s\n" % (sname, mach.name))
                     runcmd.communicate()
 
                 stopOut.write("docker kill %s\n" % mach.name)
@@ -634,31 +625,6 @@ def make_dir(dir_name):
 # the socket names are fully qualified file names
 def get_socket_name(network_interface, name, gini, opts):
     """Get the socket name the interface is connecting to"""
-    # waps = gini.vwr
-    # for wap in waps:
-    #     print wap
-    #     # looking for a match in all waps
-    #     if wap.name == network_interface.target:
-    #         oldDir = os.getcwd()
-    #         switch_sharing = False
-    #         for i in range(len(nodes)):
-    #             if (nodes[i].find("Mach_")+nodes[i].find("REALM_")) >= 0:
-    #                 switch_sharing = True
-    #                 break
-    #         nodes.append(name)
-    #         if switch_sharing:
-    #             newDir = os.environ["GINI_HOME"] + "/data/mach_virtual_switch/VS_%d" % (i+1)
-    #         else:
-    #             newDir = os.environ["GINI_HOME"] + "/data/mach_virtual_switch/VS_%d" % len(nodes)
-    #             system("mkdir %s" % newDir)
-    #             os.chdir(newDir)
-    #             configOut = open("uswitch.conf", "w")
-    #             configOut.write("logfile uswitch.log\npidfile uswitch.pid\nsocket gw_socket.ctl\nfork\n")
-    #             configOut.close()
-    #             popen("%s -s %s -l uswitch.log -p uswitch.pid &" % (VIRTUAL_SWITCH_PROGRAM, newDir + "/gw_socket.ctl"))
-    #             os.chdir(oldDir)
-    #         return newDir + "/gw_socket.ctl"
-
     routers = gini.vr
     for router in routers:
         # looking for a match in all routers
