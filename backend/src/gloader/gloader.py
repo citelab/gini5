@@ -34,7 +34,7 @@ GINI_TEMP_FILE = ".gini_tmp_file"    # tmp file used when checking alive Mach
 nodes = []
 tap_interface_names_map = dict()
 subnet_map = dict()
-docker_network_name_map = dict()
+network_name_map = dict()
 
 # set this switch True if running gloader without gbuilder
 independent = False
@@ -85,7 +85,7 @@ def find_subnet_for_switch(gini, switch_name):
 
 
 def create_open_virtual_switches(gini, switch_dir, switch):
-    print "Starting %s...\t" % switch.name
+    print "\tStarting %s...\t" % switch.name,
     sub_switch_dir = switch_dir + "/" + switch.name
     make_dir(sub_switch_dir)
     old_dir = os.getcwd()
@@ -98,7 +98,7 @@ def create_open_virtual_switches(gini, switch_dir, switch):
     subnet = find_subnet_for_switch(gini, switch.name)
     if subnet != "":
         if subnet_map.get(subnet):
-            docker_network_name_map[switch.name] = subnet_map[subnet]
+            network_name_map[switch.name] = subnet_map[subnet]
             os.chmod(undo_file, 0755)
             undo_out.close()
             print "[OK]"
@@ -111,7 +111,7 @@ def create_open_virtual_switches(gini, switch_dir, switch):
         startup_commands = "ovs-vsctl add-br %s &&\n" % switch.name
         startup_commands += "ip addr add %s/24 dev %s &&\n" % (subnet, switch.name)
         startup_commands += "ip link set %s up &&\n" % switch.name
-        startup_commands += "ovs-vsctl set-fail-mode %s standalone &&" % switch.name
+        startup_commands += "ovs-vsctl set-fail-mode %s standalone &&\n" % switch.name
         start_out.write(startup_commands)
 
         screen_command = "screen -d -m -L -S %s " % switch.name
@@ -155,7 +155,7 @@ def create_virtual_switches(gini, switch_dir):
                 print "[Failed] Error when creating Open virtual switch"
                 return False
 
-        print "Starting %s...\t" % switch.name,
+        print "\tStarting %s...\t" % switch.name,
         subSwitchDir = switch_dir + "/" + switch.name
         make_dir(subSwitchDir)
         undoFile = "%s/stopit.sh" % subSwitchDir
@@ -166,7 +166,7 @@ def create_virtual_switches(gini, switch_dir):
         if subnet != "":
             # Check if the network is already created under another switch name
             if subnet_map.get(subnet):
-                docker_network_name_map[switch.name] = subnet_map[subnet]
+                network_name_map[switch.name] = subnet_map[subnet]
                 os.chmod(undoFile, 0755)
                 undoOut.close()
                 continue
@@ -223,7 +223,6 @@ def create_virtual_switches(gini, switch_dir):
 
 
 def find_hidden_switch(router_name, switch_name):
-
     x, rnum = router_name.split("_")
     x, snum = switch_name.split("_")
     if x != "Router":
@@ -236,32 +235,41 @@ def find_hidden_switch(router_name, switch_name):
     q.communicate()
     if q.returncode == 0:
         return switch_name
-
-    return None
+    else:
+        return None
 
 
 def find_bridge_name(switch_name):
+    if switch_name.split("_")[0] == "Switch":
+        command = "docker network inspect %s --format='{{.Id}}'" % switch_name
+        is_ovs = False
+    else:
+        command = "ovs-ofctl show %s" % switch_name
+        is_ovs = True
 
-    command = """docker network inspect %s --format='{{.Id}}'""" % switch_name
     q = subprocess.Popen(command, shell=True, stdout=subprocess.PIPE)
     out, err = q.communicate()
-    if q.returncode == 0:
-        return "br-" + out[:12]
 
-    return None
+    if q.returncode == 0:
+        if is_ovs:
+            return switch_name, is_ovs
+        else:
+            return "br-" + out[:12], is_ovs
+    else:
+        return None, None
 
 
 def create_new_switch(router_name, switch_name, subnet, out_file):
-    x, rnum = router_name.split("_")
-    x, snum = switch_name.split("_")
+    x, router_num = router_name.split("_")
+    x, switch_num = switch_name.split("_")
     if x != "Router":
-        switch_name = "Switch_r%sm%s" % (rnum, snum)
+        switch_name = "Switch_r%sm%s" % (router_num, switch_num)
     else:
-        switch_name = "Switch_r%sr%s" % (rnum, snum)
+        switch_name = "Switch_r%sr%s" % (router_num, switch_num)
 
-    # Similar to switch devices, check if the network is already created under another name
+    # Similar to switch_name devices, check if the network is already created under another name
     if subnet_map.get(subnet):
-        docker_network_name_map[switch_name] = subnet_map[subnet]
+        network_name_map[switch_name] = subnet_map[subnet]
         switch_name = subnet_map[subnet]
 
         command = "docker network inspect %s --format='{{.Id}}'" % switch_name
@@ -305,38 +313,47 @@ def create_new_switch(router_name, switch_name, subnet, out_file):
         return None, None
 
 
-def set_up_tap_interface(router_name, switch_name, bridge_name, out_file):
+def set_up_tap_interface(router_name, switch_name, bridge_name, out_file, is_ovs=False):
     # This assumes that the iproute2 (ip) utils work without
     # sudo - you need to turn on the setuid bit
-    x, rnum = router_name.split("_")
-    x, snum = switch_name.split("_")
-    if x != "Router":
-        tapKey = "Switch_r%sm%s" % (rnum, snum)
+    x, router_num = router_name.split("_")
+    x, switch_num = switch_name.split("_")
+
+    target_mode = {
+        "Mach": "m",
+        "Router": "r",
+        "Switch": "s",
+        "OVSwitch": "o"
+    }
+
+    tap_key = "Switch_r%s%s%s" % (router_num, target_mode[x], switch_num)
+    if tap_interface_names_map.get(tap_key) is None:
+        tap_interface_names_map[tap_key] = "tap" + str(len(tap_interface_names_map) + 1)
+    tap_name = tap_interface_names_map[tap_key]
+
+    command_to_execute = "ip tuntap add mode tap dev %s &&\n" % tap_name
+    command_to_execute += "ip link set %s up &&\n" % tap_name
+    if is_ovs:
+        command_to_execute += "ovs-vsctl add-port %s %s" % (bridge_name, tap_name)
     else:
-        tapKey = "Switch_r%sr%s" % (rnum, snum)
+        command_to_execute += "brctl addif %s %s" % (bridge_name, tap_name)
 
-    if tap_interface_names_map.get(tapKey) is None:
-        tap_interface_names_map[tapKey] = "tap" + str(len(tap_interface_names_map) + 1)
-    tapName = tap_interface_names_map[tapKey]
-
-    subprocess.call("ip tuntap add mode tap dev %s" % tapName, shell=True)
-    subprocess.call("ip link set %s up" % tapName, shell=True)
-
-    subprocess.call("brctl addif %s %s" % (bridge_name, tapName), shell=True)
-
-    out_file.write("\nip link del %s\n" % tapName)
-
-    return tapName
+    create_tap_process = subprocess.Popen(command_to_execute, shell=True, stdout=subprocess.PIPE)
+    create_tap_process.wait()
+    if create_tap_process.returncode == 0:
+        out_file.write("\nip link del %s\n" % tap_name)
+        return tap_name
+    else:
+        return None
 
 
 def create_virtual_routers(gini, opts):
     """Create router config file, and start the router"""
-
     routerDir = opts.routerDir
     # create the main router directory
     make_dir(routerDir)
     for router in gini.vr:
-        print "Starting %s...\t" % router.name,
+        print "\tStarting %s...\t" % router.name,
         sys.stdout.flush()
         # name the config file
         subRouterDir = "%s/%s" % (routerDir, router.name)
@@ -356,43 +373,43 @@ def create_virtual_routers(gini, opts):
         interfaces_map = dict()
 
         for nwIf in router.netIF:
-            swname = nwIf.target
-            print "Checking switch: " + swname
-            if not check_switch(gini, swname):
-                print "It is not a switch..."
-
-                interface_name = "%s - %s" % (router.name, swname)
+            target_name = nwIf.target
+            switch = check_switch(gini, target_name)
+            if not switch:
+                interface_name = "%s - %s" % (router.name, target_name)
                 # Router could be connected to a machine
-                if check_router(gini, swname):
+                if check_router(gini, target_name):
                     print "It is a router at the other end."
                     # Check whether the other router has already created the hidden switch
                     # If so, this router can just tap into it
                     x, rnum = router.name.split("_")
-                    x, snum = swname.split("_")
+                    x, snum = target_name.split("_")
                     scheck = "Switch_r%sr%s" % (snum, rnum)
-                    brname = find_bridge_name(scheck)
-                    if brname is None:
-                        swname, brname = create_new_switch(router.name, swname, nwIf.network, stopOut)
-                        if swname is None:
+                    bridge_name, is_ovs = find_bridge_name(scheck)
+                    if bridge_name is None:
+                        switch_name, bridge_name = create_new_switch(router.name, target_name, nwIf.network, stopOut)
+                        if target_name is None:
                             print "[Failed]"
                             return False
                 else:
                     # We are connected to a machine
-                    swname, brname = create_new_switch(router.name, swname, nwIf.network, stopOut)
-                    if swname is None:
+                    switch_name, bridge_name = create_new_switch(router.name, target_name, nwIf.network, stopOut)
+                    if target_name is None:
                         print "[Failed]"
                         return False
+                is_ovs = False
             else:
-                brname = find_bridge_name(swname)
-                interface_name = swname
-            tapname = set_up_tap_interface(router.name, swname, brname, stopOut)
-            if tapname == "None":
+                bridge_name, is_ovs = find_bridge_name(target_name)
+                interface_name = target_name
+                is_ovs = switch.isOVS
+            tapname = set_up_tap_interface(router.name, target_name, bridge_name, stopOut, is_ovs)
+            if tapname is None:
                 print "[Failed]"
                 print "\nRouter %s: unable to create tap interface" % router.name
                 return False
             else:
                 configOut.write(get_virtual_router_interface_outline(nwIf, tapname))
-                interfaces_map[interface_name] = brname
+                interfaces_map[interface_name] = bridge_name
         configOut.write("echo -ne \"\\033]0;" + router.name + "\\007\"")
         configOut.close()
         stopOut.close()
@@ -416,15 +433,15 @@ def create_virtual_routers(gini, opts):
         with open(router_tmp_file, "w") as f:
             f.write(json.dumps(interfaces_map, sort_keys=True, indent=2))
 
-        print "[OK]",
+        print "[OK]"
         os.chdir(oldDir)
 
     return True
 
 
-def get_docker_network_name(switch_name):
-    if docker_network_name_map.get(switch_name):
-        return docker_network_name_map[switch_name]
+def get_network_name(switch_name):
+    if network_name_map.get(switch_name):
+        return network_name_map[switch_name]
     else:
         return switch_name
 
@@ -432,15 +449,15 @@ def get_docker_network_name(switch_name):
 def check_switch(gini, switch_name):
     for switch in gini.switches:
         if switch.name == switch_name:
-            return True
-    return False
+            return switch
+    return None
 
 
 def check_router(gini, router_name):
-    for vr in gini.vr:
-        if vr.name == router_name:
-            return True
-    return False
+    for router in gini.vr:
+        if router.name == router_name:
+            return router
+    return None
 
 
 def get_switch_to_connect(gini, machine):
@@ -448,7 +465,7 @@ def get_switch_to_connect(gini, machine):
     for nwi in machine.interfaces:
         target = nwi.target
         if check_switch(gini, target):
-            return get_docker_network_name(target), nwi.ip
+            return get_network_name(target), nwi.ip
 
     for nwi in machine.interfaces:
         target = nwi.target
@@ -456,7 +473,7 @@ def get_switch_to_connect(gini, machine):
             # create a 'hidden' switch because docker needs a
             # switch to connect to the router
             swname = find_hidden_switch(target, machine.name)
-            return get_docker_network_name(swname), nwi.ip
+            return get_network_name(swname), nwi.ip
 
     return None, None
 
@@ -464,11 +481,8 @@ def get_switch_to_connect(gini, machine):
 def create_virtual_machines(gini, opts):
     """create Mach config file, and start the Mach"""
     make_dir(opts.machDir)
-
-    print ">>>>>>>>>>>>>> Start >>>>>"
-
     for mach in gini.vm:
-        print "Starting %s...\t" % mach.name,
+        print "\tStarting %s...\t" % mach.name,
         subMachDir = "%s/%s" % (opts.machDir, mach.name)
         make_dir(subMachDir)
 
@@ -492,7 +506,6 @@ def create_virtual_machines(gini, opts):
         stopOut = open("stopit.sh", "w")
         stopOut.write("#!/bin/bash\n")
         # Get switch to connect
-        print "Before get "
         sname, ip = get_switch_to_connect(gini, mach)
 
         # Export command prompt for VM, start shell inside docker container
@@ -501,7 +514,6 @@ def create_virtual_machines(gini, opts):
         startOut.close()
         os.chmod("entrypoint.sh", 0755)
 
-        print "Sname " + sname + " IP " + ip
         baseScreenCommand = "screen -d -m -L -S %s " % mach.name
 
         if sname is not None:
@@ -517,8 +529,6 @@ def create_virtual_machines(gini, opts):
                 command += "--network %s " % sname
                 command += "--ip %s " % ip
             command += "alpine /bin/ash"
-
-            print "<<<<<<< " + baseScreenCommand + command
 
             runcmd = subprocess.Popen(baseScreenCommand + command, shell=True, stdout=subprocess.PIPE)
             runcmd.communicate()
@@ -575,11 +585,9 @@ def find_available_port(lower_range, upper_range):
 
 def create_open_flow_controllers(gini, opts):
     """Create OpenFlow controller config file, and start the OpenFlow controller"""
-
     make_dir(opts.controllerDir)
-    print("Controller directory", opts.controllerDir)
     for controller in gini.vofc:
-        print "Starting OpenFlow controller %s...\t" % controller.name,
+        print "\tStarting OpenFlow controller %s...\t" % controller.name,
         subControllerDir = "%s/%s" % (opts.controllerDir, controller.name)
         make_dir(subControllerDir)
 
@@ -593,10 +601,6 @@ def create_open_flow_controllers(gini, opts):
         vofcFlags += "gini.core.forwarding_l2_pairs "
         vofcFlags += "gini.support.gini_pid --pid_file_path='%s/%s/%s.pid' " % (opts.controllerDir, controller.name, controller.name)
         vofcFlags += "gini.support.gini_module_load --module_file_path='%s/%s/%s.modules' " % (opts.controllerDir, controller.name, controller.name)
-
-        print "------------------------------------"
-        print "VOFC: " + vofcFlags
-        print "------------------------------------"
 
         command = "screen -d -m -L -S %s %s %s\n\n" % (controller.name, OPENFLOW_CONTROLLER_PROGRAM_BIN, vofcFlags)
 
@@ -805,7 +809,7 @@ def destroy_GINI(gini, opts):
 
     tap_interface_names_map.clear()
     subnet_map.clear()
-    docker_network_name_map.clear()
+    network_name_map.clear()
 
     try:
         print "\nTerminating Machs..."

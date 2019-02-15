@@ -84,7 +84,8 @@ class Interfaceable(Attachable):
         """
         for interface in self.interfaces:
             target = interface[QtCore.QString("target")]
-            if target.device_type in ["Switch", "OVSwitch"]:
+            if target.device_type in ["Switch", "OVSwitch"] and \
+                    target.getTarget(node) == node:
                 return interface
             elif target.device_type == "Router" and node.device_type in ["Switch", "OVSwitch"]:
                 return target.getInterface(node)

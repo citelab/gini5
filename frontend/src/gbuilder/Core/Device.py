@@ -12,4 +12,7 @@ class Device(Node):
         self.connection = []
 
     def __str__(self):
-        return "Device: %s" % self.getName()
+        return self.getName()
+
+    def __repr__(self):
+        return self.getName()
