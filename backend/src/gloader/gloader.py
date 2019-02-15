@@ -409,6 +409,7 @@ def create_virtual_routers(gini, opts):
         command += "--config=%s.conf " % GROUTER_PROGRAM
         command += "--confpath=" + os.environ["GINI_HOME"] + "/data/" + router.name + " "
         command += "--interactive=1 "
+        command += "--verbose=0 "
         command += "%s" % router.name
 
         startOut = open("startit.sh", "w")
