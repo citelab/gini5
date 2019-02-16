@@ -3,12 +3,13 @@
 from PyQt4 import QtCore, QtGui
 from Core.globals import options, mainWidgets
 
+
 class ExportWindow(QtGui.QDialog):
-    def __init__(self, parent = None):
+    def __init__(self, parent=None):
         """
         Create an export window to save the current canvas as an image.
         """
-        QtGui.QDialog.__init__(self, parent)
+        super(ExportWindow, self).__init__(parent)
 
         self.gridCheckBox = QtGui.QCheckBox(self.tr("Save with grid"))
         self.namesCheckBox = QtGui.QCheckBox(self.tr("Save with names"))
@@ -34,9 +35,11 @@ class ExportWindow(QtGui.QDialog):
         Pop up a file dialog box to determine a save filename, then save it.
         """
         self.hide()
-        filename = QtGui.QFileDialog.getSaveFileName(self,
-                    self.tr("Choose a file name"), ".",
-                    self.tr("PNG (*.png)"))
+        filename = QtGui.QFileDialog.getSaveFileName(
+            self,
+            self.tr("Choose a file name"), ".",
+            self.tr("PNG (*.png)")
+        )
         if filename.isEmpty():
             return
 

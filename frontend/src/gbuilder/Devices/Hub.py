@@ -1,15 +1,16 @@
 from Core.Device import *
 
-##
-# Class: the hub device. Not fully implemented yet
+"""
+This class implements a hub device. Work is in progress
+"""
+
+
 class Hub(Device):
     device_type="Hub"
 
     def __init__(self):
-        Device.__init__(self)
+        super(Hub, self).__init__()
 
-	self.setProperty("port", "")
-	self.setProperty("monitor", "")
-        self.setProperty("hub", True)   # use hub mode by default 
-
-
+        self.setProperty("port", "")
+        self.setProperty("monitor", "")
+        self.setProperty("hub", True)   # use hub mode by default

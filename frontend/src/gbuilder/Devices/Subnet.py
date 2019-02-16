@@ -1,19 +1,16 @@
-from Core.Connection import *
 from Core.Device import *
 from Core.Interfaceable import Interfaceable
 
-##
-# Class: the Subnet
+
 class Subnet(Device):
-    device_type="Subnet"
+    device_type = "Subnet"
 
     def __init__(self):
-        Device.__init__(self)
+        super(Subnet, self).__init__()
 
-        self.num_interface=0
+        self.num_interface = 0
         self.setProperty("subnet", "")
         self.setProperty("mask", "")
-#        self.setProperty("bits", "")
 
     def addEdge(self, edge):
         Device.addEdge(self, edge)
@@ -37,8 +34,8 @@ class Subnet(Device):
 
         Device.removeEdge(self, edge)
 
-    # Return the other node to which the subnet is connected, if any
     def getTarget(self, node):
+        """Return the other node to which the subnet is connected, if any"""
         for con in self.edges():
             other = con.getOtherDevice(self)
             if other != node:

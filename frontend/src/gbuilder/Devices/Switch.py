@@ -1,20 +1,15 @@
-from PyQt4 import QtCore
 from Core.Device import *
+
 
 class Switch(Device):
     device_type = "Switch"
 
     def __init__(self):
-        Device.__init__(self)
+        super(Switch, self).__init__()
         self.setProperty("Hub mode", "False")
         self.setProperty("OVS mode", "False")
         self.setProperty("Priority", "100")
         self.setProperty("mac", "")
-#       self.setProperty("mask", "")
-#       self.setProperty("subnet", "")
-#       self.setProperty("link_subnet", "0")
-#       self.setProperty("port", "")
-#       self.setProperty("monitor", "")
         self.gateway = None
 
     def addEdge(self, edge):
@@ -38,11 +33,11 @@ class Switch(Device):
     def getGateway(self):
         return self.gateway[QtCore.QString("ipv4")]
 
-    """
-    If the switch is connected to a subnet, return the opposite node
-    to which that subnet is connected, if any
-    """
     def getTarget(self, node):
+        """
+        If the switch is connected to a subnet, return the opposite node
+        to which that subnet is connected, if any
+        """
         for con in self.edges():
             other = con.getOtherDevice(self)
             if other != node and other.device_type == "Subnet":

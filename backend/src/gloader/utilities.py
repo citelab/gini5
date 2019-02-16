@@ -2,9 +2,10 @@
 
 # file: utilities.py
 
-def findIndex(list, key):
-    for i in range(len(list)):
-        if list[i] == key:
+
+def findIndex(lst, key):
+    for i in range(len(lst)):
+        if lst[i] == key:
             return i
     return -1
 

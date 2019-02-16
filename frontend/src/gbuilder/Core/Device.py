@@ -2,14 +2,17 @@
 
 from UI.Node import *
 
-class Device(Node):
 
+class Device(Node):
     def __init__(self):
         """
         Create a logical side to the node.
         """
-        Node.__init__(self)
+        super(Device, self).__init__()
         self.connection = []
 
     def __str__(self):
-        return "Device: %s" % self.getName()
+        return self.getName()
+
+    def __repr__(self):
+        return self.getName()

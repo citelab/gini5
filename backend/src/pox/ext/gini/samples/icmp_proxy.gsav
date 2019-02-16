@@ -1,5 +1,5 @@
-OpenFlow_Controller_1:(-43.000000,-126.000000)
-	Name:OpenFlow_Controller_1
+OpenFlowController_1:(-43.000000,-126.000000)
+	Name:OpenFlowController_1
 Router_1:(-42.000000,-22.000000)
 	Name:Router_1
 		interface:Mach_1
@@ -65,7 +65,7 @@ Mach_3:(150.000000,100.000000)
 			mac:fe:fd:02:00:00:03
 			ipv4:192.168.1.4
 			mask:255.255.255.0
-edge:(OpenFlow_Controller_1,Router_1)
+edge:(OpenFlowController_1,Router_1)
 	id:SomeEdge
 edge:(Router_1,Subnet_1)
 	id:SomeEdge

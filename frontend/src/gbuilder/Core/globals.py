@@ -2,7 +2,7 @@
 import os
 
 PROG_NAME = "gBuilder"
-PROG_VERSION  = "3.0.0"
+PROG_VERSION = "5.0.0"
 
 GINI_ROOT = os.environ["GINI_ROOT"]
 GINI_HOME = os.environ["GINI_HOME"]
@@ -11,7 +11,7 @@ environ = {
     "os": "Windows",
     "path": GINI_ROOT+"/",
     "remotepath": "./",
-    "images": os.environ["GINI_SHARE"] +"/gbuilder/images/",
+    "images": os.environ["GINI_SHARE"] + "/gbuilder/images/",
     "config": GINI_HOME+"/etc/",
     "sav": GINI_HOME+"/sav/",
     "tmp": GINI_HOME+"/tmp/",
@@ -19,14 +19,14 @@ environ = {
 }
 
 options = {
-    "names":True,
+    "names": True,
     "systray": False,
     "elasticMode": False,
     "keepElasticMode": False,
     "smoothing": True,
     "glowingLights": True,
     "style": "Mac",
-    "grid":True,
+    "grid": True,
     "gridColor": "(220,220,220)",
     "background": environ["images"] + "background.jpg",
     "windowTheme": environ["images"] + "window.jpg",
@@ -43,9 +43,6 @@ options = {
     "remotePort": "10000",
     "restore": True,
     "moveAlert": True,
-    "wserver": "192.168.54.121",
-    "wlocalPort": "60001",
-    "wremotePort": "60000",
     "gnome": False,
     "menumods": False
 }
@@ -64,11 +61,6 @@ mainWidgets = {
     "routes": None,
     "drop": None,
     "client": None,
-    "wgini_client": None
 }
 
 defaultOptions = {"palette": None}
-
-yRouters = {}		# indexed by yun ID
-availableyRouters = []
-usedyRouters = {}	# indexed by topology index

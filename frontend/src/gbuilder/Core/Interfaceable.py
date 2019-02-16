@@ -3,12 +3,13 @@
 from Device import *
 from Attachable import *
 
+
 class Interfaceable(Attachable):
     def __init__(self):
         """
         Create a device that can have interfaces.
         """
-        Attachable.__init__(self)
+        super(Interfaceable, self).__init__()
 
         self.adjacentRouterList = []
         self.adjacentSubnetList = []
@@ -33,11 +34,14 @@ class Interfaceable(Attachable):
             if interface[QtCore.QString("target")] == node:
                 return
 
-        self.interfaces.append({
-            QtCore.QString("target"):node,
-            QtCore.QString("ipv4"):QtCore.QString(""),
-            QtCore.QString("mac"):QtCore.QString(""),
-            QtCore.QString("routing"):[]})
+        self.interfaces.append(
+            {
+                QtCore.QString("target"): node,
+                QtCore.QString("ipv4"): QtCore.QString(""),
+                QtCore.QString("mac"): QtCore.QString(""),
+                QtCore.QString("routing"): []
+            }
+        )
 
     def removeInterface(self, node):
         """
@@ -80,11 +84,11 @@ class Interfaceable(Attachable):
         """
         for interface in self.interfaces:
             target = interface[QtCore.QString("target")]
-            if target.device_type in ["Switch", "OVSwitch"]:
+            if target.device_type in ["Switch", "OVSwitch"] and \
+                    target.getTarget(node) == node:
                 return interface
             elif target.device_type == "Router" and node.device_type in ["Switch", "OVSwitch"]:
                 return target.getInterface(node)
-
 
     def getInterfaceProperty(self, propName, node=None, subnet=None, index=0):
         """
@@ -144,7 +148,11 @@ class Interfaceable(Attachable):
         """
         Add an entry to the table specified by subnet and target.
         """
-        entry = {QtCore.QString("netmask"):mask, QtCore.QString("gw"):gateway, QtCore.QString("subnet"):subnet}
+        entry = {
+            QtCore.QString("netmask"): mask,
+            QtCore.QString("gw"): gateway,
+            QtCore.QString("subnet"): subnet
+        }
         table = self.getTable(target)
         table.append(entry)
 
@@ -203,7 +211,6 @@ class Interfaceable(Attachable):
         return False
 
     def findSwitchInterface(self, interfaces, switch):
-
         for i in interfaces:
             if i[QtCore.QString("target")] == switch:
                 return i
@@ -213,26 +220,26 @@ class Interfaceable(Attachable):
         """
         Search the specified subnet in the whole network.
         """
-        routerList=self.adjacentRouterList[:]
+        routerList = self.adjacentRouterList[:]
 
         # Save all found routers in the list, so that we don't visit a router twice
-        foundList=[]
+        foundList = []
         for r in routerList:
             foundList.append(r[0])
 
         while len(routerList) > 0:
             theOne = routerList.pop(0)
             if theOne[0].hasSubnet(subnet):
-                return (theOne[0], theOne[1])
+                return theOne[0], theOne[1]
             else:
                 # Add its adjacent router list to the list
                 for router, interface in theOne[0].getAdjacentRouters():
                     # Check if the router is already visited or is in the to be visited list
-                    if not router in foundList:
+                    if router not in foundList:
                         newOne = [router, theOne[1]]
                         routerList.append(newOne)
                     foundList.append(router)
-        return (None, None)
+        return None, None
 
     def addRoutingEntry(self, subnet):
         """
@@ -242,27 +249,26 @@ class Interfaceable(Attachable):
             device, interface = self.searchSubnet(subnet)
             if interface:
                 target = interface[QtCore.QString("target")]
-                if self.device_type != "Mach" and device.device_type == "Router" and\
-                    target.device_type in ["Switch", "OVSwitch"]:
+                if self.device_type != "Mach" and \
+                        device.device_type == "Router" and \
+                        target.device_type in ["Switch", "OVSwitch"]:
                     iface = device.getInterface(target)
                     if iface:
                         gateway = iface[QtCore.QString("ipv4")]
-                        self.addEntry(interface[QtCore.QString("mask")],
-                                    gateway,
-                                    subnet,
-                                    target)
-                elif interface[QtCore.QString("subnet")] == subnet \
-                    and self.device_type == "Mach" or self.device_type == "REALM":
-                    self.addEntry(interface[QtCore.QString("mask")],
-                                  "",
-                                  " ",
-                                  target)
-                elif interface[QtCore.QString("subnet")] == subnet \
-                    and self.device_type == "REALM":
-                    self.addEntry(interface[QtCore.QString("mask")],
-                                  "",
-                                  " ",
-                                  target)
+                        self.addEntry(
+                            interface[QtCore.QString("mask")],
+                            gateway,
+                            subnet,
+                            target
+                        )
+                elif interface[QtCore.QString("subnet")] == subnet and \
+                        self.device_type == "Mach":
+                    self.addEntry(
+                        interface[QtCore.QString("mask")],
+                        "",
+                        " ",
+                        target
+                    )
                 else:
                     if target.device_type in ["Switch", "OVSwitch"]:
                         # interfaceable = target.getTarget(self)
@@ -270,12 +276,15 @@ class Interfaceable(Attachable):
                         gateway = target.getGateway()
                     else:
                         gateway = target.getInterface(self)[QtCore.QString("ipv4")]
-                    self.addEntry(interface[QtCore.QString("mask")],
-                                  gateway,
-                                  subnet,
-                                  target)
+
+                    self.addEntry(
+                        interface[QtCore.QString("mask")],
+                        gateway,
+                        subnet,
+                        target
+                    )
         else:
-            if self.device_type == "Router" or self.device_type=="yRouter":
+            if self.device_type == "Router":
                 interface = self.getInterface(None, subnet)
                 self.addEntry(interface[QtCore.QString("mask")],
                               "0.0.0.0",
@@ -289,10 +298,7 @@ class Interfaceable(Attachable):
         devInfo = Device.toString(self)
         interfaceInfo = ""
         for interface in self.interfaces:
-            if interface.has_key(QtCore.QString("target")):
-                interfaceInfo += "\t\tinterface:" + interface[QtCore.QString("target")].getName() + "\n"
-            else:
-                interfaceInfo += "\t\twireless interface:\n"
+            interfaceInfo += "\t\tinterface:" + interface[QtCore.QString("target")].getName() + "\n"
             for prop, value in interface.iteritems():
                 if prop == "target":
                     pass
