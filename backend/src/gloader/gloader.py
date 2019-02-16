@@ -529,9 +529,9 @@ def create_virtual_machines(gini, opts):
             if runcmd.returncode == 0:
                 if is_ovs:
                     time.sleep(1)   # Avoid race condition
-                    ovsCommand = "ovs-docker add-port %s eth0 %s --ipaddress=%s/24" % (sname, mach.name, ip)
+                    ovsCommand = "ovs-docker add-port %s eth1 %s --ipaddress=%s/24" % (sname, mach.name, ip)
                     runcmd = subprocess.Popen(ovsCommand, shell=True, stdout=subprocess.PIPE)
-                    stopOut.write("ovs-docker del-port %s eth0 %s\n" % (sname, mach.name))
+                    stopOut.write("ovs-docker del-port %s eth1 %s\n" % (sname, mach.name))
                     runcmd.communicate()
 
                 stopOut.write("docker kill %s\n" % mach.name)
