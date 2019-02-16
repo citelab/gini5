@@ -517,8 +517,8 @@ def create_virtual_machines(gini, opts):
             command = "docker run -it --privileged --name %s " % mach.name
             command += "-v %s/data/%s:/root " % (os.environ["GINI_HOME"], mach.name)
             command += "--entrypoint /root/entrypoint.sh "
-            command += "--mac-address %s " % mac
             if not is_ovs:
+                command += "--mac-address %s " % mac
                 command += "--network %s " % sname
                 command += "--ip %s " % ip
             command += "alpine /bin/ash"
@@ -529,7 +529,7 @@ def create_virtual_machines(gini, opts):
             if runcmd.returncode == 0:
                 if is_ovs:
                     time.sleep(1)   # Avoid race condition
-                    ovsCommand = "ovs-docker add-port %s eth1 %s --ipaddress=%s/24" % (sname, mach.name, ip)
+                    ovsCommand = "ovs-docker add-port %s eth1 %s --ipaddress=%s/24 --macaddress=%s" % (sname, mach.name, ip, mac)
                     runcmd = subprocess.Popen(ovsCommand, shell=True, stdout=subprocess.PIPE)
                     stopOut.write("ovs-docker del-port %s eth1 %s\n" % (sname, mach.name))
                     runcmd.communicate()
