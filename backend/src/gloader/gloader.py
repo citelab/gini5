@@ -561,7 +561,7 @@ def create_virtual_machines(gini, opts):
         print "[OK]"
 
         stop_out.close()
-        os.chmod("stopit.sh", 0755)
+        os.chmod(stop_script_path, 0755)
         # Restore the old directory...
         os.chdir(old_dir)
 
