@@ -55,7 +55,7 @@ def start_GINI(gini, opts):
     print "\nStarting Switches..."
     status = create_virtual_switches(gini, opts)
     print "\nStarting OpenFlow controllers..."
-    status = status and create_open_flow_controllers(gini, opts)
+    status = status and create_openflow_controllers(gini, opts)
     print "\nStarting GINI routers..."
     status = status and create_virtual_routers(gini, opts)
     print "\nStarting Docker Machines..."
@@ -475,74 +475,83 @@ def create_virtual_machines(gini, opts):
     make_dir(opts.machDir)
     for mach in gini.vm:
         print "\tStarting %s...\t" % mach.name,
-        subMachDir = "%s/%s" % (opts.machDir, mach.name)
-        make_dir(subMachDir)
+        sub_mach_dir = "%s/%s" % (opts.machDir, mach.name)
+        make_dir(sub_mach_dir)
 
         # Store current and go into the sub directory...
-        oldDir = os.getcwd()
-        os.chdir(subMachDir)
+        old_dir = os.getcwd()
+        os.chdir(sub_mach_dir)
 
-        sname, ip, mac = get_switch_to_connect(gini, mach)
+        switch_name, ip, mac = get_switch_to_connect(gini, mach)
 
-        if sname is not None:
+        if switch_name is not None:
             is_ovs = False
-            if sname[:3] == "OVS":
+            if switch_name[:3] == "OVS":
                 is_ovs = True
 
-            # Write an init script to run at docker startup
-            startOut = open("entrypoint.sh", "w")
-            startOut.write("#!/bin/ash\n\n")
+            # entry script for docker container
+            entrypoint_script = open("entrypoint.sh", "w")
+            entrypoint_script.write("#!/bin/ash\n\n")
             for nwIf in mach.interfaces:
-                if is_ovs:
-                    startOut.write("sleep 3\n\n")
                 for route in nwIf.routes:
-                    command = "route add -%s %s " % (route.type, route.dest)
-                    command += "netmask %s " % route.netmask
+                    entry_command = "route add -%s %s " % (route.type, route.dest)
+                    entry_command += "netmask %s " % route.netmask
                     if route.gw:
-                        command += "gw %s " % route.gw
-                    startOut.write(command + "\n")
-
-            stopOut = open("stopit.sh", "w")
-            stopOut.write("#!/bin/bash\n")
+                        entry_command += "gw %s " % route.gw
+                    entrypoint_script.write(entry_command + "\n")
 
             # Export command prompt for VM, start shell inside docker container
-            startOut.write("\nexport PS1='root@%s >> '\n" % ip)
-            startOut.write("/bin/ash\n")
-            startOut.close()
+            entrypoint_script.write("\nexport PS1='root@%s >> '\n" % ip)
+            entrypoint_script.write("/bin/ash\n")
+            entrypoint_script.close()
             os.chmod("entrypoint.sh", 0755)
 
-            baseScreenCommand = "screen -d -m -L -S %s " % mach.name
+            # Startup script that used by host to actually start docker containers via screen
+            start_script_path = "./.startit.sh"
+            start_script = open(start_script_path, "w")
+            start_script.write("#!/bin/bash\n\n")
+
+            # Script for safely terminating the machine
+            stop_script_path = "./.stopit.sh"
+            stop_out = open(stop_script_path, "w")
+            stop_out.write("#!/bin/bash\n")
 
             # create command line
-            command = "docker run -it --privileged --name %s " % mach.name
-            command += "-v %s/data/%s:/root " % (os.environ["GINI_HOME"], mach.name)
-            command += "--entrypoint /root/entrypoint.sh "
+            docker_run_command = "docker run -it --detach --privileged --name %s " % mach.name
+            docker_run_command += "-v %s/data/%s:/root " % (os.environ["GINI_HOME"], mach.name)
+            docker_run_command += "--entrypoint /root/entrypoint.sh "
             if not is_ovs:
-                command += "--mac-address %s " % mac
-                command += "--network %s " % sname
-                command += "--ip %s " % ip
-            command += "alpine /bin/ash"
+                docker_run_command += "--mac-address %s " % mac
+                docker_run_command += "--network %s " % switch_name
+                docker_run_command += "--ip %s " % ip
+            docker_run_command += "alpine /bin/ash > /dev/null &&\n"
 
-            runcmd = subprocess.Popen(baseScreenCommand + command, shell=True, stdout=subprocess.PIPE)
+            start_script.write(docker_run_command)
+
+            if is_ovs:
+                ovs_connect_command = "ovs-docker add-port %s eth1 %s --ipaddress=%s/24 --macaddress=%s &&\n" \
+                                      % (switch_name, mach.name, ip, mac)
+                start_script.write(ovs_connect_command)
+                ovs_disconnect_command = "ovs-docker del-port %s eth1 %s\n" % (switch_name, mach.name)
+                stop_out.write(ovs_disconnect_command)
+
+            stop_out.write("docker kill %s\n" % mach.name)
+            stop_out.write("docker rm %s\n\n" % mach.name)
+
+            docker_detach_command = "docker attach %s\n" % mach.name
+            start_script.write(docker_detach_command)
+
+            base_screen_command = "screen -d -m -L -S %s " % mach.name
+
+            start_script.close()
+            os.chmod(start_script_path, 0755)
+
+            runcmd = subprocess.Popen(base_screen_command + start_script_path, shell=True, stdout=subprocess.PIPE)
             runcmd.communicate()
-
-            if runcmd.returncode == 0:
-                if is_ovs:
-                    time.sleep(1)   # Avoid race condition
-                    ovsCommand = "ovs-docker add-port %s eth1 %s --ipaddress=%s/24 --macaddress=%s" % (sname, mach.name, ip, mac)
-                    runcmd = subprocess.Popen(ovsCommand, shell=True, stdout=subprocess.PIPE)
-                    stopOut.write("ovs-docker del-port %s eth1 %s\n" % (sname, mach.name))
-                    runcmd.communicate()
-
-                stopOut.write("docker kill %s\n" % mach.name)
-                stopOut.write("docker rm %s\n\n" % mach.name)
-                if runcmd.returncode != 0:
-                    stopOut.close()
-                    os.chmod("stopit.sh", 0755)
-                    system("./stopit.sh")
-                    print "[Failed] ovs-docker error"
-                    return False
-            else:
+            if runcmd.returncode != 0:
+                stop_out.close()
+                os.chmod(stop_script_path, 0755)
+                system(stop_script_path)
                 print "[Failed] Error when creating Docker container"
                 return False
         else:
@@ -551,10 +560,10 @@ def create_virtual_machines(gini, opts):
 
         print "[OK]"
 
-        stopOut.close()
+        stop_out.close()
         os.chmod("stopit.sh", 0755)
         # Restore the old directory...
-        os.chdir(oldDir)
+        os.chdir(old_dir)
 
     return True
 
@@ -575,7 +584,7 @@ def find_available_port(lower_range, upper_range):
     return -1
 
 
-def create_open_flow_controllers(gini, opts):
+def create_openflow_controllers(gini, opts):
     """Create OpenFlow controller config file, and start the OpenFlow controller"""
     make_dir(opts.controllerDir)
     for controller in gini.vofc:
