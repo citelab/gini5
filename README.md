@@ -121,9 +121,9 @@ sudo apt-get install -y openvswitch-switch \
 			openvswitch-common
 
 # And add setuid bit to the programs that Gini uses:
-sudo chmod a+S /usr/bin/ovs-vsctl
-sudo chmod a+S /usr/bin/ovs-ofctl
-sudo chmod a+S /usr/bin/ovs-docker
+sudo chmod a+s /usr/bin/ovs-vsctl
+sudo chmod a+s /usr/bin/ovs-ofctl
+sudo chmod a+s /usr/bin/ovs-docker
 ```
 
 ## Building Gini components
