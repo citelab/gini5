@@ -120,14 +120,14 @@ class Compiler:
         if interface:
             message += " of interface " + str(device.getInterfaces().index(interface) + 1)
         message += " is " + errorType + "."
-        self.log.append(message)
+        self.log.append('\n' + message + '\n')
 
     def generate_connection_error(self, device, numCons):
         """
         Generate a compile error.
         """
         self.errors += 1
-        message = ' '.join(("Error:", device.getName(), "has less than", str(numCons), "connection(s)."))
+        message = '\n' + ' '.join(("Error:", device.getName(), "has less than", str(numCons), "connection(s).")) + '\n'
         self.log.append(message)
 
     def generate_connection_warning(self, device, numCons):
@@ -135,7 +135,23 @@ class Compiler:
         Generate a compile warning.
         """
         self.warnings += 1
-        message = ' '.join(("Warning:", device.getName(), "has less than", str(numCons), "connection(s)."))
+        message = '\n' + ' '.join(("Warning:", device.getName(), "has less than", str(numCons), "connection(s).")) + '\n'
+        self.log.append(message)
+
+    def generate_generic_error(self, device, message):
+        """
+        Generate a generic compile error
+        """
+        self.errors += 1
+        message = '\n' + ' '.join(("Error:", device.getName(), message)) + '\n'
+        self.log.append(message)
+
+    def generate_generic_warning(self, device, message):
+        """
+        Generate a compile warning.
+        """
+        self.warnings += 1
+        message = '\n' + ' '.join(("Warning:", device.getName(), message)) + '\n'
         self.log.append(message)
 
     def compile_subnet(self):
@@ -172,20 +188,33 @@ class Compiler:
             i = 0
             for con in router.edges():
                 i += 1
-                node = con.getOtherDevice(router)
-                if node.device_type == "OpenFlowController":
-                    continue
-                node = node.getTarget(router)
+                other_device = con.getOtherDevice(router)
+                node = other_device.getTarget(router)
 
                 if options["autogen"]:
                     subnet = str(router.getInterfaceProperty("subnet", node)).rsplit(".", 1)[0]
                     router.setInterfaceProperty("ipv4", "%s.%d" % (subnet, 127 + router.getID()), node)
                     router.setInterfaceProperty("mac", "fe:fd:03:%02x:00:%02x" % (router.getID(), i), node)
 
+    def _check_wireshark_access(self, router):
+        if not os.access("/usr/bin/dumpcap", os.X_OK):
+            self.generate_generic_warning(
+                router,
+                "Wireshark may fail to capture traffic.\n"
+                "Are you sure you have enough permission to run dumpcap?\n"
+                "Check README.md for more information."
+            )
+
     def compile_router(self):
         """
         Compile all the Routers.
         """
+        if not self.compile_list["Router"]:
+            return
+        else:
+            first_router = self.compile_list["Router"][0]
+            self._check_wireshark_access(first_router)
+
         for router in self.compile_list["Router"]:
             self.output.write("<vr name=\"" + router.getName() + "\">\n")
 
@@ -346,6 +375,29 @@ class Compiler:
 
             self.output.write("</vm>\n\n")
 
+    def _check_netns_access(self, openflow_controller):
+        """
+        Check user's permission to access /var/run/netns. Return true if the
+        directory exists and current user has write permission to it, false
+        otherwise
+        """
+        if not os.path.exists("/var/run/netns"):
+            self.generate_generic_error(
+                openflow_controller,
+                "Directory /var/run/netns does not exist.\n\
+                Please create it with 'sudo mkdir -p /var/run/netns'\n\
+                and change ownership to your user with 'sudo chown -R $USER:$USER /var/run/netns'"
+            )
+            return False
+        else:
+            if not os.access("/var/run/netns", os.W_OK):
+                self.generate_generic_error(
+                    openflow_controller,
+                    "You don't have write permission to /var/run/netns."
+                )
+                return False
+        return True
+
     def compile_openflow_controller(self):
         """
         Compile all the OpenFlow controllers.
@@ -354,21 +406,8 @@ class Compiler:
             return
         else:
             first_ofc = self.compile_list["OpenFlowController"][0]
-            if not os.path.exists("/var/run/netns"):
-                self.generate_generic_error(
-                    first_ofc,
-                    "Directory /var/run/netns does not exist.\n\
-                    Please create it with 'sudo mkdir -p /var/run/netns'\n\
-                    and change ownership to your user with 'sudo chown -R $USER:$USER /var/run/netns'"
-                )
+            if not self._check_netns_access(first_ofc):
                 return
-            else:
-                if not os.access("/var/run/netns", os.W_OK):
-                    self.generate_generic_error(
-                        first_ofc,
-                        "You don't have write permission to /var/run/netns."
-                    )
-                    return
 
         for controller in self.compile_list["OpenFlowController"]:
             self.output.write("<vofc name=\"" + controller.getName() + "\">\n")
@@ -386,22 +425,6 @@ class Compiler:
                 self.generate_generic_warning(controller, "has no OVS connections.")
 
             self.output.write("</vofc>\n\n")
-
-    def generate_generic_error(self, device, message):
-        """
-        Generate a generic compile error
-        """
-        self.errors += 1
-        message = ' '.join(("Error:", device.getName(), message))
-        self.log.append(message)
-
-    def generate_generic_warning(self, device, message):
-        """
-        Generate a compile warning.
-        """
-        self.warnings += 1
-        message = ' '.join(("Warning:", device.getName(), message))
-        self.log.append(message)
 
     def pass_mask(self, node):
         """
