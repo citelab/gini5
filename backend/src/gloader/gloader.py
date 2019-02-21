@@ -870,7 +870,7 @@ def get_pid_from_file(file_name):
 def destroy_virtual_machines(machs, machine_dir, mode):
     for mach in machs:
         # Run the stop command
-        command = "%s/%s/stopit.sh" % (machine_dir, mach.name)
+        command = "%s/%s/.stopit.sh" % (machine_dir, mach.name)
         system(command)
     return True
 
