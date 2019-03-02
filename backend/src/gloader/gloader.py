@@ -492,6 +492,8 @@ def create_virtual_machines(gini, opts):
             # entry script for docker container
             entrypoint_script = open("entrypoint.sh", "w")
             entrypoint_script.write("#!/bin/ash\n\n")
+            if is_ovs:
+                entrypoint_script.write("sleep 5\n\n")
             for nwIf in mach.interfaces:
                 for route in nwIf.routes:
                     entry_command = "route add -%s %s " % (route.type, route.dest)
