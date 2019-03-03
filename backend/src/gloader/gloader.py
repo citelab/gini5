@@ -492,8 +492,6 @@ def create_virtual_machines(gini, opts):
             # entry script for docker container
             entrypoint_script = open("entrypoint.sh", "w")
             entrypoint_script.write("#!/bin/ash\n\n")
-            if is_ovs:
-                entrypoint_script.write("sleep 5\n\n")
             for nwIf in mach.interfaces:
                 for route in nwIf.routes:
                     entry_command = "route add -%s %s " % (route.type, route.dest)
@@ -534,6 +532,8 @@ def create_virtual_machines(gini, opts):
                 ovs_connect_command = "ovs-docker add-port %s eth1 %s --ipaddress=%s/24 --macaddress=%s &&\n" \
                                       % (switch_name, mach.name, ip, mac)
                 start_script.write(ovs_connect_command)
+                rerun_entrypoint_command = "docker exec %s /root/entrypoint.sh &&\n" % mach.name
+                start_script.write(rerun_entrypoint_command)
                 ovs_disconnect_command = "ovs-docker del-port %s eth1 %s\n" % (switch_name, mach.name)
                 stop_out.write(ovs_disconnect_command)
 
