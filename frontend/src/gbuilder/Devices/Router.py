@@ -72,8 +72,6 @@ class Router(Interfaceable):
         """
         Open wireshark with the running device.
         """
-        # TODO: Check user permissions to run wireshark as non-root
-
         program_name = "wireshark"
 
         command_to_execute = [program_name, "-k", "-i", interface]

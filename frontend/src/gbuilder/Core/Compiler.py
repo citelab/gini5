@@ -64,6 +64,7 @@ class Compiler:
             if options["autogen"]:
                 self.autogen_router()
                 self.autogen_mach()
+                self.autogen_cloud()
 
             self.routing_table_clear()
             if options["autorouting"]:
@@ -73,6 +74,7 @@ class Compiler:
 
             self.compile_router()
             self.compile_mach()
+            self.compile_cloud()
             self.compile_openflow_controller()
 
             self.output.write("</gloader>\n")
@@ -368,12 +370,20 @@ class Compiler:
 
                 self.output.write("\t<if>\n")
 
-                mapping = {"subnet":"network", "mac":"mac", "ipv4":"ip"}
+                mapping = {"subnet": "network", "mac": "mac", "ipv4": "ip"}
                 self.write_interface(mach, interface, mapping)
 
                 self.output.write("\t</if>\n")
 
             self.output.write("</vm>\n\n")
+
+    def autogen_cloud(self):
+        pass
+
+    def compile_cloud(self):
+        """Compile the cloud component in a topology"""
+        for cloud in self.compile_list["Cloud"]:
+            self.output.write('<cloud name="%s">\n' % cloud.getName())
 
     def _check_netns_access(self, openflow_controller):
         """
@@ -444,7 +454,7 @@ class Compiler:
 
         for con in node.edges():
             otherDevice = con.getOtherDevice(node)
-            if otherDevice.device_type in ["Router", "Mach", "REALM", "Mobile", "yRouter"]:
+            if otherDevice.device_type in ["Router", "Mach", "Cloud"]:
                 target = node
                 if node.device_type == "Subnet":
                     target = node.getTarget(otherDevice)
@@ -530,7 +540,7 @@ class Compiler:
 
         if otherDevice.device_type == "Router":
             myself.addAdjacentRouter(otherDevice, interface)
-        elif otherDevice.device_type == "Mach":
+        elif otherDevice.device_type in ["Mach", "Cloud"]:
             pass
         else:
             for c in otherDevice.edges():
@@ -566,7 +576,7 @@ class Compiler:
         """
         Format the routes in xml.
         """
-        if devType == "Mach":
+        if devType in ["Mach", "Cloud"]:
             header = "\t\t<route type=\"net\" "
             gateway = "\" gw=\""
             footer = "</route>\n"
