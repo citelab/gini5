@@ -141,7 +141,11 @@ Once installed, issue the `gbuilder` command to start the graphical interface.
 ## Post-installation
 
 - Check docker is properly installed by running `docker ps`. You will see a listing of docker containers that are running for that command. Because there are none running at this time, you will see an empty list with a header. 
-- Check the ssh passwordless login by running `ssh localhost`. You should be able to login without password with the proper key setup. If not, check the SSH key configuration. 
+- Check the ssh passwordless login by running `ssh localhost`. You should be able to login without password with the proper key setup. If not, check the SSH key configuration.
+- Optionally, if you want to enable mouse scrollwheel when using the devices' terminal in GBuilder, add this line to `~/.screenrc`:
+```
+termcapinfo xterm* ti@:te@
+```
 
 # Notes
 
