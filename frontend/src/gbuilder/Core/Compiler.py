@@ -4,6 +4,7 @@ from Core.Item import nodeTypes
 from Core.Device import Device
 from Core.globals import options, environ, mainWidgets
 from PyQt4 import QtCore
+from Core.utils import ip_utils
 import os
 import re
 import traceback
@@ -22,6 +23,10 @@ class Compiler:
         self.errors = 0
 
         self.device_list = device_list
+
+        self.base_network_generator = ip_utils.BaseGiniIPv4Network(
+            unicode(options["base_network"])
+        )
         self.filename = filename.replace(".gsav", ".xml")
         self.output = open(self.filename, "w")
         self.log = mainWidgets["log"]
@@ -71,6 +76,7 @@ class Compiler:
                 self.routing_table_router()
                 self.routing_table_entry()
                 self.routing_table_mach()
+                self.routing_table_cloud()
 
             self.compile_router()
             self.compile_mach()
@@ -91,17 +97,6 @@ class Compiler:
                 return ""
 
             return self.filename
-
-    def autogen_subnet(self):
-        """
-        Auto-generate properties for Subnets.
-        """
-        # TODO: Fix subnet range issue, it's probably coming from this method
-        for subnet in self.compile_list["Subnet"]:
-            subnet.setProperty("mask", "255.255.255.0")
-            if subnet.getProperty("subnet"):
-                continue
-            subnet.setProperty("subnet", "192.168.%d.0" % subnet.getID())
 
     def write_property(self, prop, value):
         """
@@ -155,6 +150,15 @@ class Compiler:
         self.warnings += 1
         message = '\n' + ' '.join(("Warning:", device.getName(), message)) + '\n'
         self.log.append(message)
+
+    def autogen_subnet(self):
+        """
+        Auto-generate properties for Subnets.
+        """
+        for subnet in self.compile_list["Subnet"]:
+            network = self.base_network_generator.get_next_available_subnet()
+            network = ip_utils.GiniIPv4Subnet(network)
+            subnet.setup_subnet(network)
 
     def compile_subnet(self):
         """
@@ -242,7 +246,7 @@ class Compiler:
         """
         Write an interface to file according to mapping.
         """
-        if interface.has_key(QtCore.QString("target")):
+        if QtCore.QString("target") in interface:
             self.write_property("target", interface[QtCore.QString("target")].getName())
 
         for prop, eq in mapping.iteritems():
@@ -347,13 +351,12 @@ class Compiler:
         """
         for mach in self.compile_list["Mach"]:
             for interface in mach.getInterfaces():
-                if options["autogen"]:
-                    try:
-                        subnet = str(mach.getInterfaceProperty("subnet")).rsplit(".", 1)[0]
-                    except:
-                        continue
-                    mach.setInterfaceProperty("ipv4", "%s.%d" % (subnet, mach.getID()+1))
-                    mach.setInterfaceProperty("mac", "fe:fd:02:00:00:%02x" % mach.getID())
+                try:
+                    subnet = str(mach.getInterfaceProperty("subnet")).rsplit(".", 1)[0]
+                except:
+                    continue
+                mach.setInterfaceProperty("ipv4", "%s.%d" % (subnet, mach.getID()+1))
+                mach.setInterfaceProperty("mac", "fe:fd:02:00:00:%02x" % mach.getID())
 
     def compile_mach(self):
         """
@@ -384,6 +387,20 @@ class Compiler:
         """Compile the cloud component in a topology"""
         for cloud in self.compile_list["Cloud"]:
             self.output.write('<cloud name="%s">\n' % cloud.getName())
+
+            interfaces = cloud.getInterfaces()
+            if len(interfaces) < 1:
+                self.generate_connection_warning(mach, 1)
+
+            for interface in interfaces:
+                self.output.write("\t<if>\n")
+
+                mapping = {"subnet": "network"}
+                self.write_interface(cloud, interface, mapping)
+
+                self.output.write("\t</if>\n")
+
+            self.output.write('</cloud>\n\n')
 
     def _check_netns_access(self, openflow_controller):
         """
@@ -478,6 +495,10 @@ class Compiler:
             interfaceable.emptyAdjacentLists()
             interfaceable.emptyRouteTable()
 
+        for interfaceable in self.compile_list["Cloud"]:
+            interfaceable.emptyAdjacentLists()
+            interfaceable.emptyRouteTable()
+
     def routing_table_interfaceable(self, devType):
         """
         Compute route tables of devices of type devType.
@@ -493,11 +514,26 @@ class Compiler:
         Compute route tables of Machs.
         """
         self.routing_table_interfaceable("Mach")
-
+        # TODO: Since we're just adding a summarized route to Mach devices,
+        # there is no need to compute all the routes. Just finding the default
+        # gateway is sufficient, the same goes for Cloud instance
         for mach in self.compile_list["Mach"]:
             for subnet in self.compile_list["Subnet"]:
                 if not mach.hasSubnet(subnet.getProperty("subnet")):
                     mach.addRoutingEntry(subnet.getProperty("subnet"))
+
+    def routing_table_cloud(self):
+        """
+        Compute route tables for Cloud load balancer. To be updated
+        """
+
+        # This method is simply copy pasting what we have for Mach devices right now
+        self.routing_table_interfaceable("Cloud")
+
+        for cloud in self.compile_list["Cloud"]:
+            for subnet in self.compile_list["Subnet"]:
+                if not cloud.hasSubnet(subnet.getProperty("subnet")):
+                    cloud.addRoutingEntry(subnet.getProperty("subnet"))
 
     def routing_table_router(self):
         """
@@ -572,14 +608,21 @@ class Compiler:
 
                 device.addAdjacentSubnet(otherDevice.getProperty("subnet"))
 
-    def formatRoutes(self, routes, devType):
+    def formatRoutes(self, routes, device_type):
         """
         Format the routes in xml.
         """
-        if devType in ["Mach", "Cloud"]:
-            header = "\t\t<route type=\"net\" "
-            gateway = "\" gw=\""
-            footer = "</route>\n"
+        if device_type in ["Mach", "Cloud"]:
+            # TODO
+            # A quick fix to generalize the routes in Gini. This code should be updated later
+            res = ""
+            address, mask = str(self.base_network_generator).split("/")
+            res += '\t\t<route type="net" '
+            res += 'netmask="%s" ' % mask
+            res += 'gw="%s">' % routes[0].get(QtCore.QString("gw"))
+            res += address
+            res += '</route>\n'
+            return res
         else:
             header = "\t\t<rtentry "
             gateway = "\" nexthop=\""
@@ -611,7 +654,9 @@ class Compiler:
         if prop == "mac":
             return self.is_valid_mac_address(value)
         elif prop == "ipv4":
-            return self.is_valid_ip_subnet(value, interface[QtCore.QString("subnet")], interface[QtCore.QString("mask")])
+            return self.is_valid_ip_subnet(value,
+                                           interface[QtCore.QString("subnet")],
+                                           interface[QtCore.QString("mask")])
         elif prop == "mask":
             return self.is_valid_mask(value)
         else:
@@ -621,90 +666,32 @@ class Compiler:
         """
         Validate an ip-like address (includes mask).
         """
-        ip = str(ip)
-        if re.match(r'^\d+\.\d+\.\d+\.\d+$', ip) is None:
-            return False
-
-        p = re.compile('\d+')
-        res = p.findall(ip)
-
-        # Each chunk should be between 0 and 255 inc
-        for chunk in res:
-            if not int(chunk) in range(256):
-                return False
-        return True
+        return ip_utils.is_valid_ip(ip)
 
     def is_valid_mask(self, mask):
         """
         Validate a subnet mask.
         """
-        mask = str(mask)
-        if mask == "255.255.255.0":
-            return True
-        else:
-            self.warnings += 1
-            message = "Warning: Using a mask other than 255.255.255.0 is not recommended."
-            self.log.append(message)
-
         if not self.is_valid_ip_address(mask):
             return False
 
         # Make sure the chunks match the possible values
-        chunks = mask.split(".")
-        for chunk in chunks:
-            if not int(chunk) in (0, 128, 192, 224, 240, 248, 252, 255):
-                return False
+        octets = [int(octet) for octet in mask.split(".")]
 
-        # The last chunk of a mask cannot be 255
-        if int(chunks[-1]) == 255:
+        # The last octet cannot be 255
+        if octets[-1] == 255:
             return False
+        for octet in octets:
+            if octet not in [0, 128, 192, 224, 240, 248, 252, 254, 255]:
+                return False
 
         return True
 
     def is_valid_ip_subnet(self, ip, subnet, mask):
         """
-        Validate an ip address based on the subnet and mask.
+        Validate an ipv4 address of a host based on the subnet and mask.
         """
-        ip = str(ip)
-        subnet = str(subnet)
-        mask = str(mask)
-
-        if not self.is_valid_ip_address(ip):
-            return False
-        if not self.is_valid_mask(mask):
-            return False
-
-        p=re.compile('\d+')
-        ip_chunk=p.findall(ip)
-        subnet_chunk=p.findall(subnet)
-        mask_chunk=p.findall(mask)
-
-        # Make sure the ip addresses are not reserved
-        if ip_chunk[3] == "0" or ip_chunk[3] == "255":
-            return False
-
-        # Check each chunk against subnet and mask
-        for i in range(len(subnet_chunk)):
-            if mask_chunk[i] == "255":
-                if ip_chunk[i] != subnet_chunk[i]:
-                    return False
-            elif mask_chunk[i] == "0":
-                if ip_chunk[i] == "0":
-                    return False
-            else:
-                mask_value = int(mask_chunk[i])
-                ip_value = int(ip_chunk[i])
-                subnet_value = int(subnet_chunk[i])
-
-                if i == 3:
-                    ip_range = 254 - mask_value
-                    if not ip_value - 1 in range(ip_range):
-                        return False
-                else:
-                    ip_range = 256 - mask_value
-                    if ip_value not in range(ip_range):
-                        return False
-        return True
+        return ip_utils.is_valid_host_in_subnet(ip, subnet, mask)
 
     def is_valid_mac_address(self, mac):
         """

@@ -9,8 +9,15 @@ class Subnet(Device):
         super(Subnet, self).__init__()
 
         self.num_interface = 0
+        self.ip_subnet = None
         self.setProperty("subnet", "")
         self.setProperty("mask", "")
+
+    def setup_subnet(self, subnet):
+        self.ip_subnet = subnet
+        net, mask = str(subnet).split("/")
+        self.setProperty("subnet", net)
+        self.setProperty("mask", mask)
 
     def addEdge(self, edge):
         Device.addEdge(self, edge)

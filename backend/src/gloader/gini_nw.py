@@ -6,20 +6,18 @@ from gini_components import *
 
 
 class GINI_NW:
-    switches = []
-    vm = []
-    vrm = []
-    vmb = []
-    vr = []
-    vwr = []
-    vofc = []
-
     def __init__(self, docDOM):
         """Initialize the GINI_NW class"""
+        self.switches = []
+        self.vm = []
+        self.vr = []
+        self.vofc = []
+        self.clouds = []
         self.getSwitches(docDOM.getElementsByTagName("vs"))
         self.getVMs(docDOM.getElementsByTagName('vm'))
         self.getVRs(docDOM.getElementsByTagName("vr"))
         self.getVOFCs(docDOM.getElementsByTagName("vofc"))
+        self.get_clouds(docDOM.getElementsByTagName("cloud"))
 
     def getSwitches(self, elements):
         """get the switch configuration"""
@@ -66,6 +64,32 @@ class GINI_NW:
             self.vm.append(newVM)
         return True
 
+    def get_clouds(self, elements):
+        """Get Cloud instance configurations"""
+        for cloud in elements:
+            new_cloud = Cloud(cloud.getAttribute("name"))
+            for para in cloud.childNodes:
+                if para.nodeType == para.ELEMENT_NODE:
+                    if para.tagName.lower() == "if":
+                        new_interface = self.get_cloud_interface(para)
+                        new_cloud.add_interface(new_interface)
+            self.clouds.append(new_cloud)
+        return True
+
+    def get_cloud_interface(self, element):
+        new_interface = CloudInterface()
+        for para in element.childNodes:
+            if para.nodeType == para.ELEMENT_NODE:
+                tag_name = para.tagName.lower()
+                if tag_name == "target":
+                    new_interface.target = self.getTextPart(para)
+                elif tag_name == "network":
+                    new_interface.network = self.getTextPart(para)
+                elif tag_name == "route":
+                    new_route = self.getVMRoute(para)
+                    new_interface.add_route(new_route)
+        return new_interface
+
     def getVOFCs(self, elements):
         """get OpenFlow controller configurations"""
         for vofc in elements:
@@ -98,7 +122,8 @@ class GINI_NW:
             self.vr.append(newVR)
         return True
 
-    def getTextPart(self, elem):
+    @staticmethod
+    def getTextPart(elem):
         """Extract the text within the element"""
         for textPart in elem.childNodes:
             if textPart.nodeType == textPart.TEXT_NODE:
@@ -188,120 +213,6 @@ class GINI_NW:
                     newRoute = self.getVRRoute(para)
                     myIF.addRoute(newRoute)
         return myIF
-
-    # def getVWRIF(self, elem, index):
-    #     "get virtual wireless router network interface"
-    #     ifName =  "eth%d" % index
-    #     myWIF = VWRInterface(ifName)
-    #     for para in elem.childNodes:
-    #         if (para.nodeType == para.ELEMENT_NODE):
-    #             if (para.tagName.lower() == "nic"):
-    #                 myWIF.nic = self.getTextPart(para)
-    #             if (para.tagName.lower() == "ip"):
-    #                 myWIF.ip = self.getTextPart(para)
-    #             if (para.tagName.lower() == "network"):
-    #                 myWIF.network = self.getTextPart(para)
-    #             if (para.tagName.lower() == "rtentry"):
-    #                 newRoute = self.getVRRoute(para)
-    #                 myWIF.addRoute(newRoute)
-    #             if (para.tagName.lower() == "wireless_card"):
-    #                 newWcard = self.getWcard(para)
-    #                 myWIF.wireless_card = newWcard
-    #             if (para.tagName.lower() == "energy"):
-    #                 newEnergy = self.getEnergy(para)
-    #                 myWIF.energy = newEnergy
-    #             if (para.tagName.lower() == "mac_layer"):
-    #                 newMlayer = self.getMlayer(para)
-    #                 myWIF.mac_layer = newMlayer
-    #             if (para.tagName.lower() == "antenna"):
-    #                 newAntenna = self.getAntenna(para)
-    #                 myWIF.antenna = newAntenna
-    #             if (para.tagName.lower() == "mobility"):
-    #                 newMobility = self.getMobility(para)
-    #                 myWIF.mobility = newMobility
-    #     return myWIF
-    #
-    # def getWcard(self, elem):
-    #     newWcard = WirelessCard()
-    #     for para in elem.childNodes:
-    #         if (para.nodeType == para.ELEMENT_NODE):
-    #             if (para.tagName.lower() == "w_type"):
-    #                 newWcard.wType = self.getTextPart(para)
-    #             if (para.tagName.lower() == "freq"):
-    #                 newWcard.freq = self.getTextPart(para)
-    #             if (para.tagName.lower() == "bandwidth"):
-    #                 newWcard.bandwidth = self.getTextPart(para)
-    #             if (para.tagName.lower() == "pt"):
-    #                 newWcard.pt = self.getTextPart(para)
-    #             if (para.tagName.lower() == "pt_c"):
-    #                 newWcard.ptC = self.getTextPart(para)
-    #             if (para.tagName.lower() == "pr_c"):
-    #                 newWcard.prC = self.getTextPart(para)
-    #             if (para.tagName.lower() == "p_idle"):
-    #                 newWcard.pIdle = self.getTextPart(para)
-    #             if (para.tagName.lower() == "p_sleep"):
-    #                 newWcard.pSleep = self.getTextPart(para)
-    #             if (para.tagName.lower() == "p_off"):
-    #                 newWcard.pOff = self.getTextPart(para)
-    #             if (para.tagName.lower() == "rx"):
-    #                 newWcard.rx = self.getTextPart(para)
-    #             if (para.tagName.lower() == "cs"):
-    #                 newWcard.cs = self.getTextPart(para)
-    #             if (para.tagName.lower() == "cp"):
-    #                 newWcard.cp = self.getTextPart(para)
-    #             if (para.tagName.lower() == "module"):
-    #                 newWcard.module = self.getTextPart(para)
-    #     return newWcard
-
-    # def getEnergy(self, elem):
-    #     newEnergy = Energy()
-    #     for para in elem.childNodes:
-    #         if (para.nodeType == para.ELEMENT_NODE):
-    #             if (para.tagName.lower() == "power"):
-    #                 newEnergy.power = self.getTextPart(para)
-    #             if (para.tagName.lower() == "psm"):
-    #                 newEnergy.psm = self.getTextPart(para)
-    #             if (para.tagName.lower() == "energy_amount"):
-    #                 newEnergy.energyAmount = self.getTextPart(para)
-    #     return newEnergy
-
-    # def getMlayer(self, elem):
-    #     newMlayer = MacLayer()
-    #     for para in elem.childNodes:
-    #         if (para.nodeType == para.ELEMENT_NODE):
-    #             if (para.tagName.lower() == "mac_type"):
-    #                 newMlayer.macType = self.getTextPart(para)
-    #             if (para.tagName.lower() == "trans"):
-    #                 newMlayer.trans = self.getTextPart(para)
-    #     return newMlayer
-    #
-    # def getAntenna(self, elem):
-    #     newAntenna = Antenna()
-    #     for para in elem.childNodes:
-    #         if (para.nodeType == para.ELEMENT_NODE):
-    #             if (para.tagName.lower() == "a_type"):
-    #                 newAntenna.aType = self.getTextPart(para)
-    #             if (para.tagName.lower() == "ant_h"):
-    #                 newAntenna.ant_h = self.getTextPart(para)
-    #             if (para.tagName.lower() == "ant_g"):
-    #                 newAntenna.ant_g = self.getTextPart(para)
-    #             if (para.tagName.lower() == "ant_l"):
-    #                 newAntenna.ant_l = self.getTextPart(para)
-    #             if (para.tagName.lower() == "jam"):
-    #                 newAntenna.jam = self.getTextPart(para)
-    #     return newAntenna
-    #
-    # def getMobility(self, elem):
-    #     newMobility = Mobility()
-    #     for para in elem.childNodes:
-    #         if (para.nodeType == para.ELEMENT_NODE):
-    #             if (para.tagName.lower() == "m_type"):
-    #                 newMobility.mType = self.getTextPart(para)
-    #             if (para.tagName.lower() == "ran_max"):
-    #                 newMobility.ranMax = self.getTextPart(para)
-    #             if (para.tagName.lower() == "ran_min"):
-    #                 newMobility.ranMin = self.getTextPart(para)
-    #     return newMobility
 
     def getVRRoute(self, elem):
         """Extract VR route entries"""
