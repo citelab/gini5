@@ -2,7 +2,9 @@
 # -*- coding: utf-8 -*-
 
 import docker
-import os, sys
+import os
+import sys
+import time
 from cmd import Cmd
 from inspect import cleandoc
 import argparse
@@ -42,6 +44,7 @@ class GCloudShell(Cmd, object):
         ipam_config = docker.types.IPAMConfig(
             pool_configs=[ipam_pool]
         )
+
         self.network = self.client.networks.create(
             "Gini_cloud_network",
             driver="overlay",
@@ -82,11 +85,6 @@ class GCloudShell(Cmd, object):
             return result
 
     @staticmethod
-    def _parse_bool(token):
-        """TODO"""
-        pass
-
-    @staticmethod
     def _parse_args(argv):
         """Parse all arguments from a command and return a dictionary of arguments-values.
         A valid argument has the form: --arg=value
@@ -117,8 +115,7 @@ class GCloudShell(Cmd, object):
         image = argv[0]
         kwargs = self._parse_args(argv[1:])
         try:
-            kwargs["name"] = kwargs.get("name") or \
-                "Gini_service"
+            kwargs["name"] = kwargs.get("name", "Gini_service")
             self.client.services.create(image, **kwargs)
         except docker.errors.APIError:
             self.stdout.write("Error: Cannot create a new service\n")

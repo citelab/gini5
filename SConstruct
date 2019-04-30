@@ -219,9 +219,6 @@ def recursive_install(target, source, env):
 
 
 conf = Configure(env)
-if not conf.CheckLib('slack'):
-    print 'Did not find libslack.a or slack.lib, exiting!'
-    Exit(1)
 if not conf.CheckLib('readline'):
     print 'Did not find libreadline.so or readline.lib, exiting!'
     Exit(1)
