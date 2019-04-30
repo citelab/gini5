@@ -237,5 +237,25 @@ class VRRoute:
 
 
 class Cloud:
+    subnet = ""
+    gini_gateway = ""
+
+    def __init__(self, name):
+        self.name = name
+        self.interfaces = []
+
+    def add_interface(self, interface):
+        self.interfaces.append([interface])
+
+    def __str__(self):
+        return "Gini Cloud instance: {Subnet: %s, Gateway: %s}" % (self.subnet, self.gini_gateway)
+
+
+class CloudInterface:
     def __init__(self):
-        pass
+        self.target = ""
+        self.network = ""
+        self.routes = []
+
+    def add_route(self, route):
+        self.routes.append(route)

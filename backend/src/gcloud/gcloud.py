@@ -30,7 +30,7 @@ class GCloudShell(Cmd, object):
         - docker service rm
         - docker service scale
     """
-    def __init__(self, subnet="", *args, **kwargs):
+    def __init__(self, subnet=None, gateway=None, *args, **kwargs):
         super(GCloudShell, self).__init__(*args, **kwargs)
         self.client = docker.from_env()
         # leave the current swarm, if there is any, and initialize a new swarm
@@ -39,7 +39,8 @@ class GCloudShell(Cmd, object):
         self.pp = GPrettyPrinter(indent=2)
 
         ipam_pool = docker.types.IPAMPool(
-            subnet=subnet
+            subnet=subnet,
+            gateway=gateway
         )
         ipam_config = docker.types.IPAMConfig(
             pool_configs=[ipam_pool]
@@ -49,7 +50,8 @@ class GCloudShell(Cmd, object):
             "Gini_cloud_network",
             driver="overlay",
             scope="swarm",
-            ipam=ipam_config
+            ipam=ipam_config,
+            attachable=True
         )
 
     def swarm_init(self):
@@ -300,10 +302,13 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Gini Cloud program.")
     parser.add_argument("-s", "--subnet", type=str, metavar="", required=True,
                         help="Specify a subnet range for the cloud")
-    args = parser.parse_args()
+    parser.add_argument("-g", "--gateway", type=str, metavar="", required=False,
+                        help="Specify a default gateway for the cloud network")
+    arguments = parser.parse_args()
 
     try:
-        shell = GCloudShell(subnet=args.subnet)
+        shell = GCloudShell(subnet=arguments.subnet,
+                            gateway=arguments.gateway)
         shell.cmdloop()
     except Exception as e:
         sys.stderr.write("Error occurred.\n")

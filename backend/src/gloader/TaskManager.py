@@ -2,7 +2,7 @@ from PyQt4 import QtCore
 import os
 import time
 
-devFilter = ["Mach_", "Router_", "OpenFlowController_", "OVSwitch_"]
+devFilter = ["Mach_", "Router_", "OpenFlowController_", "OVSwitch_", "Cloud_"]
 
 
 class TaskManager(QtCore.QThread):

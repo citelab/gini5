@@ -309,29 +309,6 @@ env.Alias('install','install-grouter')
 
 
 ###########
-# uswitch #
-###########
-
-uswitch_include = backend_dir + '/include/uswitch'
-uswitch_dir = backend_dir + '/src/uswitch'
-uswitch_build_dir = src_dir + '/build/release/uswitch'
-
-VariantDir(uswitch_build_dir, uswitch_dir, duplicate=0)
-
-uswitch_env = Environment(CPPPATH=uswitch_include)
-uswitch = uswitch_env.Program(uswitch_build_dir + "/uswitch", Glob(uswitch_build_dir + "/*.c"))
-
-env.Install(lib_dir + "/uswitch/", uswitch)
-post_chmod(lib_dir + "/uswitch/uswitch")
-env.PythonEnvFile(bin_dir + "/uswitch", lib_dir + "/uswitch/uswitch")
-post_chmod(bin_dir + "/uswitch")
-
-env.Alias('install-uswitch', bin_dir + '/uswitch')
-env.Clean(lib_dir + "/uswitch", lib_dir + "/uswitch")
-env.Alias('install','install-uswitch')
-
-
-###########
 # Gloader #
 ###########
 
@@ -433,59 +410,6 @@ env.Alias('install','install-filesystem')
 """
 
 
-#########
-# Vgini #
-#########
-
-
-vgini_dir = backend_dir + "/src/vgini"
-vgini_build_dir = src_dir + "/build/release/vgini"
-
-VariantDir(vgini_build_dir+"/local",vgini_dir+"/local", duplicate=0)
-VariantDir(vgini_build_dir+"/remote",vgini_dir+"/remote", duplicate=0)
-
-vproxy_env = Environment(CPPPATH= vgini_dir + "/local")
-vproxy_env.Append(CFLAGS='-DHAVE_PTHREAD_RWLOCK=1')
-vproxy_env.Append(CFLAGS='-DHAVE_GETOPT_LONG')
-
-
-# some of the following library dependencies can be removed?
-# may be the termcap is not needed anymore..?
-# TODO: libslack should be removed.. required routines should be custom compiled
-vproxy_libs = Split ("""readline
-                        slack
-                        pthread""")
-
-vproxy = vproxy_env.Program(vgini_build_dir + "/local/vtproxy",Glob(vgini_build_dir + "/local/*.c"),LIBS=vproxy_libs)
-
-env.Install(lib_dir + "/vgini/", vproxy)
-post_chmod(lib_dir + "/vgini/vtproxy")
-env.PythonEnvFile(bin_dir + "/vtproxy", lib_dir + "/vgini/vtproxy")
-post_chmod(bin_dir + "/vtproxy")
-
-vtap_env = Environment(CPPPATH= vgini_dir + "/remote")
-vtap_env.Append(CFLAGS='-DHAVE_PTHREAD_RWLOCK=1')
-vtap_env.Append(CFLAGS='-DHAVE_GETOPT_LONG')
-
-# some of the following library dependencies can be removed?
-# may be the termcap is not needed anymore..?
-# TODO: libslack should be removed.. required routines should be custom compiled
-vtap_libs = Split ("""readline
-                      slack
-                      pthread""")
-
-vtap = vtap_env.Program(vgini_build_dir + "/remote/vtap",Glob(vgini_build_dir + "/remote/*.c"),LIBS=vproxy_libs)
-
-env.Install(lib_dir + "/vgini/", vtap)
-post_chmod(lib_dir + "/vgini/vtap")
-env.PythonEnvFile(bin_dir + "/vtap", lib_dir + "/vgini/vtap")
-post_chmod(bin_dir + "/vtap")
-
-env.Alias('install-vgini', bin_dir + '/vtap')
-env.Alias('install-vgini', bin_dir + '/vtproxy')
-# env.Alias('install','install-vgini')
-
-
 ############
 # Frontend #
 ############
@@ -513,7 +437,8 @@ gbuilder_folders = Split("""
     Devices
     Network
     UI
-    Wireless""")
+    Wireless
+    Core/utils""")
 
 gbuilder_images = gbuilder_dir + "/images/*"
 

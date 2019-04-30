@@ -3,6 +3,11 @@
 import sys, os, random
 from PyQt4 import QtCore, QtGui
 from Core.globals import *
+from Core.utils import ip_utils
+
+
+class SaveConfigurationError(Exception):
+    pass
 
 
 class LineEdit(QtGui.QLineEdit):
@@ -465,11 +470,19 @@ class RuntimePage(QtGui.QWidget):
         compilationGroup = QtGui.QGroupBox(self.tr("Compilation / Runtime"))
         self.createCompilationCheckboxes()
 
+        base_network_label = QtGui.QLabel(self.tr("Base network:"))
+        self.base_network_input = LineEdit()
+
+        base_network_layout = QtGui.QHBoxLayout()
+        base_network_layout.addWidget(base_network_label)
+        base_network_layout.addWidget(self.base_network_input)
+
         compilationLayout = QtGui.QVBoxLayout()
         compilationLayout.addWidget(self.autoroutingCheckBox)
         compilationLayout.addWidget(self.autogenCheckBox)
         compilationLayout.addWidget(self.autocompileCheckBox)
         compilationLayout.addWidget(self.glowingCheckBox)
+        compilationLayout.addLayout(base_network_layout)
         compilationGroup.setLayout(compilationLayout)
 
         mainLayout = QtGui.QVBoxLayout()
@@ -497,6 +510,7 @@ class RuntimePage(QtGui.QWidget):
         self.autogenCheckBox.setChecked(options["autogen"])
         self.autocompileCheckBox.setChecked(options["autocompile"])
         self.glowingCheckBox.setChecked(options["glowingLights"])
+        self.base_network_input.setText(options["base_network"])
 
     def saveOptions(self):
         """
@@ -506,6 +520,12 @@ class RuntimePage(QtGui.QWidget):
         options["autogen"] = self.autogenCheckBox.isChecked()
         options["autocompile"] = self.autocompileCheckBox.isChecked()
         options["glowingLights"] = self.glowingCheckBox.isChecked()
+        if ip_utils.is_valid_base_network(self.base_network_input.text()):
+            options["base_network"] = self.base_network_input.text()
+        else:
+            raise SaveConfigurationError(
+                "Invalid network range!\n"
+                "Classful network with prefix length equals 8 or 16 expected")
 
 
 class ConfigDialog(QtGui.QDialog):
@@ -534,20 +554,23 @@ class ConfigDialog(QtGui.QDialog):
         self.pagesWidget.addWidget(self.runtimePage)
         self.pagesWidget.addWidget(self.serverPage)
 
-        closeButton = QtGui.QPushButton(self.tr("Close"))
-
         self.createIcons()
         self.contentsWidget.setCurrentRow(0)
 
-        self.connect(closeButton, QtCore.SIGNAL("clicked()"), self, QtCore.SLOT("close()"))
+        apply_button = QtGui.QPushButton(self.tr("Apply"))
+        close_button = QtGui.QPushButton(self.tr("Close"))
+
+        self.connect(apply_button, QtCore.SIGNAL("clicked()"), self.apply_button_handler)
+        self.connect(close_button, QtCore.SIGNAL("clicked()"), self, QtCore.SLOT("close()"))
 
         horizontalLayout = QtGui.QHBoxLayout()
         horizontalLayout.addWidget(self.contentsWidget)
         horizontalLayout.addWidget(self.pagesWidget, 1)
 
         buttonsLayout = QtGui.QHBoxLayout()
-        buttonsLayout.addStretch(1)
-        buttonsLayout.addWidget(closeButton)
+        buttonsLayout.addStretch(2)
+        buttonsLayout.addWidget(apply_button)
+        buttonsLayout.addWidget(close_button)
 
         mainLayout = QtGui.QVBoxLayout()
         mainLayout.addLayout(horizontalLayout)
@@ -562,6 +585,41 @@ class ConfigDialog(QtGui.QDialog):
 
         if not self.wizard and options["autoconnect"]:
             mainWidgets["main"].startBackend()
+
+    def show_update_error(self, error_message):
+        QtGui.QMessageBox.critical(
+            self,
+            "Error!",
+            error_message,
+            QtGui.QMessageBox.Ok
+        )
+
+    def apply_button_handler(self):
+        try:
+            self.generalPage.saveOptions()
+            self.runtimePage.saveOptions()
+            self.serverPage.saveOptions()
+        except SaveConfigurationError as e:
+            self.show_update_error(str(e))
+            return False
+
+        try:
+            outfile = open(environ["config"]+"settings", "w")
+            project = mainWidgets["main"].getProject()
+            if project:
+                project_file = open(project, "w")
+            for option, value in options.iteritems():
+                if option in ["username", "server", "session"] and project:
+                    project_file.write(option + "=" + str(value) + "\n")
+                outfile.write(option + "=" + str(value) + "\n")
+            if project:
+                project_file.close()
+            outfile.close()
+        except:
+            mainWidgets["log"].append("Cannot apply settings!")
+            return False
+
+        return True
 
     def loadOptions(self):
         """
@@ -634,28 +692,14 @@ class ConfigDialog(QtGui.QDialog):
         self.connect(self.contentsWidget,
                      QtCore.SIGNAL("currentItemChanged(QListWidgetItem *, QListWidgetItem *)"), self.changePage)
 
-    def hideEvent(self, event):
+    def closeEvent(self, event):
         """
         Handle closing the config window.
         """
-        self.generalPage.saveOptions()
-        self.runtimePage.saveOptions()
-        self.serverPage.saveOptions()
-
-        try:
-            outfile = open(environ["config"]+"settings", "w")
-            project = mainWidgets["main"].getProject()
-            if project:
-                project_file = open(project, "w")
-            for option, value in options.iteritems():
-                if (option == "username" or option == "server" or option == "session") and project:
-                    project_file.write(option + "=" + str(value) + "\n")
-                outfile.write(option + "=" + str(value) + "\n")
-            if project:
-                project_file.close()
-            outfile.close()
-        except:
-            mainWidgets["log"].append("Failed to save settings!")
+        if not self.apply_button_handler():
+            event.ignore()
+            return
+        return super(ConfigDialog, self).closeEvent(event)
 
     def updateSettings(self):
         """

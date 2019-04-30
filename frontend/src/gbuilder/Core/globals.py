@@ -44,7 +44,8 @@ options = {
     "restore": True,
     "moveAlert": True,
     "gnome": False,
-    "menumods": False
+    "menumods": False,
+    "base_network": "192.168.0.0/16"
 }
 
 mainWidgets = {
