@@ -1,0 +1,3 @@
+[submodule "backend/src/gcloud"]
+	path = backend/src/gcloud
+	url = git@github.com:trungams/simple-cloud.git
