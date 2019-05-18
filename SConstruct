@@ -341,7 +341,7 @@ env.Alias('install','install-gloader')
 
 
 #########################
-# GVirtualSwitchShell #
+#  GVirtualSwitchShell  #
 #########################
 
 
@@ -363,51 +363,27 @@ env.Alias("install-gvirtual-switch", bin_dir + "/gvirtual-switch")
 env.Alias("install", "install-gvirtual-switch")
 
 
-##########
-# Kernel #
-##########
+#######################
+#       GCloud        #
+#######################
 
 
-"""
-kernel_dir = backend_dir + "/kernel"
-kernel = kernel_dir + "/linux-2.6.26.1"
-alt_kernel = kernel_dir + "/linux-2.6.25.10"
+gcloud_dir = backend_dir + "/src/gcloud"
+gcloud_lib_dir = lib_dir
 
-# Copy kernel and glinux loader into bin and set executable
-env.Install(lib_dir + '/kernel/',kernel_dir + '/glinux')
-post_chmod(lib_dir + '/kernel/glinux')
-env.PythonEnvFile(bin_dir + '/glinux',lib_dir + '/kernel/glinux')
-post_chmod(bin_dir + '/glinux')
+result = env.Install(gcloud_lib_dir + "/gcloud", Glob(gcloud_dir + "/*.py"))
 
-env.Install(lib_dir + '/kernel/', kernel_dir + '/linux-2.6.26.1')
-post_chmod(lib_dir + '/kernel/linux-2.6.26.1')
-env.PythonEnvFile(bin_dir + '/linux-2.6.26.1',lib_dir + '/kernel/linux-2.6.26.1')
-post_chmod(bin_dir + '/linux-2.6.26.1')
+for file in Glob(gcloud_lib_dir + "/gcloud/*.py"):
+    compile_python(env, file.abspath, "install-gcloud")
+env.Clean(gcloud_lib_dir + "/gcloud", gcloud_lib_dir + "/gcloud")
+post_chmod(gcloud_lib_dir + "/gcloud/main.py")
 
-env.Alias('install-kernel', bin_dir + '/glinux')
-env.Alias('install-kernel', bin_dir + '/linux-2.6.26.1')
-env.Clean(lib_dir + '/kernel/',lib_dir + '/kernel/')
-env.Alias('install','install-kernel')
-"""
+env.PythonEnvFile(bin_dir + "/gcloud", gcloud_lib_dir + "/gcloud/main.py")
+post_chmod(bin_dir + "/gcloud")
 
-
-##############
-# FileSystem #
-##############
-
-"""
-filesystem_dir = backend_dir + "/fs"
-
-filesystem_src = filesystem_dir + "/GiniLinux-fs-1.0q.tar.gz"
-
-# Unzip the gini Mach fs into the root gini directory
-# TODO this is really bad
-env.Command(sharedir + '/filesystem/root_fs_beta2', filesystem_src, "tar -xzf " + filesystem_dir + "/GiniLinux-fs-1.0q.tar.gz --atime-preserve; cp -p GiniLinux-fs-1.0q $TARGET;rm GiniLinux-fs-1.0q")
-
-env.Alias('install-filesystem',sharedir + '/filesystem/root_fs_beta2')
-env.Clean(sharedir + '/filesystem',sharedir + '/filesystem')
-env.Alias('install','install-filesystem')
-"""
+env.Alias("install-gcloud", gcloud_lib_dir + "/gcloud")
+env.Alias("install-gcloud", bin_dir + "/gcloud")
+env.Alias("install", "install-gcloud")
 
 
 ############
