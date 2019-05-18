@@ -25,7 +25,8 @@ class Compiler:
         self.device_list = device_list
 
         self.base_network_generator = ip_utils.BaseGiniIPv4Network(
-            unicode(options["base_network"])
+            unicode(options["base_network"]),
+            check=True
         )
         self.filename = filename.replace(".gsav", ".xml")
         self.output = open(self.filename, "w")
@@ -381,7 +382,13 @@ class Compiler:
             self.output.write("</vm>\n\n")
 
     def autogen_cloud(self):
-        pass
+        for cloud in self.compile_list["Cloud"]:
+            for interface in cloud.getInterfaces():
+                try:
+                    subnet = str(cloud.getInterfaceProperty("subnet")).rsplit(".", 1)[0]
+                except:
+                    continue
+                cloud.setInterfaceProperty("ipv4", "%s.%d" % (subnet, 255-cloud.getID()))
 
     def compile_cloud(self):
         """Compile the cloud component in a topology"""
@@ -390,12 +397,12 @@ class Compiler:
 
             interfaces = cloud.getInterfaces()
             if len(interfaces) < 1:
-                self.generate_connection_warning(mach, 1)
+                self.generate_connection_warning(cloud, 1)
 
             for interface in interfaces:
                 self.output.write("\t<if>\n")
 
-                mapping = {"subnet": "network"}
+                mapping = {"subnet": "network", "ipv4": "ip"}
                 self.write_interface(cloud, interface, mapping)
 
                 self.output.write("\t</if>\n")

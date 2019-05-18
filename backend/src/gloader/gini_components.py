@@ -65,25 +65,6 @@ class VM:
         print "end if]"
 
 
-class VRM(VM, object):
-    def __init__(self, vmName):
-        """Initialize the VRM class"""
-        super(VRM, self).__init__(vmName)
-
-
-class FileSystem:
-    name = ""
-    type = ""
-
-    def __init__(self):
-        """Initialize the FileSystem class"""
-        pass
-
-    def printMe(self):
-        print "[Name: " + self.name + " ]",
-        print "[Type: " + self.type + " ]",
-
-
 class VMInterface:
     name = ""
     target = ""
@@ -237,24 +218,23 @@ class VRRoute:
 
 
 class Cloud:
-    subnet = ""
-    gini_gateway = ""
-
     def __init__(self, name):
         self.name = name
         self.interfaces = []
 
     def add_interface(self, interface):
-        self.interfaces.append([interface])
+        self.interfaces.append(interface)
 
     def __str__(self):
-        return "Gini Cloud instance: {Subnet: %s, Gateway: %s}" % (self.subnet, self.gini_gateway)
+        return "Gini Cloud instance: {Name: %s, Interfaces: %s}" % (self.name, self.interfaces)
 
 
 class CloudInterface:
     def __init__(self):
         self.target = ""
         self.network = ""
+        self.ip = ""
+        self.mac = ""
         self.routes = []
 
     def add_route(self, route):

@@ -59,12 +59,13 @@ def len_to_mask(prefixlen):
 
 
 class BaseGiniIPv4Network(ipaddress.IPv4Network):
-    def __init__(self, *args, **kwargs):
-        super(BaseGiniIPv4Network, self).__init__(*args, **kwargs)
+    def __init__(self, address, check=False, *args, **kwargs):
+        super(BaseGiniIPv4Network, self).__init__(address, *args, **kwargs)
         self.subnets_generator = self.subnets(prefixlen_diff=8)
-        if not is_valid_base_network(self.with_netmask):
-            raise ValueError(
-                "Not a valid base network address for Gini %s!" % self.with_netmask)
+        if check:
+            if not is_valid_base_network(self.with_netmask):
+                raise ValueError(
+                    "Not a valid base network address for Gini %s!" % self.with_netmask)
 
     def get_next_available_subnet(self):
         subnet = self.subnets_generator.next()
@@ -77,7 +78,8 @@ class BaseGiniIPv4Network(ipaddress.IPv4Network):
 class GiniIPv4Subnet(ipaddress.IPv4Network):
     def __init__(self, *args, **kwargs):
         super(GiniIPv4Subnet, self).__init__(*args, **kwargs)
-        self.host_generator = self.hosts()
+        # skip value X.X.X.1, which is the default gateway for docker network
+        self.host_generator = self.hosts().next()
 
     def get_next_available_host(self):
         host = self.host_generator.next()

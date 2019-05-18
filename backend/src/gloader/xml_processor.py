@@ -100,67 +100,8 @@ class XMLProcessor:
     def checkDuplicateVMIF(self, vmName, elements):
         return True
 
-        # """checks duplication (MAC/IP) of VR network interfaces and validity of the IP addresssed used"""
-        # result = True
-        # macs = []
-        # ips = []
-        # for vmIF in elements:
-        #     currMAC = vmIF.mac
-        #     currIP = vmIF.ip
-        #     # check MAC and IP duplication
-        #     if (utilities.findIndex(macs, currMAC) != -1 or
-        #             utilities.findIndex(ips, currIP) != -1):
-        #         print vmName + ": either MAC or IP in duplication"
-        #         result = False
-        #     macs.append(currMAC)
-        #     ips.append(currIP)
-        #     # also check validity of the IP addresses
-        #     result = result and self.checkValidIPv4(vmName, currIP)
-        #     for route in vmIF.routes:
-        #         if not route.dest:
-        #             continue
-        #         if not self.checkValidIPv4((vmName + "-" + vmIF.name), route.dest):
-        #             result = False
-        # return result
-
     def checkDuplicateVRIF(self, vrName, elements):
         return True
 
-        # "checks duplication (NIC/IP) of VR network interfaces and \
-        # validity of the IP addresssed used"
-        # result = True
-        # nics = []
-        # ips = []
-        # for vrIF in elements:
-        #     currNIC = vrIF.nic
-        #     currIP = vrIF.ip
-        #     # check NIC and IP duplication
-        #     if (utilities.findIndex(nics, currNIC) != -1 or
-        #         utilities.findIndex(ips, currIP) != -1):
-        #         print vrName + ": either NIC or IP in duplication"
-        #         result = False
-        #     nics.append(currNIC)
-        #     ips.append(currIP)
-        #     # also check the validity of the IP address
-        #     result = result and self.checkValidIPv4(vrName, currIP)
-        #     for route in vrIF.routes:
-        #         if (not self.checkValidIPv4((vrName + "-" + vrIF.name), route.dest)):
-        #             result = False
-        # return result
-
     def checkValidIPv4(self, name, ip):
         return True
-
-        # ipParts = ip.split(".")
-        # if (len(ipParts) != 4):
-        #     print name + ": malformed IPv4 address"
-        #     return False
-        # return True
-        # if (ipParts[0] == "10" or
-        #     (ipParts[0] == "192" and ipParts[1] == "168")):
-        #     return True
-        # if (ipParts[0] == "172"):
-        #     if ((int(ipParts[1]) > 15) and (int(ipParts[1]) < 32)):
-        #         return True
-        # print name + ": not a private IP address"
-        # return False

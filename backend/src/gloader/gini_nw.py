@@ -85,6 +85,8 @@ class GINI_NW:
                     new_interface.target = self.getTextPart(para)
                 elif tag_name == "network":
                     new_interface.network = self.getTextPart(para)
+                elif tag_name == "ip":
+                    new_interface.ip = self.getTextPart(para)
                 elif tag_name == "route":
                     new_route = self.getVMRoute(para)
                     new_interface.add_route(new_route)

@@ -13,28 +13,29 @@ import json
 from program import Program
 
 # set the program names
-VIRTUAL_SWITCH_PROGRAM = "uswitch"
 OPEN_VIRTUAL_SWITCH_PROGRAM = "gvirtual-switch"
-VIRTUAL_MACHINE_PROGRAM = "glinux"
 GROUTER_PROGRAM = "grouter"
 OPENFLOW_CONTROLLER_PROGRAM = "gpox"
-GWIRELESS_ROUTER_PROGRAM = "gwcenter.sh"
-MACHINE_CONSOLE_PROGRAM = "mach_mconsole"
 SOCKET_NAME = "gini_socket"
-VIRTUAL_SWITCH_PROGRAM_BIN = VIRTUAL_SWITCH_PROGRAM
 OPEN_VIRTUAL_SWITCH_PROGRAM_BIN = OPEN_VIRTUAL_SWITCH_PROGRAM
-VIRTUAL_MACHINE_PROGRAM_BIN = VIRTUAL_MACHINE_PROGRAM
 GROUTER_PROGRAM_BIN = GROUTER_PROGRAM
 OPENFLOW_CONTROLLER_PROGRAM_BIN = OPENFLOW_CONTROLLER_PROGRAM
-GWIRELESS_ROUTER_PROGRAM_BIN = GWIRELESS_ROUTER_PROGRAM
-MACHINE_CONSOLE_PROGRAM_BIN = MACHINE_CONSOLE_PROGRAM
+
 SOURCE_FILE_NAME = "%s/gini_setup" % os.environ["GINI_HOME"]    # setup file name
 GINI_TEMP_DIR = "%s/tmp/" % os.environ["GINI_HOME"]
 GINI_TEMP_FILE = ".gini_tmp_file"    # tmp file used when checking alive Mach
+
 nodes = []
 tap_interface_names_map = dict()
 subnet_map = dict()
 network_name_map = dict()
+target_mode = {
+        "Mach": "m",
+        "Router": "r",
+        "Switch": "s",
+        "OVSwitch": "o",
+        "Cloud": "c"
+    }
 
 # set this switch True if running gloader without gbuilder
 independent = False
@@ -60,6 +61,8 @@ def start_GINI(gini, opts):
     status = status and create_virtual_routers(gini, opts)
     print "\nStarting Docker Machines..."
     status = status and create_virtual_machines(gini, opts)
+    print "\nStarting cloud..."
+    status = status and create_cloud(gini, opts)
 
     if not status:
         print "Problem in creating GINI network"
@@ -174,13 +177,13 @@ def create_virtual_switches(gini, opts):
                     bridge_name = "br-" + out[:12]
                     subprocess.call("brctl setageing %s 0" % bridge_name, shell=True)
 
-                undoOut.write(
-                    """for i in ` docker network inspect -f '{{range .Containers}}{{.Name}} {{end}}' %s`;
-                    do
-                    docker network disconnect -f %s $i;
-                    done;
-                    """ % (out, out)
-                )
+                # undoOut.write(
+                #     """for i in ` docker network inspect -f '{{range .Containers}}{{.Name}} {{end}}' %s`;
+                #     do
+                #     docker network disconnect -f %s $i;
+                #     done;
+                #     """ % (out, out)
+                # )
                 undoOut.write("docker network remove %s\n" % out)
                 os.chmod(undoFile, 0755)
                 print "[OK]"
@@ -189,13 +192,13 @@ def create_virtual_switches(gini, opts):
                 q = subprocess.Popen(command, shell=True, stdout=subprocess.PIPE)
                 out, err = q.communicate()
                 if q.returncode == 0:
-                    undoOut.write(
-                        """for i in ` docker network inspect -f '{{range .Containers}}{{.Name}} {{end}}' %s`;
-                        do
-                        docker network disconnect -f %s $i;
-                        done;
-                        """ % (out, out)
-                    )
+                    # undoOut.write(
+                    #     """for i in ` docker network inspect -f '{{range .Containers}}{{.Name}} {{end}}' %s`;
+                    #     do
+                    #     docker network disconnect -f %s $i;
+                    #     done;
+                    #     """ % (out, out)
+                    # )
                     undoOut.write("docker network remove %s\n" % out)
                     os.chmod(undoFile, 0755)
                     print "[OK]"
@@ -217,10 +220,7 @@ def create_virtual_switches(gini, opts):
 def find_hidden_switch(router_name, switch_name):
     x, rnum = router_name.split("_")
     x, snum = switch_name.split("_")
-    if x != "Router":
-        switch_name = "Switch_r%sm%s" % (rnum, snum)
-    else:
-        switch_name = "Switch_r%sr%s" % (rnum, snum)
+    switch_name = "Switch_r%s%s%s" % (rnum, target_mode[x], snum)
 
     command = """docker network inspect %s --format='{{.Id}}'""" % switch_name
     q = subprocess.Popen(command, shell=True, stdout=subprocess.PIPE)
@@ -254,10 +254,7 @@ def find_bridge_name(switch_name):
 def create_new_switch(router_name, switch_name, subnet, out_file):
     x, router_num = router_name.split("_")
     x, switch_num = switch_name.split("_")
-    if x != "Router":
-        switch_name = "Switch_r%sm%s" % (router_num, switch_num)
-    else:
-        switch_name = "Switch_r%sr%s" % (router_num, switch_num)
+    switch_name = "Switch_r%s%s%s" % (router_num, target_mode[x], switch_num)
 
     # Similar to switch_name devices, check if the network is already created under another name
     if subnet_map.get(subnet):
@@ -278,13 +275,13 @@ def create_new_switch(router_name, switch_name, subnet, out_file):
         subnet_map[subnet] = switch_name
 
         brname = "br-" + out[:12]
-        out_file.write(
-            """for i in ` docker network inspect -f '{{range .Containers}}{{.Name}} {{end}}' %s`;
-            do
-            docker network disconnect -f %s $i;
-            done;
-            """ % (out, out)
-        )
+        # out_file.write(
+        #     """for i in ` docker network inspect -f '{{range .Containers}}{{.Name}} {{end}}' %s`;
+        #     do
+        #     docker network disconnect -f %s $i;
+        #     done;
+        #     """ % (out, out)
+        # )
         out_file.write("docker network remove %s" % out)
         return switch_name, brname
     else:
@@ -293,13 +290,13 @@ def create_new_switch(router_name, switch_name, subnet, out_file):
         out, err = q.communicate()
         if q.returncode == 0:
             brname = "br-" + out[:12]
-            out_file.write(
-                """for i in ` docker network inspect -f '{{range .Containers}}{{.Name}} {{end}}' %s`;
-                do
-                docker network disconnect -f %s $i;
-                done;
-                """ % (out, out)
-            )
+            # out_file.write(
+            #     """for i in ` docker network inspect -f '{{range .Containers}}{{.Name}} {{end}}' %s`;
+            #     do
+            #     docker network disconnect -f %s $i;
+            #     done;
+            #     """ % (out, out)
+            # )
             out_file.write("\ndocker network remove %s\n" % out)
             return switch_name, brname
         return None, None
@@ -311,14 +308,8 @@ def set_up_tap_interface(router_name, switch_name, bridge_name, out_file, is_ovs
     x, router_num = router_name.split("_")
     x, switch_num = switch_name.split("_")
 
-    target_mode = {
-        "Mach": "m",
-        "Router": "r",
-        "Switch": "s",
-        "OVSwitch": "o"
-    }
-
     tap_key = "Switch_r%s%s%s" % (router_num, target_mode[x], switch_num)
+
     if tap_interface_names_map.get(tap_key) is None:
         tap_interface_names_map[tap_key] = "tap" + str(len(tap_interface_names_map) + 1)
     tap_name = tap_interface_names_map[tap_key]
@@ -452,19 +443,16 @@ def check_router(gini, router_name):
     return None
 
 
-def get_switch_to_connect(gini, machine):
+def get_switch_to_connect(gini, host):
     # one of the interfaces is
-    for nwi in machine.interfaces:
+    for nwi in host.interfaces:
         target = nwi.target
         if check_switch(gini, target):
             return get_network_name(target), nwi.ip, nwi.mac
-
-    for nwi in machine.interfaces:
-        target = nwi.target
-        if check_router(gini, target):
+        elif check_router(gini, target):
             # create a 'hidden' switch because docker needs a
             # switch to connect to the router
-            swname = find_hidden_switch(target, machine.name)
+            swname = find_hidden_switch(target, host.name)
             return get_network_name(swname), nwi.ip, nwi.mac
 
     return None, None, None
@@ -565,6 +553,64 @@ def create_virtual_machines(gini, opts):
         stop_out.close()
         os.chmod(stop_script_path, 0755)
         # Restore the old directory...
+        os.chdir(old_dir)
+
+    return True
+
+
+def create_cloud(gini, opts):
+    """Creates cloud instance with a proxy"""
+    # make_dir(opts.cloud_dir)
+    for cloud in gini.clouds:
+        print "\tStarting %s ...\t" % cloud.name,
+        sub_cloud_dir = "%s/%s" % (opts.cloud_dir, cloud.name)
+        print sub_cloud_dir
+        make_dir(sub_cloud_dir)
+
+        # Store current and go into the subdirectory
+        old_dir = os.getcwd()
+        os.chdir(sub_cloud_dir)
+
+        switch_name, ip, mac = get_switch_to_connect(gini, cloud)
+
+        if switch_name is not None:
+
+            cloud_config = {
+                "subnet": "%s/24" % cloud.interfaces[0].network,      # hacky. TODO: remove the hardcoded 24
+                "network_name": switch_name,
+                "proxy_ip": cloud.interfaces[0].ip,
+                "gateway_ip": cloud.interfaces[0].routes[0].gw
+            }
+
+            gini_network = cloud.interfaces[0].routes[0].dest
+            gini_netmask = cloud.interfaces[0].routes[0].netmask
+
+            config_file_path = "%s/config.json" % sub_cloud_dir
+            with open(config_file_path, "w") as f:
+                f.write(json.dumps(cloud_config))
+            entrypoint_script = "%s/entrypoint.sh" % sub_cloud_dir
+            with open(entrypoint_script, "w") as f:
+                f.write("#!/bin/bash\n\n")
+                f.write("docker exec proxy ip route add %s/%s via %s\n"
+                        % (gini_network, gini_netmask, cloud_config["gateway_ip"]))
+            os.chmod(entrypoint_script, 0755)
+
+            screen_command = "screen -d -m -L -S %s " % cloud.name
+            command_to_run = screen_command + "gcloud -f %s\n" % config_file_path
+
+            print command_to_run
+
+            runcmd = subprocess.Popen(command_to_run, shell=True, stdout=subprocess.PIPE)
+            runcmd.communicate()
+            if runcmd.returncode != 0:
+                print "[Failed] Error when creating simple cloud"
+                return False
+        else:
+            print "[Failed] No target found for Cloud: %s" % cloud.name
+            return False
+
+        print "[OK]"
+        # TODO
         os.chdir(old_dir)
 
     return True
@@ -749,33 +795,6 @@ def get_virtual_machine_interface_outline(network_interface, socketName, name):
     return outLine
 
 
-def create_machine_command_line(machine):
-    command = "screen -d -m -S %s " % machine.name
-    ## machine binary name
-    if machine.kernel:
-        command += "%s " % machine.kernel
-    else:
-        command += "%s " % VIRTUAL_MACHINE_PROGRAM_BIN
-    ## machine ID
-    command += "umid=%s " % machine.name
-    ## handle the file system option
-    # construct the cow file name
-    fileSystemName = get_base_name(machine.fileSystem.name)
-    fsCOWName = os.environ["GINI_HOME"] + "/data/" + machine.name + "/" + fileSystemName + ".cow"
-    if machine.fileSystem.type.lower() == "cow":
-        command += "ubd0=%s,%s " % (fsCOWName, os.environ["GINI_SHARE"] + "/filesystem/" + fileSystemName)
-    else:
-        command += "ubd0=%s " % machine.fileSystem.name
-    ## handle the mem option
-    if machine.mem:
-        command += "mem=%s " % machine.mem
-    ## handle the boot option
-    if machine.boot:
-        command += "con0=%s " % machine.boot
-    command += "hostfs=%s " % os.environ["GINI_HOME"]
-    return command
-
-
 def get_base_name(path_name):
     """Extract the filename from the full path"""
     path_parts = path_name.split("/")
@@ -792,6 +811,9 @@ def destroy_GINI(gini, opts):
     try:
         print "\nTerminating Machs..."
         result = result and destroy_virtual_machines(gini.vm, opts.machDir, 0)
+
+        print "\nTerminating Clouds..."
+        result = result and destroy_clouds(gini.clouds)
 
         print "\nTerminating routers..."
         result = result and destroy_virtual_routers(gini.vr, opts.routerDir)
@@ -810,7 +832,7 @@ def destroy_GINI(gini, opts):
 def destroy_virtual_switches(switches, switch_dir):
     for switch in switches:
         print "Stopping Switch %s..." % switch.name
-        command = "%s/%s/stopit.sh" % (switch_dir, switch.name)
+        command = "%s/%s/stopit.sh 2>/dev/null" % (switch_dir, switch.name)
         system(command)
     return True
 
@@ -833,32 +855,10 @@ def destroy_virtual_routers(routers, router_dir):
         else:
             pid_file_found = False
             print "[FAILED]"
-        system("%s/stopit.sh" % subRouterDir)
+        system("%s/stopit.sh 2>/dev/null" % subRouterDir)
 
         # clean up the files in the directory
         print "\tCleaning the directory...\t",
-#        if (os.access(subRouterDir, os.F_OK)):
-#            for file in os.listdir(subRouterDir):
-#                fileName = "%s/%s" % (subRouterDir, file)
-#                if (os.access(fileName, os.W_OK)):
-#                    os.remove(fileName)
-#                else:
-#                    print "\n\tRouter %s: Could not delete file %s" % (router.name, fileName)
-#                    print "\tCheck your directory"
-#                    return False
-#            if (os.access(subRouterDir, os.W_OK)):
-#                os.rmdir(subRouterDir)
-#            else:
-#                print "\n\tRouter %s: Could not remove router directory" % router.name
-#                print "\tCheck your directory"
-#                return False
-#        print "[OK]"
-#        if (pidFileFound):
-#            print "\tStopping Router %s...\t[OK]" % router.name
-#        else:
-#            print "\tStopping Router %s...\t[FAILED]" % router.name
-#            print "\tKill the router %s manually" % router.name
-
     return True
 
 
@@ -872,8 +872,14 @@ def get_pid_from_file(file_name):
 def destroy_virtual_machines(machs, machine_dir, mode):
     for mach in machs:
         # Run the stop command
-        command = "%s/%s/.stopit.sh" % (machine_dir, mach.name)
+        command = "%s/%s/.stopit.sh 2>/dev/null" % (machine_dir, mach.name)
         system(command)
+    return True
+
+
+def destroy_clouds(clouds):
+    for cloud in clouds:
+        system("kill $(ps h --ppid $(screen -ls | grep %s | cut -d. -f1) -o pid) 2>/dev/null" % cloud.name)
     return True
 
 
@@ -971,12 +977,6 @@ def delete_source_file():
 def check_alive_GINI():
     """Check if any of the gini components is already running"""
     result = False
-    if check_process_alive(VIRTUAL_SWITCH_PROGRAM_BIN):
-        print "At least one of %s is alive" % VIRTUAL_SWITCH_PROGRAM_BIN
-        result = True
-    if check_process_alive(VIRTUAL_MACHINE_PROGRAM_BIN):
-        print "At least one of %s is alive" % VIRTUAL_MACHINE_PROGRAM_BIN
-        result = True
     if check_process_alive(GROUTER_PROGRAM_BIN):
         print "At least one of %s is alive" % GROUTER_PROGRAM_BIN
         result = True
@@ -1018,28 +1018,17 @@ if bin_dir:
     if bin_dir[len(bin_dir) - 1] == "/":
         bin_dir = bin_dir[:len(bin_dir) - 1]
     bin_dir = get_fully_qualified_dir(bin_dir)
+
     # assign binary names
     # if the programs are not in the specified bin_dir
     # they will be assumed to be in the $PATH env.
-    VIRTUAL_SWITCH_PROGRAM_BIN = "%s/%s" % (bin_dir, VIRTUAL_SWITCH_PROGRAM)
-    if not os.access(VIRTUAL_SWITCH_PROGRAM_BIN, os.X_OK):
-        VIRTUAL_SWITCH_PROGRAM_BIN = VIRTUAL_SWITCH_PROGRAM
-
     OPEN_VIRTUAL_SWITCH_PROGRAM_BIN = "%s/%s" % (bin_dir, OPEN_VIRTUAL_SWITCH_PROGRAM)
     if not os.access(OPEN_VIRTUAL_SWITCH_PROGRAM_BIN, os.X_OK):
-        OPEN_VIRTUAL_SWITCH_PROGRAM_BIN = VIRTUAL_MACHINE_PROGRAM
-
-    VIRTUAL_MACHINE_PROGRAM_BIN = "%s/%s" % (bin_dir, VIRTUAL_MACHINE_PROGRAM)
-    if not os.access(VIRTUAL_MACHINE_PROGRAM_BIN, os.X_OK):
-        VIRTUAL_MACHINE_PROGRAM_BIN = VIRTUAL_MACHINE_PROGRAM
+        OPEN_VIRTUAL_SWITCH_PROGRAM_BIN = OPEN_VIRTUAL_SWITCH_PROGRAM
 
     GROUTER_PROGRAM_BIN = "%s/%s" % (bin_dir, GROUTER_PROGRAM)
     if not os.access(GROUTER_PROGRAM_BIN, os.X_OK):
         GROUTER_PROGRAM_BIN = GROUTER_PROGRAM
-
-    MACHINE_CONSOLE_PROGRAM_BIN = "%s/%s" % (bin_dir, MACHINE_CONSOLE_PROGRAM)
-    if not os.access(MACHINE_CONSOLE_PROGRAM_BIN, os.X_OK):
-        MACHINE_CONSOLE_PROGRAM_BIN = MACHINE_CONSOLE_PROGRAM
 
     OPENFLOW_CONTROLLER_PROGRAM_BIN = "%s/%s" % (bin_dir, OPENFLOW_CONTROLLER_PROGRAM)
     if not os.access(OPENFLOW_CONTROLLER_PROGRAM_BIN, os.X_OK):

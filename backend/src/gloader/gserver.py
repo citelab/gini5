@@ -251,7 +251,7 @@ class ReceiveStartCommand(Command):
             recovery = False
             return
 
-        command = GL_PROG + " -c " + os.environ["GINI_HOME"] + "/" + self.args + " -s %s -r %s -u %s -o %s" % (data_dir, data_dir, data_dir, data_dir)
+        command = GL_PROG + " -c " + os.environ["GINI_HOME"] + "/" + self.args + " -s %s -r %s -u %s -o %s -C %s" % (data_dir, data_dir, data_dir, data_dir, data_dir)
         print "Command : " + command
 
         subprocess.Popen(["/bin/bash", "-c", command])
