@@ -574,31 +574,31 @@ def create_cloud(gini, opts):
         switch_name, ip, mac = get_switch_to_connect(gini, cloud)
 
         if switch_name is not None:
+            gini_network = cloud.interfaces[0].routes[0].dest
+            gini_netmask = cloud.interfaces[0].routes[0].netmask
+
+            entrypoint_script = "%s/entrypoint.sh" % sub_cloud_dir
 
             cloud_config = {
                 "subnet": "%s/24" % cloud.interfaces[0].network,      # hacky. TODO: remove the hardcoded 24
                 "network_name": switch_name,
                 "proxy_ip": cloud.interfaces[0].ip,
-                "gateway_ip": cloud.interfaces[0].routes[0].gw
+                "gateway_ip": cloud.interfaces[0].routes[0].gw,
+                "entrypoint": entrypoint_script
             }
 
-            gini_network = cloud.interfaces[0].routes[0].dest
-            gini_netmask = cloud.interfaces[0].routes[0].netmask
-
-            config_file_path = "%s/config.json" % sub_cloud_dir
-            with open(config_file_path, "w") as f:
-                f.write(json.dumps(cloud_config))
-            entrypoint_script = "%s/entrypoint.sh" % sub_cloud_dir
             with open(entrypoint_script, "w") as f:
                 f.write("#!/bin/bash\n\n")
                 f.write("docker exec proxy ip route add %s/%s via %s\n"
                         % (gini_network, gini_netmask, cloud_config["gateway_ip"]))
             os.chmod(entrypoint_script, 0755)
 
+            config_file_path = "%s/config.json" % sub_cloud_dir
+            with open(config_file_path, "w") as f:
+                f.write(json.dumps(cloud_config))
+
             screen_command = "screen -d -m -L -S %s " % cloud.name
             command_to_run = screen_command + "gcloud -f %s\n" % config_file_path
-
-            print command_to_run
 
             runcmd = subprocess.Popen(command_to_run, shell=True, stdout=subprocess.PIPE)
             runcmd.communicate()
@@ -610,7 +610,6 @@ def create_cloud(gini, opts):
             return False
 
         print "[OK]"
-        # TODO
         os.chdir(old_dir)
 
     return True
