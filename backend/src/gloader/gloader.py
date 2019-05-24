@@ -588,9 +588,11 @@ def create_cloud(gini, opts):
             }
 
             with open(entrypoint_script, "w") as f:
-                f.write("#!/bin/bash\n\n")
-                f.write("docker exec proxy ip route add %s/%s via %s\n"
+                f.write("#!/bin/dumb-init /bin/sh\n\n")
+                # add routes before running the actual entrypoint
+                f.write("ip route add %s/%s via %s\n"
                         % (gini_network, gini_netmask, cloud_config["gateway_ip"]))
+                f.write('docker-entrypoint.sh "$@"\n')
             os.chmod(entrypoint_script, 0755)
 
             config_file_path = "%s/config.json" % sub_cloud_dir
