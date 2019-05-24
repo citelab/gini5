@@ -27,7 +27,7 @@ sudo apt-get install python-minimal
 Run these commands to clone the repository and set up your environment variable to run Gini components:
 
 ```bash
-git clone -b uml-rename https://github.com/citelab/gini5
+git clone --recursive https://github.com/citelab/gini5
 
 # cd into directory where you cloned Gini
 # Add an environment variable called "GINI_HOME" which link to that directory
