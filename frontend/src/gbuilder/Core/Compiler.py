@@ -619,7 +619,7 @@ class Compiler:
         """
         Format the routes in xml.
         """
-        if device_type in ["Mach", "Cloud"]:
+        if device_type in ["Mach", "Cloud"] and routes:
             # TODO
             # A quick fix to generalize the routes in Gini. This code should be updated later
             res = ""
