@@ -100,11 +100,12 @@ def create_open_virtual_switches(gini, switch_dir, switch):
 
     subnet = find_subnet_for_switch(gini, switch.name)
     if subnet != "":
+        gateway_ip = subnet.rsplit('.', 1)[0] + '.1'
         start_file = "%s/startit.sh" % sub_switch_dir
         start_out = open(start_file, "w")
         start_out.write("#!/bin/bash\n\n")
         startup_commands = "ovs-vsctl add-br %s &&\n" % switch.name
-        startup_commands += "ip addr add %s/24 dev %s &&\n" % (subnet, switch.name)
+        startup_commands += "ip addr add %s/24 dev %s &&\n" % (gateway_ip, switch.name)
         startup_commands += "ip link set %s up &&\n" % switch.name
         startup_commands += "ovs-vsctl set-fail-mode %s standalone &&\n" % switch.name
         start_out.write(startup_commands)
@@ -177,13 +178,6 @@ def create_virtual_switches(gini, opts):
                     bridge_name = "br-" + out[:12]
                     subprocess.call("brctl setageing %s 0" % bridge_name, shell=True)
 
-                # undoOut.write(
-                #     """for i in ` docker network inspect -f '{{range .Containers}}{{.Name}} {{end}}' %s`;
-                #     do
-                #     docker network disconnect -f %s $i;
-                #     done;
-                #     """ % (out, out)
-                # )
                 undoOut.write("docker network remove %s\n" % out)
                 os.chmod(undoFile, 0755)
                 print "[OK]"
@@ -192,13 +186,6 @@ def create_virtual_switches(gini, opts):
                 q = subprocess.Popen(command, shell=True, stdout=subprocess.PIPE)
                 out, err = q.communicate()
                 if q.returncode == 0:
-                    # undoOut.write(
-                    #     """for i in ` docker network inspect -f '{{range .Containers}}{{.Name}} {{end}}' %s`;
-                    #     do
-                    #     docker network disconnect -f %s $i;
-                    #     done;
-                    #     """ % (out, out)
-                    # )
                     undoOut.write("docker network remove %s\n" % out)
                     os.chmod(undoFile, 0755)
                     print "[OK]"
@@ -275,13 +262,6 @@ def create_new_switch(router_name, switch_name, subnet, out_file):
         subnet_map[subnet] = switch_name
 
         brname = "br-" + out[:12]
-        # out_file.write(
-        #     """for i in ` docker network inspect -f '{{range .Containers}}{{.Name}} {{end}}' %s`;
-        #     do
-        #     docker network disconnect -f %s $i;
-        #     done;
-        #     """ % (out, out)
-        # )
         out_file.write("docker network remove %s" % out)
         return switch_name, brname
     else:
@@ -290,13 +270,6 @@ def create_new_switch(router_name, switch_name, subnet, out_file):
         out, err = q.communicate()
         if q.returncode == 0:
             brname = "br-" + out[:12]
-            # out_file.write(
-            #     """for i in ` docker network inspect -f '{{range .Containers}}{{.Name}} {{end}}' %s`;
-            #     do
-            #     docker network disconnect -f %s $i;
-            #     done;
-            #     """ % (out, out)
-            # )
             out_file.write("\ndocker network remove %s\n" % out)
             return switch_name, brname
         return None, None
@@ -574,6 +547,11 @@ def create_cloud(gini, opts):
         switch_name, ip, mac = get_switch_to_connect(gini, cloud)
 
         if switch_name is not None:
+            if 'ovs' in switch_name.lower():
+                ovs = True
+            else:
+                ovs = False
+
             gini_network = cloud.interfaces[0].routes[0].dest
             gini_netmask = cloud.interfaces[0].routes[0].netmask
 
@@ -584,7 +562,8 @@ def create_cloud(gini, opts):
                 "network_name": switch_name,
                 "proxy_ip": cloud.interfaces[0].ip,
                 "gateway_ip": cloud.interfaces[0].routes[0].gw,
-                "entrypoint": entrypoint_script
+                "entrypoint": entrypoint_script,
+                "ovs": ovs
             }
 
             with open(entrypoint_script, "w") as f:
@@ -600,9 +579,18 @@ def create_cloud(gini, opts):
                 f.write(json.dumps(cloud_config))
 
             screen_command = "screen -d -m -L -S %s " % cloud.name
-            command_to_run = screen_command + "gcloud -f %s\n" % config_file_path
+            docker_command = "docker run -it --rm --privileged --network host " \
+                             "-v /var/run/docker.sock:/var/run/docker.sock " \
+                             "-v /var/run/openvswitch/db.sock:/var/run/openvswitch/db.sock " \
+                             "-v /var/run/netns:/var/run/netns " \
+                             "-v /proc:/proc " \
+                             "-v %s:/code/config.json " \
+                             "-v %s:%s " \
+                             "--name cloud-manager-%s " \
+                             "citelab/simplecloud:latest " \
+                             "python main.py -f /code/config.json" % (config_file_path, entrypoint_script, entrypoint_script, switch_name)
 
-            runcmd = subprocess.Popen(command_to_run, shell=True, stdout=subprocess.PIPE)
+            runcmd = subprocess.Popen(screen_command + docker_command, shell=True, stdout=subprocess.PIPE)
             runcmd.communicate()
             if runcmd.returncode != 0:
                 print "[Failed] Error when creating simple cloud"
@@ -815,6 +803,8 @@ def destroy_GINI(gini, opts):
 
         print "\nTerminating Clouds..."
         result = result and destroy_clouds(gini.clouds)
+
+        system('docker rm -f $(docker ps -aq)')
 
         print "\nTerminating routers..."
         result = result and destroy_virtual_routers(gini.vr, opts.routerDir)
