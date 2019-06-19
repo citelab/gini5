@@ -363,29 +363,6 @@ env.Alias("install-gvirtual-switch", bin_dir + "/gvirtual-switch")
 env.Alias("install", "install-gvirtual-switch")
 
 
-#######################
-#       GCloud        #
-#######################
-
-
-gcloud_dir = backend_dir + "/src/gcloud"
-gcloud_lib_dir = lib_dir
-
-result = env.Install(gcloud_lib_dir + "/gcloud", Glob(gcloud_dir + "/*.py"))
-
-for file in Glob(gcloud_lib_dir + "/gcloud/*.py"):
-    compile_python(env, file.abspath, "install-gcloud")
-env.Clean(gcloud_lib_dir + "/gcloud", gcloud_lib_dir + "/gcloud")
-post_chmod(gcloud_lib_dir + "/gcloud/main.py")
-
-env.PythonEnvFile(bin_dir + "/gcloud", gcloud_lib_dir + "/gcloud/main.py")
-post_chmod(bin_dir + "/gcloud")
-
-env.Alias("install-gcloud", gcloud_lib_dir + "/gcloud")
-env.Alias("install-gcloud", bin_dir + "/gcloud")
-env.Alias("install", "install-gcloud")
-
-
 ############
 # Frontend #
 ############
