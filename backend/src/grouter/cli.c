@@ -35,6 +35,7 @@
 #include <readline/readline.h>
 #include <readline/history.h>
 #include "openflow_flowtable.h"
+#include <limits.h>
 
 
 Map *cli_map;
@@ -876,7 +877,7 @@ void pingCmd()
 		tries = gAtoi(next_tok);
 		next_tok = strtok(NULL, " \n");
 	} else
-		tries = 1;
+		tries = INT_MAX;
 	Dot2IP(next_tok, ip_addr);
 	verbose(2, "[pingCmd]:: ping command sent, tries = %d, IP = %s",
 		tries, IP2Dot(tmpbuf, ip_addr));
