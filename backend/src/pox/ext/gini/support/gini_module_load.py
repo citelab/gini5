@@ -11,7 +11,10 @@ to be loaded from gBuilder.
 from pox.core import core
 import pox.lib.util as poxutil
 import pox.openflow.libopenflow_01 as of
-import os, time, threading, importlib
+import os
+import time
+import threading
+import importlib
 
 log = core.getLogger()
 
@@ -19,7 +22,6 @@ class ModuleFileReader(threading.Thread):
     def __init__(self, module_file_path):
         threading.Thread.__init__(self)
         self.module_file_path = module_file_path
-        # self.launched_modules = []
         self.current_module = None
 
     def _flush_rules(self):
@@ -68,28 +70,10 @@ class ModuleFileReader(threading.Thread):
                             self.current_module = mod
                         except Exception as e:
                             log.error("gini_module_load: failed to launch module - " + module)
+                            log.error(str(e))
                     except Exception as e:
                         log.error("gini_module_load: module does not exist - " + module)
-
-                """
-                modules = module_file.readlines()
-                for module in modules:
-                    module = module.strip()
-                    if module != "" and not module in self.launched_modules:
-                        log.info(str(self.launched_modules))
-                        log.info("gini_module_load: loading module - " + module)
-                        try:
-                            mod = importlib.import_module(module)
-                            try:
-                                mod.launch()
-                            except Exception as e:
-                                log.error("gini_module_load: failed to launch module - " + module)
-                        except Exception as e:
-                            log.error("gini_module_load: module does not exist - " + module)
-
-                        self.launched_modules.append(module)
-                        log.info(str(self.launched_modules))
-                """
+                        log.error(str(e))
 
                 module_file.close()
             except Exception as e:
