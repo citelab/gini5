@@ -12,6 +12,10 @@
  * The CLI defers unknown command to the UNIX system at this point.
  */
 
+#include "udp.h"
+#include "tcp.h"
+#include "tcp_impl.h"
+#include "memp.h"
 #include "helpdefs.h"
 #include "cli.h"
 #include "gnet.h"
@@ -36,6 +40,8 @@
 #include <readline/history.h>
 #include "openflow_flowtable.h"
 #include <limits.h>
+#include <unistd.h>
+#include <stdbool.h>
 
 
 Map *cli_map;
@@ -95,6 +101,7 @@ int CLIInit(router_config *rarg)
 	registerCLI("class", classCmd, SHELP_CLASS, USAGE_CLASS, LHELP_CLASS);
 	registerCLI("filter", filterCmd, SHELP_FILTER, USAGE_FILTER, LHELP_FILTER);
 	registerCLI("openflow", openflowCmd, SHELP_OPENFLOW, USAGE_OPENFLOW, LHELP_OPENFLOW);
+	registerCLI("gnc", gncCmd, SHELP_GNC, USAGE_GNC, LHELP_GNC);
 
 	if (rarg->config_dir != NULL)
 		chdir(rarg->config_dir);                  // change to the configuration directory
@@ -386,8 +393,8 @@ void ifconfigCmd()
 	{
 
 		next_tok = strtok(NULL, " \n");
-        
-		if ( (next_tok == NULL) || (findDeviceDriver(next_tok) == NULL) ) 
+
+		if ( (next_tok == NULL) || (findDeviceDriver(next_tok) == NULL) )
 		{
 			printf("ifconfig:: missing or invalid interface spec ..\n");
 			return;
@@ -410,7 +417,7 @@ void ifconfigCmd()
 		} else if(strcmp(dev_type, "tun") == 0)
 		{
 			GET_NEXT_PARAMETER("-dstip", "ifconfig:: missing -dstip spec ..");
-			Dot2IP(next_tok, dst_ip);  
+			Dot2IP(next_tok, dst_ip);
 			GET_NEXT_PARAMETER("-dstport", "ifconfig:: missing -dstport spec ..");
 			dst_port = (short int)atoi(next_tok);
 		} else if (strcmp(dev_type, "raw") == 0)
@@ -573,6 +580,243 @@ void routeCmd()
 			printRouteTable(route_tbl);
 	}
 	return;
+}
+
+/*
+ * retreive next argument
+ * print error if no next argument exists
+ */
+char* next_arg(char* delim) {
+	char *next_tok;
+	next_tok = strtok(NULL, delim);
+	if (next_tok == NULL) {
+        printf("[gncCmd]:: incorrect arguments.. type help gnc for usage\n");
+	}
+    return next_tok;
+}
+/*
+ * callback function for UDP packets received
+ */
+void udp_recv_callback(void *arg, struct udp_pcb *pcb, struct pbuf *p, uchar *addr, uint16_t port) {
+    printf("%s", (char*)p->payload);
+    uchar ipaddr_network_order[4];
+    gHtonl(ipaddr_network_order, addr);
+    udp_connect(arg, ipaddr_network_order, port);
+}
+
+/*
+ * callback function for TCP packets received
+ */
+err_t tcp_recv_callback(void *arg, struct tcp_pcb *tpcb, struct pbuf *p, err_t err) {
+    printf("%s", (char*) p->payload);
+    return err;
+}
+
+// global variable for pcb of an established TCP connection
+struct tcp_pcb * pcb_established;
+
+/*
+ * call back function for TCP connection successful
+ */
+err_t tcp_accept_callback(void *arg, struct tcp_pcb *tpcb, err_t err) {
+    pcb_established = tpcb;
+    tcp_recv(tpcb, tcp_recv_callback);
+    return err;
+}
+
+// state information specifying that gnc command should be terminated
+// this is set to true if ^C (SIGINT) is received
+bool gncTerm = false;
+
+/*
+ * callback function for ^C (SIGINT) to specify that gnc should terminate
+ */
+void gncTerminate() {
+    gncTerm = true;
+}
+
+/*
+ * Handler for the "gnc" command:
+ * gnc [-u] <host> <port>   // initiate a connection to a remote host
+ * gnc [-u] -l <port>       // listen for an incoming connection from a remote host
+ */
+void gncCmd() {
+
+    // initialize LWIP code
+    memp_init();
+    pbuf_init();
+    udp_init();
+    tcp_init();
+
+	char *next_tok = next_arg(" \n");
+    if (next_tok == NULL)
+        return;
+
+    // TCP
+	if (strcmp(next_tok, "-u") != 0) {
+
+        // gnc -l <port>
+        if (!strcmp(next_tok, "-l")) {
+
+            // port
+            next_tok = next_arg(" \n");
+            if (next_tok == NULL)
+                return;
+            uint16_t port = atoi(next_tok);
+
+            // create and initialize pcb to listen to TCP connections at the specified port
+            struct tcp_pcb * pcb = tcp_new();
+            uchar any[4] = {0,0,0,0};
+            err_t err = tcp_bind(pcb, any, port);
+            pcb = tcp_listen(pcb);
+            tcp_accept(pcb, tcp_accept_callback);
+
+            // keep sending user input with the TCP connection
+            char payload[DEFAULT_MTU];
+            redefineSignalHandler(SIGINT, gncTerminate);
+            gncTerm = false;
+            while (!gncTerm) {
+                fgets(payload, sizeof(payload), stdin);
+                err_t e1 = tcp_write (pcb_established, payload, strlen(payload), TCP_WRITE_FLAG_MORE | TCP_WRITE_FLAG_COPY);
+                if (e1 != ERR_OK)
+                    printf("tcp write error: %d\n", e1);
+                err_t e2 = tcp_output(pcb_established);
+                if (e1 != ERR_OK)
+                    printf("tcp output error: %d\n", e2);
+            }
+
+            // reset SIGINT handler to ignore the signal
+            redefineSignalHandler(SIGINT, dummyFunctionCopy);
+
+            // remove and free pcb
+            tcp_shutdown(pcb, 1, 1);
+        }
+        // gnc <host> <port>
+        else {
+            // host
+            uchar ipaddr[4];
+            Dot2IP(next_tok, ipaddr);
+            gHtonl(ipaddr, ipaddr);
+
+            // port
+            next_tok = next_arg(" \n");
+            if (next_tok == NULL)
+                return;
+            u16_t port = atoi(next_tok);
+
+            // create and initialize pcb to make a TCP connection at the specified host and port
+            struct tcp_pcb * pcb = tcp_new();
+            err_t e0 = tcp_connect(pcb, ipaddr, port, NULL);
+            if (e0 != ERR_OK)
+                printf("tcp connect error: %d\n", e0);
+            tcp_recv(pcb, tcp_recv_callback);
+
+            // keep sending user input with the TCP connection
+            char payload[DEFAULT_MTU];
+            redefineSignalHandler(SIGINT, gncTerminate);
+            gncTerm = false;
+            while (!gncTerm) {
+                fgets(payload, sizeof(payload), stdin);
+                err_t e1 = tcp_write (pcb, payload, strlen(payload), TCP_WRITE_FLAG_MORE | TCP_WRITE_FLAG_COPY);
+                if (e1 != ERR_OK)
+                    printf("tcp write error: %d\n", e1);
+                err_t e2 = tcp_output(pcb);
+                if (e2 != ERR_OK)
+                    printf("tcp output error: %d\n", e2);
+            }
+
+            // reset SIGINT handler to ignore the signal
+            redefineSignalHandler(SIGINT, dummyFunctionCopy);
+
+            // remove and free pcb
+            err_t e3 = tcp_shutdown(pcb, 1, 1);
+            if (e3 != ERR_OK)
+                printf("shutdown err: %d\n", e3);
+        }
+    }
+
+    // -u for UDP
+    else {
+        char *next_tok = next_arg(" \n");
+        if (next_tok == NULL)
+            return;
+
+        // gnc -u -l <port>
+        if (!strcmp(next_tok, "-l")) {
+            // port
+            next_tok = next_arg(" \n");
+            if (next_tok == NULL)
+                return;
+            uint16_t port = atoi(next_tok);
+
+            // create and initialze pcb to listen to UDP connections at the specified port
+            struct udp_pcb * pcb = udp_new();
+            udp_recv(pcb, udp_recv_callback, pcb);
+            uchar any[4] = {0,0,0,0};
+            udp_bind(pcb, any, port);
+
+            // keep sending user input with the TCP connection
+            char payload[DEFAULT_MTU];
+            redefineSignalHandler(SIGINT, gncTerminate);
+            gncTerm = false;
+            while (!gncTerm) {
+                fgets(payload, sizeof(payload), stdin);
+
+                // create pbuf and call udp_send()
+                struct pbuf *p = pbuf_alloc(PBUF_TRANSPORT, strlen(payload), PBUF_RAM);
+                p->payload = payload;
+                err_t e1 = udp_send(pcb, p);
+                if (e1 != ERR_OK)
+                    printf("udp send error: %d\n", e1);
+            }
+
+            // reset SIGINT handler to ignore the signal
+            redefineSignalHandler(SIGINT, dummyFunctionCopy);
+
+            // remove and free pcb
+            udp_remove(pcb);
+        }
+
+        // gnc -u <host> <port>
+        else {
+            // host
+            uchar ipaddr[4];
+            Dot2IP(next_tok, ipaddr);
+
+            // port
+            next_tok = next_arg(" \n");
+            if (next_tok == NULL)
+                return;
+            uint16_t port = atoi(next_tok);
+
+            // create pcb and set its remote ip and remote port
+            struct udp_pcb * pcb = udp_new();
+            udp_connect(pcb, ipaddr, port);
+            udp_recv(pcb, udp_recv_callback, pcb);
+
+            // keep sending user input with the TCP connection
+            redefineSignalHandler(SIGINT, gncTerminate);
+            char payload[DEFAULT_MTU];
+            gncTerm = false;
+            while (!gncTerm) {
+                fgets(payload, sizeof(payload), stdin);
+
+                // create pbuf and call udp_send()
+                struct pbuf *p = pbuf_alloc(PBUF_TRANSPORT, strlen(payload), PBUF_RAM);
+                p->payload = payload;
+                err_t e1 = udp_send(pcb, p);
+                if (e1 != ERR_OK)
+                    printf("udp send error: %d\n", e1);
+            }
+
+            // reset SIGINT handler to ignore the signal
+            redefineSignalHandler(SIGINT, dummyFunctionCopy);
+
+            // remove and free pcb
+            udp_remove(pcb);
+
+        }
+    }
 }
 
 /*
