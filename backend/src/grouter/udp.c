@@ -209,6 +209,26 @@ udp_input(struct pbuf *p, gpacket_t *in_pkt, uchar *netmask, uchar *network)
                ip4_addr1_16(&iphdr->src), ip4_addr2_16(&iphdr->src),
                ip4_addr3_16(&iphdr->src), ip4_addr4_16(&iphdr->src), ntohs(udphdr->src)));
 
+#if LWIP_DHCP
+  pcb = NULL;
+  /* when LWIP_DHCP is active, packets to DHCP_CLIENT_PORT may only be processed by
+     the dhcp module, no other UDP pcb may use the local UDP port DHCP_CLIENT_PORT */
+  if (dest == DHCP_CLIENT_PORT) {
+    /* all packets for DHCP_CLIENT_PORT not coming from DHCP_SERVER_PORT are dropped! */
+    if (src == DHCP_SERVER_PORT) {
+      if ((inp->dhcp != NULL) && (inp->dhcp->pcb != NULL)) {
+        /* accept the packe if 
+           (- broadcast or directed to us) -> DHCP is link-layer-addressed, local ip is always ANY!
+           - inp->dhcp->pcb->remote == ANY or iphdr->src */
+        if ((ip_addr_isany(&inp->dhcp->pcb->remote_ip) ||
+           ip_addr_cmp(&(inp->dhcp->pcb->remote_ip), &current_iphdr_src))) {
+          pcb = inp->dhcp->pcb;
+        }
+      }
+    }
+  } else
+#endif /* LWIP_DHCP */
+
   {
     prev = NULL;
     local_match = 0;
