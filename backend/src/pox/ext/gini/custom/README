@@ -1,5 +1,0 @@
-Place your custom POX modules here. You can load them by right-clicking on the
-OpenFlow controller in gBuilder and selecting Load Module > Custom.
-
-Your custom POX modules should follow the format used for the sample
-applications in the samples directory.

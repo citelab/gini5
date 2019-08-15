@@ -1,4 +1,0 @@
-gpacket.frame.src_ip_addr -- is set *this node*.. where is set? May be GNET?
-
-gpacket.frame.nxth_ip_addr, &(pkt->gpacket.frame.dst_interface ..
-these values are also set somewhere.. check them.
