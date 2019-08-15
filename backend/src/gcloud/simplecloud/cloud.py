@@ -16,11 +16,13 @@ Core components:
 from simplecloud import docker_client, docker_api_client, logger
 from simplecloud.network import BridgeNetwork, OpenVSwitchNetwork, OvsException
 from simplecloud.registrator import Registrator
+from simplecloud.sfc_orchestrator import SfcOrchestrator, SfcException
 import requests
 import base64
 import traceback
 
 
+# available configurations for proxy
 proxy_configs = {
     'mode': ('tcp', 'http'),
     'balance': (
@@ -31,6 +33,9 @@ proxy_configs = {
 
 
 def _check_alive_container(container):
+    """
+    Returns the status of a Docker container
+    """
     try:
         container.reload()
         return container.status == 'running'
@@ -39,6 +44,9 @@ def _check_alive_container(container):
 
 
 def _stop_container(container):
+    """
+    Force remove a container
+    """
     try:
         logger.info(f'Stopping container {container.id}')
         container.remove(force=True)
@@ -69,11 +77,16 @@ class MyCloudService:
 
     @property
     def size(self):
+        """
+        Returns the number of containers for this service
+        """
         self.reload()
         return len(self.containers)
 
     def _create_container(self):
-
+        """
+        Create a container running this service
+        """
         host_config = docker_api_client.create_host_config(
             auto_remove=True,
             port_bindings={
@@ -100,6 +113,9 @@ class MyCloudService:
         return container
 
     def _run_container(self):
+        """
+        Start a container
+        """
         container = self._create_container()
         # order of operation may affect how registrator works
         if self.network.ovs:
@@ -111,6 +127,9 @@ class MyCloudService:
         return container
 
     def info(self):
+        """
+        Returns detailed information about this services
+        """
         _info = {
             "Image": self.image,
             "Service name": self.name,
@@ -126,6 +145,9 @@ class MyCloudService:
         return _info
 
     def start(self, scale):
+        """
+        Start all containers in the service
+        """
         """Start the service with an initial number of containers"""
         for _ in range(scale):
             try:
@@ -135,11 +157,15 @@ class MyCloudService:
                 logger.error(e)
 
     def reload(self):
-        """Refresh the docker client for up-to-date containers status"""
+        """
+        Refresh the docker client for up-to-date containers status
+        """
         self.containers = list(filter(_check_alive_container, self.containers))
 
     def scale(self, new_size):
-        """Scale up or down the current service"""
+        """
+        Scale up or down the current service
+        """
         if new_size < 1:
             return False
         cur_size = self.size
@@ -165,7 +191,9 @@ class MyCloudService:
         return True
 
     def stop(self):
-        """Stop all containers"""
+        """
+        Stop all containers
+        """
         for container in self.containers:
             try:
                 self.network.remove_container(container.id)
@@ -227,6 +255,7 @@ class MyCloud:
         self.proxy = None
         self.services = {}
         self.used_ports = set()
+        self.sfc_orchestrator = SfcOrchestrator(self.network)
 
         try:
             self.create_registry()
@@ -262,6 +291,10 @@ class MyCloud:
             raise CloudException
 
     def create_registry(self):
+        """
+        Create container for service registry.
+        Use citelab/consul-server:latest Docker image
+        """
         host_config = docker_api_client.create_host_config(
             restart_policy={
                 "Name": "on-failure",
@@ -280,6 +313,10 @@ class MyCloud:
         self.registry = docker_client.containers.get(container)
 
     def create_registrator(self):
+        """
+        Create registrator container for auto service discovery.
+        Use citelab/registrator:latest Docker image
+        """
         host_config = docker_api_client.create_host_config(
             restart_policy={
                 "Name": "on-failure",
@@ -307,7 +344,9 @@ class MyCloud:
         self.registrator = docker_client.containers.get(container)
 
     def create_proxy(self):
-
+        """
+        Create proxy image. Use citelab/haproxy:latest Docker image
+        """
         if self.proxy_entrypoint:
             proxy_binds = ["%s:/root/entry/custom-entrypoint.sh" % self.proxy_entrypoint]
             proxy_volumes = ["/root/entry/custom-entrypoint.sh"]
@@ -345,11 +384,17 @@ class MyCloud:
 
     @property
     def _registry_public_ip(self):
+        """
+        Returns service registry's IP on Docker bridge network
+        """
         self.registry.reload()
 
         return self.registry.attrs['NetworkSettings']['Networks']['bridge']['IPAddress']
 
     def registry_update(self, service, key, value=None, action='put'):
+        """
+        Send a put request to service registry's KV store
+        """
         if service not in self.services:
             return False
         if key not in proxy_configs or value not in proxy_configs[key]:
@@ -357,9 +402,9 @@ class MyCloud:
 
         # craft uri from arguments
         if self.network.ovs:
-            uri = 'http://%s:8500/v1/kv/service/%s/%s' % (self._registry_public_ip, service, key)
+            uri = f'http://{self._registry_public_ip}:8500/v1/kv/service/{service}/{key}'
         else:
-            uri = 'http://%s:8500/v1/kv/service/%s/%s' % (self.registry_ip, service, key)
+            uri = f'http://{self.registry_ip}:8500/v1/kv/service/{service}/{key}'
         if action == 'put' and value is not None:
             resp = requests.put(uri, data=value)
             if resp.json():    # success
@@ -376,7 +421,9 @@ class MyCloud:
             return False
 
     def registry_get(self, service, key):
-        # TODO
+        """
+        Send a get request to service registry's KV store
+        """
         if service not in self.services:
             return False
         if key not in proxy_configs:
@@ -384,9 +431,9 @@ class MyCloud:
 
         # craft uri from arguments
         if self.network.ovs:
-            pass
+            uri = f'http://{self._registry_public_ip}:8500/v1/kv/service/{service}/{key}'
         else:
-            uri = 'http://%s:8500/v1/kv/service/%s/%s'
+            uri = f'http://{self.registry_ip}:8500/v1/kv/service/{service}/{key}'
         resp = requests.get(uri)
 
         # returns default values if key does not exists
@@ -397,6 +444,9 @@ class MyCloud:
             return base64.b64decode(value)
 
     def start_service(self, image, name, port, scale=1, command=None):
+        """
+        Start a service with initial scale and register it
+        """
         if name in self.services:
             logger.warning(f"Service {name} already exists")
             return
@@ -410,10 +460,16 @@ class MyCloud:
         self.used_ports.add(port)
 
     def initialize_services(self, services_list):
+        """
+        Start initial services that were requested in the constructor
+        """
         for service in services_list:
             self.start_service(**service)
 
     def stop_service(self, name):
+        """
+        Stop and deregister
+        """
         old_service = self.services.pop(name, None)
         if old_service:
             old_service.stop()
@@ -424,28 +480,144 @@ class MyCloud:
         return False
 
     def list_services(self):
+        """
+        Returns list of services
+        """
         return self.services.keys()
 
     def info_service(self, name):
+        """
+        Returns detailed information about the service
+        """
         if name in self.services:
             return self.services[name].info()
         else:
             return {}
 
     def scale_service(self, name, size):
+        """
+        Scale a service up or down
+        """
         if name in self.services:
             return self.services[name].scale(size)
         else:
             return False
 
     def _update(self):
+        """
+        Update Docker API objects
+        """
         self.network.reload()
         for container in (self.registry, self.registrator, self.proxy):
             container.reload()
         for service in self.services.values():
             service.reload()
 
+    def sfc_init(self):
+        """
+        Starts the SFC functionality for this cloud instance
+        """
+        if self.network.ovs:
+            self.sfc_orchestrator.open_connection()
+            return True
+        return False
+
+    def sfc_add_service(self, function, service_name):
+        """
+        Create a network function service with a unique name
+        """
+        return self.sfc_orchestrator.start_service_node(function, service_name)
+
+    def sfc_remove_service(self, service_name, force=False):
+        """
+        Remove a network function service, if force is true and there exists
+        service function chains and paths that contain this service, they will
+        get removed as well. Otherwise nothing is deleted.
+        """
+        return self.sfc_orchestrator.remove_service_node(service_name, force)
+
+    def sfc_show_services(self):
+        """
+        Show all active services within this cloud private network
+        """
+        return self.sfc_orchestrator.show_services()
+
+    def sfc_create_chain(self, services):
+        """
+        This function expects services to be a space-separated string, consisting
+        of network function services
+        """
+        if len(set(services)) < len(services):
+            logger.warning('Cannot have duplicated network function in an SFC')
+            return None
+        return self.sfc_orchestrator.create_service_chain(services)
+
+    def sfc_remove_chain(self, chain_id, force=False):
+        return self.sfc_orchestrator.remove_service_chain(chain_id, force)
+
+    def sfc_show_chains(self):
+        return self.sfc_orchestrator.show_service_chains()
+
+    def sfc_create_path(self, src, dst, chain_id):
+        if src == dst:
+            return False
+
+        if src == 'internet':
+            src = [self.proxy]
+        else:
+            src = self.services.get(src, None)
+            if src:
+                src = src.containers
+            else:
+                return False
+        if dst == 'internet':
+            dst = [self.proxy]
+        else:
+            dst = self.services.get(dst, None)
+            if dst:
+                dst = dst.containers
+            else:
+                return False
+
+        for u in src:
+            for v in dst:
+                if not self.sfc_orchestrator.create_service_path(u, v, chain_id):
+                    return False
+        return True
+
+    def sfc_remove_path(self, src, dst):
+        if src == dst:
+            return False
+
+        if src == 'internet':
+            src = [self.proxy]
+        else:
+            src = self.services.get(src, None)
+            if src:
+                src = src.containers
+            else:
+                return False
+        if dst == 'internet':
+            dst = [self.proxy]
+        else:
+            dst = self.services.get(dst, None)
+            if dst:
+                dst = dst.containers
+            else:
+                return False
+
+        for u in src:
+            for v in dst:
+                self.sfc_orchestrator.remove_service_path(u, v)
+        return True
+
+    def sfc_show_paths(self):
+        return self.sfc_orchestrator.show_service_paths()
+
     def cleanup(self):
+        """
+        Stop the cloud manager and all components
+        """
         logger.debug("Cleaning up everything")
         self.network.stop_listening()
         for container in (self.registry, self.registrator, self.proxy):
@@ -456,6 +628,8 @@ class MyCloud:
                 continue
         for service in self.services.values():
             service.stop()
+        if self.sfc_orchestrator:
+            self.sfc_orchestrator.stop()
         try:
             self.network.remove()
         except:
@@ -463,3 +637,4 @@ class MyCloud:
 
         self.running = False
         logger.debug("Removed running services and docker network")
+

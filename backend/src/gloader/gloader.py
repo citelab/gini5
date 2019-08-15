@@ -581,7 +581,7 @@ def create_cloud(gini, opts):
             screen_command = "screen -d -m -L -S %s " % cloud.name
             docker_command = "docker run -it --rm --privileged --network host " \
                              "-v /var/run/docker.sock:/var/run/docker.sock " \
-                             "-v /var/run/openvswitch/db.sock:/var/run/openvswitch/db.sock " \
+                             "-v /var/run/openvswitch/:/var/run/openvswitch/ " \
                              "-v /var/run/netns:/var/run/netns " \
                              "-v /proc:/proc " \
                              "-v %s:/code/config.json " \

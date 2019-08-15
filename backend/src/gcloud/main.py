@@ -2,6 +2,7 @@
 # -*- coding: utf-8 -*-
 
 from simplecloud import cloud, logger
+from simplecloud import sfc_orchestrator as sfc
 from cmd import Cmd
 
 import os
@@ -13,7 +14,6 @@ import argparse
 import shlex
 from inspect import cleandoc
 from collections import defaultdict
-import traceback
 import signal
 
 
@@ -31,6 +31,10 @@ def _parse_dict(token, default=None):
         return result
     except ValueError:
         return default or {}
+
+
+def _parse_bool(token):
+    return token.lower() == 'true'
 
 
 def _parse_args(argv):
@@ -109,8 +113,8 @@ class CloudShell(Cmd, object):
                     line = self.precmd(line)
                     stop = self.onecmd(line)
                     stop = self.postcmd(stop, line)
-                except:
-                    continue
+                except Exception as err:
+                    logger.exception(err)
             self.postloop()
         finally:
             if self.use_rawinput and self.completekey:
@@ -232,10 +236,10 @@ class CloudShell(Cmd, object):
 
     def _parse_config(self, line):
         argv = shlex.split(line)
-        if len(argv) < 3:
-            self.stdout.write("Usage: config SERVICE_NAME KEY VALUE [--action=<delete|put>]")
-            return None
         _parsed, argv = _parse_args(argv)
+        if len(argv) < 3:
+            self.stdout.write("Usage: config SERVICE_NAME KEY VALUE [--action=<delete|put>]\n")
+            return None
         _action = _parsed.get("action", "put").lower()
         if _action not in ("put", "delete"):
             return None
@@ -284,6 +288,235 @@ class CloudShell(Cmd, object):
         Usage: stats"""
         url = 'http://%s:10000/stats' % self.cloud.proxy_ip
         webbrowser.open(url)
+
+    def do_sfc_init(self, line):
+        """Start SFC functionality for this cloud instance
+
+        Usage: sfc_init"""
+        if self.cloud.sfc_init():
+            sys.stdout.write("SFC orchestrator started\n")
+        else:
+            sys.stdout.write("SFC functionality is for bridge network is not supported\n")
+
+    def _parse_sfc_addnode(self, line):
+        argv = shlex.split(line)
+        if len(argv) < 2:
+            self.stdout.write("Usage: sfc_addnode SERVICE NAME\n")
+            return None
+        _kwargs = {
+            "service": argv[0],
+            "name": argv[1]
+        }
+        return _kwargs
+
+    def complete_sfc_addnode(self, text, *ignored):
+        argv = shlex.split(text)
+        if len(argv) <= 1:
+            _network_services = sfc.vnf.keys()
+            return [name for name in _network_services if name.startswith(text)]
+        else:
+            return []
+
+    def do_sfc_addnode(self, line):
+        """Create a network function instance with a name
+
+        Usage: sfc_addnode SERVICE NAME
+        Example: sfc_addnode firewall firewall01"""
+        _kwargs = self._parse_sfc_addnode(line)
+        if not _kwargs:
+            return
+        else:
+            if self.cloud.sfc_add_service(
+                _kwargs["service"],
+                _kwargs["name"]
+            ):
+                sys.stdout.write("Service added\n")
+            else:
+                sys.stdout.write("Network service creation failed\n")
+
+    def _parse_sfc_delnode(self, line):
+        argv = shlex.split(line)
+        _parsed, argv = _parse_args(argv)
+        if len(argv) < 1:
+            self.stdout.write("Usage: sfc_delnode NAME_1 NAME_2 ... [--force=<true|false>]\n")
+            return None
+        force = _parse_bool(_parsed.get("force", "false"))
+        _kwargs = {
+            "names": argv,
+            "force": force
+        }
+        return _kwargs
+
+    def complete_sfc_delnode(self, text, line, *ignored):
+        if self.cloud.sfc_orchestrator:
+            appeared = shlex.split(line)
+            nodes = self.cloud.sfc_orchestrator.services.keys()
+            return [name for name in nodes if name.startswith(text) and name not in appeared[1:]]
+        else:
+            return []
+
+    def do_sfc_delnode(self, line):
+        """Remove an active network function instance
+        If there are active service chains that use this service node, use
+        --force=true to remove everything
+
+        Usage: sfc_delnode NAME_01 NAME_02 ... [--force=<true|false>]"""
+        _kwargs = self._parse_sfc_delnode(line)
+        if not _kwargs:
+            return
+        else:
+            force = _kwargs["force"]
+            for node in _kwargs["names"]:
+                self.cloud.sfc_remove_service(node, force)
+            sys.stdout.write("OK\n")
+
+    def do_sfc_listnode(self, line):
+        """List active instances of network function services
+
+        Usage: sfc_listnode"""
+        nodes_info = self.cloud.sfc_show_services()
+        sys.stdout.write(json.dumps(nodes_info, indent=2))
+        sys.stdout.write("\n")
+
+    def complete_sfc_addchain(self, text, line, *ignored):
+        if self.cloud.sfc_orchestrator:
+            appeared = shlex.split(line)
+            nodes = self.cloud.sfc_orchestrator.services.keys()
+            return [name for name in nodes if name.startswith(text) and name not in appeared[1:]]
+        return []
+
+    def do_sfc_addchain(self, line):
+        """Create an ordered service function chain
+
+        Usage: sfc_addchain SERVICE_1 SERVICE_2 SERVICE_3 ..."""
+        argv = shlex.split(line)
+        chain_id = self.cloud.sfc_create_chain(argv)
+        if chain_id:
+            sys.stdout.write(f"Service chain created with id {chain_id}\n")
+        else:
+            sys.stdout.write("Could not create service chain\n")
+
+    def _parse_sfc_delchain(self, line):
+        argv = shlex.split(line)
+        _parsed, argv = _parse_args(argv)
+        if len(argv) < 1:
+            self.stdout.write("Usage: sfc_delchain NAME_1 NAME_2 ... [--force=<true|false>]\n")
+            return None
+        force = _parse_bool(_parsed.get("force", "false"))
+        _kwargs = {
+            "names": argv,
+            "force": force
+        }
+        return _kwargs
+
+    def complete_sfc_delchain(self, text, line, *ignored):
+        if self.cloud.sfc_orchestrator:
+            appeared = shlex.split(line)
+            chains = self.cloud.sfc_orchestrator.chains.keys()
+            return [name for name in chains if name.startswith(text) and name not in appeared[1:]]
+        return []
+
+    def do_sfc_delchain(self, line):
+        """Remove an active service function chain
+        If there exists service paths that use this chain, use --force=true to
+        remove everything
+
+        Usage: sfc_delchain CHAIN_ID_01 CHAIN_ID_02 CHAIN_ID_03 [--force=<true|false>]"""
+        _kwargs = self._parse_sfc_delchain(line)
+        if not _kwargs:
+            return
+        else:
+            chains = _kwargs["names"]
+            force = _kwargs["force"]
+            for chain_id in chains:
+                self.cloud.sfc_remove_chain(chain_id, force)
+            sys.stdout.write("OK\n")
+
+    def do_sfc_listchain(self, line):
+        """List all available service chains in the cloud private network
+
+        Usage: sfc_listchain"""
+        chains_info = self.cloud.sfc_show_chains()
+        sys.stdout.write(json.dumps(chains_info, indent=2))
+        sys.stdout.write("\n")
+
+    def _parse_sfc_addpath(self, line):
+        argv = shlex.split(line)
+        if len(argv) != 3:
+            self.stdout.write("Usage: sfc_addpath SOURCE DESTINATION CHAIN_ID\n")
+            return None
+        _kwargs = {
+            "src": argv[0],
+            "dst": argv[1],
+            "chain_id": argv[2]
+        }
+        return _kwargs
+
+    def complete_sfc_addpath(self, text, line, *ignored):
+        argv = shlex.split(line)
+        if len(argv) <= 2 or (len(argv) == 3 and line[-1] != ' '):
+            services = list(self.cloud.list_services()) + ['internet']
+            return [name for name in services if name.startswith(text) and name not in argv[1:]]
+        elif len(argv) == 4 or (len(argv) == 3 and line[-1] == ' '):
+            chains = self.cloud.sfc_orchestrator.chains.keys()
+            return [cid for cid in chains if cid.startswith(text)]
+        else:
+            return []
+
+    def do_sfc_addpath(self, line):
+        """Create a service path from source to destination through a service chain
+
+        Usage: sfc_addpath SOURCE DESTINATION CHAIN_ID"""
+        _kwargs = self._parse_sfc_addpath(line)
+        if not _kwargs:
+            return
+        else:
+            src = _kwargs["src"]
+            dst = _kwargs["dst"]
+            chain_id = _kwargs["chain_id"]
+            if self.cloud.sfc_create_path(src, dst, chain_id):
+                self.stdout.write(f"Service path created between {src} and {dst}\n")
+            else:
+                self.stdout.write("Could not create service path")
+
+    def _parse_sfc_delpath(self, line):
+        argv = shlex.split(line)
+        if len(argv) < 2:
+            self.stdout.write("Usage: sfc_delpath SOURCE DESTINATION [--force=<true|false>]\n")
+            return None
+        _kwargs = {
+            "src": argv[0],
+            "dst": argv[1],
+        }
+        return _kwargs
+
+    def complete_sfc_delpath(self, text, line, *ignored):
+        argv = shlex.split(line)
+        services = list(self.cloud.list_services()) + ['internet']
+        return [name for name in services if name.startswith(text) and name not in argv[1:]]
+
+    def do_sfc_delpath(self, line):
+        """Remove a service path, uniquely identified by source and destination
+
+        Usage: sfc_delpath SOURCE DESTINATION"""
+        _kwargs = self._parse_sfc_delpath(line)
+        if not _kwargs:
+            return
+        else:
+            src = _kwargs["src"]
+            dst = _kwargs["dst"]
+            if self.cloud.sfc_remove_path(src, dst):
+                sys.stdout.write("OK\n")
+            else:
+                sys.stdout.write("Could not remove service path\n")
+
+    def do_sfc_listpath(self, line):
+        """List all active service paths in the cloud private network
+
+        Usage: sfc_listpath"""
+        paths_info = self.cloud.sfc_show_paths()
+        sys.stdout.write(json.dumps(paths_info, indent=2))
+        sys.stdout.write("\n")
 
     def do_exit(self, line):
         """Remove cloud services and exit the shell
@@ -406,10 +639,8 @@ if __name__ == "__main__":
 
         cloud_shell.cmdloop()
 
-    except Exception as e:
-        logger.error(''.join(
-                traceback.format_exception(
-                    type(e), e, e.__traceback__)))
+    except Exception as err:
+        logger.exception(err)
     finally:
         if my_cloud and my_cloud.running:
             my_cloud.cleanup()

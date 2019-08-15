@@ -20,9 +20,10 @@ from pox.lib.packet.ipv4 import ipv4, IP_ANY, IP_BROADCAST
 from pox.lib.packet.arp import arp
 import pox.lib.util as poxutil
 import json
-import socket
-from threading import Thread
+from socket import *
+import threading
 import random
+from enum import IntEnum
 
 log = core.getLogger()
 
@@ -30,10 +31,64 @@ log = core.getLogger()
 l2_pairs_table = {}
 all_ports = of.OFPP_FLOOD
 
+# SDN Controller will listen to this port for instructions from the SFC orchestrator
+NORTHBOUND_PORT = 8081
+BUFFER_SIZE = 4096
+
+
+class MessageType(IntEnum):
+    META = 0
+    CONTROL = 1
+
+
+class MetaAction(IntEnum):
+    HELLO = 0
+    BYE = 1
+
+
+class ControlAction(IntEnum):
+    ADD_CHAIN = 0
+    DEL_CHAIN = 1
+    ADD_PATH = 2
+    DEL_PATH = 3
+
+
+class ControllerMessage:
+    def __init__(self, dpid, controllerIP):
+        self._type = None
+        self._action = None
+        self._controllerIP = controllerIP
+        self._dpid = dpid
+        self.src = None
+        self.dst = None
+        self.chainID = -1
+        self.chain = []
+
+    def setType(self, t):
+        if t in MessageType:
+            self._type = t
+            return True
+        return False
+
+    def setAction(self, action):
+        if self._type == MessageType.META:
+            if action in MetaAction:
+                self._action = action
+                return True
+            return False
+        elif self._type == MessageType.CONTROL:
+            if action in ControlAction:
+                self._action = action
+                return True
+            return False
+        else:
+            return False
+
+
 def _randomMacAddress():
-    macAddr = "02:00:00:%02x:%02x:%02x" % (random.randint(0,255),
-                                            random.randint(0,255),
-                                            random.randint(0,255))
+    macAddr = "02:00:00:%02x:%02x:%02x" % (random.randint(0, 255),
+                                            random.randint(0, 255),
+                                            random.randint(0, 255))
     return libaddr.EthAddr(macAddr)
 
 
@@ -84,9 +139,7 @@ class ServiceFunctionChain:
 
     Attributes:
         services:   list of network services (Node objects)
-        dpid:       DPID of the OpenvSwitch
-        idx:        Service chain index in the private network, assigned by the
-                    SFC orchestrator
+        _id:        a special string which uniquely identifies this SFC
         portMap:    Mapping of OVS port -> index of node
 
     Note that a single network Node may belong to more than one service chain.
@@ -94,20 +147,19 @@ class ServiceFunctionChain:
     SOURCE_NODE = -1
     DESTINATION_NODE = -2
 
-    def __init__(self, services, dpid, idx):
+    def __init__(self, services, serviceID):
         self.services = services
-        self.dpid = dpid
-        self.idx = idx
+        self._id = serviceID
         self.portMap = {}
 
-        for i,node in enumerate(self.services):
+        for i, node in enumerate(self.services):
             self.portMap[node.getOvsPort()] = i
 
         self.firstNode = 0
         self.lastNode = len(self.services)-1
 
     def getServiceID(self):
-        return (self.dpid, self.idx)
+        return self._id
 
     def getNextNodeIndex(self, ovsPort):
         """
@@ -123,14 +175,14 @@ class ServiceFunctionChain:
             return idx+1
 
     def __hash__(self):
-        return hash((self.dpid, self.idx))
+        return hash(self._id)
 
     def __str__(self):
         chainString = '-'.join([repr(s) for s in self.services])
         return 'Service chain of: {%s}' % chainString
 
     def __repr__(self):
-        return '<ServiceFunctionChain: %s-%s>' % (self.dpid, self.idx)
+        return '<ServiceFunctionChain: %s>' % (self._id)
 
 
 class OvsConnection:
@@ -203,10 +255,16 @@ class OvsConnection:
     def addNode(self, ip, mac, port=None):
         """
         Construct a new Node from the given argument, keep it in self.nodes,
-        and perform active OVS port discovery
+        and perform active OVS port discovery. If there is already a node with
+        the same IP and MAC, no new node will be created
         """
         ipaddr = libaddr.IPAddr(ip)
         macaddr = libaddr.EthAddr(mac)
+
+        node = self.nodes.get(ipaddr, None)
+        if node and node.mac == macaddr:
+            return node
+
         newNode = Node(ipaddr, macaddr, port=port)
         self.nodes[ipaddr] = newNode
         self.sendArpRequest(newNode)
@@ -246,19 +304,54 @@ class OvsConnection:
 
         log.debug('Added a new service chain %s' % serviceChain)
 
-    def addServicePath(self, src, dst, serviceID):
+    def removeServiceChain(self, chainID):
+        """
+        Remove an available service chain
+        """
+        if chainID not in self.availableChains:
+            return
+
+        pathToRemove = []
+        for pathID, chain in self.servicePaths.items():
+            if chainID == chain.getServiceID():
+                pathToRemove.append(pathID)
+        for t in pathToRemove:
+            srcIP, dstIP = t
+            src = self.nodes.get(srcIP)
+            dst = self.nodes.get(dstIP)
+            self.removeServicePath(src, dst)
+
+        del self.availableChains[chainID]
+
+        log.debug('Removed service chain with ID %s' % chainID)
+
+    def addServicePath(self, src, dst, serviceChainID):
         """
         Append a new service path, uniquely identified by the (src,dst) pair.
         If serviceID does not exist in availableServiceChains, do nothing.
         """
-        serviceChain = self.availableChains.get(serviceID)
+        serviceChain = self.availableChains.get(serviceChainID)
         if not serviceChain:
-            log.warning('No service chain with ID %s found' % str(serviceID))
+            log.warning('No service chain with ID %s found' % str(serviceChainID))
         else:
             self.servicePaths[(src.ip,dst.ip)] = serviceChain
             self.installServiceChainFlow(src.ip, dst.ip, serviceChain)
 
-            log.debug('Service path created between %s and %s' % (src.ip,dst.ip))
+            log.debug('Created service path between %s and %s' % (src.ip, dst.ip))
+
+    def removeServicePath(self, src, dst):
+        """
+        Remove an existing service path
+        """
+        pathID = (src.ip, dst.ip)
+        chain = self.servicePaths.get(pathID, -1)
+        if chain.getServiceID() == -1:
+            log.warning('No service path with src and dst found')
+        else:
+            self.removeServiceChainFlow(src.ip, dst.ip, chain)
+            del self.servicePaths[pathID]
+
+            log.debug('Removed service path between %s and %s' % (src.ip, dst.ip))
 
     def setNodeOvsPort(self, nodeIP, ovsPort):
         """
@@ -315,11 +408,44 @@ class OvsConnection:
         for msg in pendingMessages:
             self.sendMessage(msg)
 
-        def __str__(self):
-            return str(self.dpid)
+    def removeServiceChainFlow(self, srcIP, dstIP, chain):
+        """
+        Remove flow rules in the OVS corresponding to a service path
+        """
+        log.info('Removing flow rules for chain from %s -> %s' % (srcIP,dstIP))
 
-        def __repr__(self):
-            return "<OvsConnection: %d>" % self.dpid
+        srcNode = self.nodes.get(srcIP, None)
+        dstNode = self.nodes.get(dstIP, None)
+
+        servicePath = [srcNode] + chain.services + [dstNode]
+
+        pendingMessages = []
+
+        for idx in range(len(servicePath)-1):
+            curNode = servicePath[idx]
+            nextNode = servicePath[idx+1]
+            curPort = curNode.getOvsPort()
+            nextPort = nextNode.getOvsPort()
+
+            if curPort is None or nextPort is None:
+                return
+
+            msg = of.ofp_flow_mod(command=of.OFPFC_DELETE)
+            msg.match.dl_type = ethernet.IP_TYPE
+            msg.match.nw_src = srcIP
+            msg.match.nw_dst = dstIP
+            msg.match.in_port = curPort
+
+            pendingMessages.append(msg)
+
+        for msg in pendingMessages:
+            self.sendMessage(msg)
+
+    def __str__(self):
+        return str(self.dpid)
+
+    def __repr__(self):
+        return "<OvsConnection: %d>" % self.dpid
 
 
 class SfcController:
@@ -343,7 +469,7 @@ class SfcController:
         core.openflow.addListeners(self)
 
         # listen via NorthBound API
-        t = Thread(target=self.listen)
+        t = threading.Thread(target=self.listen)
         t.daemon = True
         t.start()
 
@@ -477,31 +603,102 @@ class SfcController:
             else:
                 self._l2Pairs_PacketIn_handle(event)
 
+    def controllerMessageHandler(self, message):
+        try:
+            parsed = json.loads(message)
+
+            msgType = parsed.get("Type", None)
+            msgAction = parsed.get("Action", None)
+            dpid = parsed.get("DPID")
+            poxIP = parsed.get("POX IP")
+            src = parsed.get("Source")
+            dst = parsed.get("Destination")
+            chainID = parsed.get("ChainID")
+            input_chain = parsed.get("Chain")
+            ovsConn = self.connections.get(dpid, None)
+
+            if not ovsConn:
+                return
+
+            msgType = MessageType(msgType)
+
+            if msgType == MessageType.META:
+                msgAction = MetaAction(msgAction)
+
+                if msgAction == MetaAction.HELLO:
+                    ovsConn.setIP(poxIP)
+                else:
+                    return True
+            elif msgType == MessageType.CONTROL:
+                msgAction = ControlAction(msgAction)
+
+                if msgAction == ControlAction.ADD_CHAIN:
+                    services = []
+                    for interface in input_chain:
+                        ip, mac = interface['IP'], interface['MAC']
+                        newNode = ovsConn.addNode(ip, mac)
+                        services.append(newNode)
+                        chain = ServiceFunctionChain(services, chainID)
+                        ovsConn.addServiceChain(chain)
+                elif msgAction == ControlAction.DEL_CHAIN:
+                    ovsConn.removeServiceChain(chainID)
+                elif msgAction == ControlAction.ADD_PATH:
+                    source = ovsConn.addNode(src['IP'], src['MAC'])
+                    destination = ovsConn.addNode(dst['IP'], dst['MAC'])
+                    ovsConn.addServicePath(source, destination, chainID)
+                elif msgAction == ControlAction.DEL_PATH:
+                    source = ovsConn.addNode(src['IP'], src['MAC'])
+                    destination = ovsConn.addNode(dst['IP'], dst['MAC'])
+                    ovsConn.removeServicePath(source, destination)
+        except Exception as err:
+            log.exception(err)
+
+    def clientThread(self, client, addr):
+        log.debug('New client connected %s:%d' % (addr[0], addr[1]))
+
+        while True:
+            try:
+                payload = client.recv(BUFFER_SIZE)
+                if self.controllerMessageHandler(payload.decode()):
+                    break
+            except:
+                break
+
+        client.close()
+        log.debug('Close connection with client at %s:%d' % (addr[0], addr[1]))
+
     def listen(self):
         """
         Act as a TCP server, listen to the instructions from SFC orchestrator
         to create/modify/delete service chains.
         """
-        pass
+        serverSocket = socket(AF_INET, SOCK_STREAM)
+        serverSocket.setsockopt(SOL_SOCKET, SO_REUSEADDR, 1)
+        serverSocket.bind(('0.0.0.0', NORTHBOUND_PORT))
+        serverSocket.listen(100)
+        log.info('Listening via Northbound port %d', NORTHBOUND_PORT)
+
+        while True:
+            client, addr = serverSocket.accept()
+            t = threading.Thread(target=self.clientThread, args=(client, addr))
+            t.daemon = True
+            t.start()
 
 
-def launch ():
-    core.registerNew(SfcController)
+def launch():
+    # core.registerNew(SfcController)
 
-    """
     sfc = core.registerNew(SfcController)
 
-    conn = sfc.connections.values()[0]
-    conn.setIP('172.31.0.252')
-    node1 = conn.addNode('172.31.0.2', 'fe:fd:02:00:00:01')
-    node2 = conn.addNode('172.31.0.3', 'fe:fd:02:00:00:02')
-    node3 = conn.addNode('172.31.0.4', 'fe:fd:02:00:00:03')
-
-    chain = ServiceFunctionChain([node2], conn.dpid, 1)
-
-    conn.addServiceChain(chain)
-    conn.addServicePath(node1, node3, chain.getServiceID())
-
-    log.info('OK')
-    """
-
+    # conn = sfc.connections.values()[0]
+    # conn.setIP('172.31.0.252')
+    # node1 = conn.addNode('172.31.0.2', 'fe:fd:02:00:00:01')
+    # node2 = conn.addNode('172.31.0.3', 'fe:fd:02:00:00:02')
+    # node3 = conn.addNode('172.31.0.4', 'fe:fd:02:00:00:03')
+    #
+    # chain = ServiceFunctionChain([node2], "1209321-1")
+    #
+    # conn.addServiceChain(chain)
+    # conn.addServicePath(node1, node3, chain.getServiceID())
+    #
+    # log.info('OK')

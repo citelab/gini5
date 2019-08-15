@@ -1,13 +1,50 @@
 #!/usr/bin/env python3.7
 # -*- coding: utf-8 -*-
 
-
 from abc import ABC, abstractmethod
 import docker
 import ipaddress
 from simplecloud import docker_client, docker_api_client, logger
 from sortedcontainers import SortedSet
 import subprocess
+import random
+
+
+def _fmt(x):
+    return f'{x:02x}'
+
+
+def _generate_random_MAC():
+    """
+    Create MAC addresses for containers. This function is useful in the case
+    of SFC where we need container's L2 and L3 information. Therefore, this
+    function might only be used with OvsNetwork. The possibility of a hash
+    collision should be slim.
+    """
+    mac = [0x00, 0x16, 0x3e,
+           random.randint(0x00, 0x7f),
+           random.randint(0x00, 0x7f),
+           random.randint(0x00, 0x7f)]
+    return ':'.join([_fmt(x) for x in mac])
+
+
+class Interface:
+    """
+    This class represents a network interface, which consists of IPv4 and MAC
+    addresses. In the future, IPv6 could be supported.
+    """
+    def __init__(self, ip, mac):
+        self.ip = ip
+        self.mac = mac
+
+    def to_dict(self):
+        return {'MAC': self.mac, 'IP': str(self.ip)}
+
+    def __str__(self):
+        return f'{self.mac}, {self.ip}'
+
+    def __repr__(self):
+        return f'<Interface: {self.mac}, {self.ip}>'
 
 
 class BaseNetwork(ABC):
@@ -40,7 +77,7 @@ class BaseNetwork(ABC):
         ...
 
     @abstractmethod
-    def resolve_ip(self, cid):
+    def resolve_interface(self, cid):
         ...
 
     @abstractmethod
@@ -49,6 +86,21 @@ class BaseNetwork(ABC):
 
 
 class BridgeNetwork(BaseNetwork):
+    """
+    Network driver that handles a Linux bridge.
+
+    Attributes:
+        _network:   The network instance provided by Docker API
+        ovs:        Indicates whether this driver is an OVS driver, always False
+        subnet:     IPv4 object
+        address_pool:
+        containers: Mapping of cid -> Interface
+        listening:  Indicates whether this driver is actively listening to
+                    Docker events
+        name:       Network name
+        reservations:
+        _handlers:
+    """
     def __init__(self, network_name, subnet, reserved_ips=None):
         self._network = None
         self.ovs = False
@@ -234,8 +286,8 @@ class BridgeNetwork(BaseNetwork):
     def stop_listening(self):
         self.listening = False
 
-    def resolve_ip(self, cid):
-        return str(self.containers[cid])
+    def resolve_interface(self, cid):
+        return self.containers.get(cid, None)
 
 
 class OvsException(Exception):
@@ -243,6 +295,22 @@ class OvsException(Exception):
 
 
 class OpenVSwitchNetwork(BaseNetwork):
+    """
+    Network driver that handles an OVS bridge.
+
+
+    Attributes:
+        name:       Network name
+        ovs:        Always True, since this driver managing an OVS
+        dpid:       The datapath ID of the OVS instance
+        subnet:
+        address_pool:
+        containers: Mapping of cid -> Interface
+        registrator:
+        listening:
+        reservations:
+        _handlers:
+    """
     def __init__(self, network_name, subnet, reserved_ips=None):
         self.name = network_name
         self.ovs = True
@@ -251,6 +319,7 @@ class OpenVSwitchNetwork(BaseNetwork):
         self.containers = dict()
         self.registrator = None
         self.listening = False
+        self.dpid = None
 
         self.reservations = reserved_ips
 
@@ -263,6 +332,8 @@ class OpenVSwitchNetwork(BaseNetwork):
             self.create_network(network_name)
         else:
             logger.debug('Bridge already exists, using it instead')
+
+        self.get_ovs_dpid()
 
         self._handlers = {
             ('container', 'die'): self.handler_container_die,
@@ -291,6 +362,17 @@ class OpenVSwitchNetwork(BaseNetwork):
         if run.returncode != 0:
             logger.error(err.decode())
             raise OvsException(err.decode())
+
+    def get_ovs_dpid(self):
+        # parse shell output to get OVS' DPID
+        command = f'ovs-ofctl show {self.name}'
+        run = subprocess.Popen(command, shell=True,
+                               stdout=subprocess.PIPE,
+                               stderr=subprocess.PIPE)
+        out, _ = run.communicate()
+        # dpid is a hex string, we need to convert it to base 10
+        dpid_str = out.decode().split('\n',1)[0].rsplit(':',1)[-1]
+        self.dpid = int(dpid_str, 16)
 
     def _get_next_address(self):
         if self.address_pool:
@@ -342,6 +424,7 @@ class OpenVSwitchNetwork(BaseNetwork):
             ipaddr = self._remove_ip(addr)
         else:
             ipaddr = self._get_next_address()
+        mac = _generate_random_MAC()
 
         logger.debug(f'Connect container {container.id[:12]} to network')
 
@@ -350,21 +433,18 @@ class OpenVSwitchNetwork(BaseNetwork):
 
         # connect to ovs bridge
         command = f'ovs-docker add-port {self.name} eth1 {container.id[:12]} '
-        command += f'--ipaddress={str(ipaddr)}/{self.subnet.prefixlen}'
+        command += f'--ipaddress={str(ipaddr)}/{self.subnet.prefixlen} '
+        command += f'--macaddress="{mac}"'
         run = subprocess.Popen(command, shell=True,
                                stdout=subprocess.PIPE,
                                stderr=subprocess.PIPE)
         out, err = run.communicate()
 
-        #logger.debug(command)
-        #logger.debug(out.decode())
-        #logger.debug(err.decode())
-
         if run.returncode != 0:
             logger.error(f'Error while connecting container {container.id[:12]} to network')
             return OvsException('Failed while connecting container to network')
         else:
-            self.containers[container.id] = ipaddr
+            self.containers[container.id] = Interface(ipaddr, mac)
 
     def remove_container(self, cid):
         logger.debug(f'Disconnect container {cid[:12]} from network')
@@ -382,9 +462,9 @@ class OpenVSwitchNetwork(BaseNetwork):
             logger.error(f'Error while removing container {cid[:12]} from network')
             raise OvsException('Failed while removing container from network')
 
-        ipaddr = self.containers.pop(cid, None)
-        if ipaddr:
-            self._add_ip(ipaddr)
+        interface = self.containers.pop(cid, None)
+        if interface.ip:
+            self._add_ip(interface.ip)
 
     def handler_container_start(self, event):
         # TODO: for fault tolerance, containers that are set to be restarted by Docker daemon
@@ -423,6 +503,5 @@ class OpenVSwitchNetwork(BaseNetwork):
     def stop_listening(self):
         self.listening = False
 
-    def resolve_ip(self, cid):
-        return str(self.containers[cid])
-
+    def resolve_interface(self, cid):
+        return self.containers.get(cid, None)
