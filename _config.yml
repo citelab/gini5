@@ -1,7 +1,7 @@
 title: Gini5
-description: ''
-baseurl: ''
-url: ''
+description: 'GINI Is Not Internet network simulator version 5'
+baseurl: 'https://citelab.github.io/gini5'
+url: '/gini5'
 permalink: pretty
 
 remote_theme: pmarsceill/just-the-docs
