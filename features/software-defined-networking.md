@@ -18,7 +18,7 @@ nav_order: 2
 
 Software-defined networks (SDN) is an approach to computer networks that enables dynamic and efficiently programmable network configuration in order to improve network performance and monitoring. Gini5 offers its users a peek inside SDN technology by integrating OpenvSwitch (an open-source virtual switch) and POX controller into network topologies.
 
-![Overview of Software-defined Networking](/assets/images/sdn-overview.png)
+![Overview of Software-defined Networking]({{ site.baseurl }}/assets/images/sdn-overview.png)
 
 ## OpenvSwitch
 

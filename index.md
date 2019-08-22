@@ -30,7 +30,7 @@ Gini version 5 is distributed under an [MIT license](https://github.com/citelab/
 
 ## Contributing
 
-- <a href="/development">See development details</a>
+- <a href="{{ site.baseurl }}/development">See development details</a>
 
 ## Contact
 

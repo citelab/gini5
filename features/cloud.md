@@ -25,7 +25,7 @@ When a cloud instance is started in Gini5, the following services are started in
 - Service registrator: Uses [Registrator](https://gliderlabs.github.io/registrator/latest/), or a custom Python script to perform automatic service discovery
 - Other services: Can be multiple instances of HTTP, Email, FTP servers, generic compute engine, firewalls, etc running on different ports. These services use custom Docker images, which can be created and run by Gini users
 
-![Overview of Cloud component](/assets/images/cloud-overview.png)
+![Overview of Cloud component]({{ site.baseurl }}/assets/images/cloud-overview.png)
 
 ## Proxy
 
@@ -49,7 +49,7 @@ In order to gather all necessary information about internal services, an action 
 
 ## Using cloud manager command-line interface
 
-While it might sound complicated, all the things mentioned above are just implementation details of how a cloud component is made up of in Gini5. The user is provided with a much more simple, intuitive command-line utility to monitor services running in a single cloud instance. Later on, this command-line interface is also what one would use for the [Service Function Chaining](/features/service-function-chaining) feature of Gini5. Below is the list of available commands that can be used to manage services:
+While it might sound complicated, all the things mentioned above are just implementation details of how a cloud component is made up of in Gini5. The user is provided with a much more simple, intuitive command-line utility to monitor services running in a single cloud instance. Later on, this command-line interface is also what one would use for the [Service Function Chaining]({{ site.baseurl }}/features/service-function-chaining) feature of Gini5. Below is the list of available commands that can be used to manage services:
 
 | Command | Description |
 |:--------|:------------|

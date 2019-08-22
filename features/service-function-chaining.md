@@ -18,7 +18,7 @@ nav_order: 4
 
 Service Function Chaining (SFC) refers to the use of Software-Defined Networking (SDN) programmability to create a service chain of connected (virtual) network services. One advantage of using SFC is to automate the way virtual network connections can be set up to handle different types of traffic flows. This image below from an SDXCentral article is an example of how SFC is set up and operate.
 
-![SFC example](/assets/images/sfc-overview.jpg)
+![SFC example]({{ site.baseurl }}/assets/images/sfc-overview.jpg)
 
 In Gini5, the SFC feature is an extra component of POX controller and cloud instances. It can only be activated when a cloud instance is connected to an OVS, and the OVS is connected to a POX controller.
 
@@ -34,7 +34,7 @@ Similar to many virtualization techniques, VNF is an attempt to bring networking
 
 ## Cloud manager and SDN controller
 
-As introduced in previous section about [Cloud component](/features/cloud), a cloud manager is a Python script capable of controlling all services running within a single cloud instance. In addition to handling all services, said program can also be used to manage VNF and SFC, as long as an SDN controller is present.
+As introduced in previous section about [Cloud component]({{ site.baseurl }}/features/cloud), a cloud manager is a Python script capable of controlling all services running within a single cloud instance. In addition to handling all services, said program can also be used to manage VNF and SFC, as long as an SDN controller is present.
 
 The SFC feature of Gini5 is quite simplified so some components of modern SFC might be missing, such as Network Service Headers (NSH). For the most part, the SDN controller (POX) has a component that communicates with the cloud manager to update what VNF is being added to the network, and what Service Chain is created in order to install flow rules in relevant virtual switches. VNF and SFC are specified by users, and routing is done in the background by the SDN controller. There are some terminologies used in Gini5 that may not be familiar:
 

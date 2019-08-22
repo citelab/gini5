@@ -18,7 +18,7 @@ nav_order: 1
 
 Using the tool gBuilder, user of Gini is provided with an intuitive graphical interface to build and test network topologies. Here is an example of a running topology with 2 connected LANs in Gini. The active terminal is how user can control each network device in the network. In the image below, host machine `Mach_1` is sending pings to another host with IP `172.31.2.5`, located in another LAN.
 
-![Overview of Gini5](/assets/images/gini-overview.png)
+![Overview of Gini5]({{ site.baseurl }}/assets/images/gini-overview.png)
 
 ## Host machine (Mach)
 
