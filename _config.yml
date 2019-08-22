@@ -1,0 +1,18 @@
+title: Gini5
+description: ''
+baseurl: ''
+url: ''
+permalink: pretty
+
+theme: 'just-the-docs'
+search_enabled: false
+heading_anchors: true
+
+aux_links:
+    "Gini5 on Github":
+        - 'https://github.com/citelab/gini5'
+
+footer_content: "Copyright &copy; 2004-2019 Advanced Networking Research Lab. Distributed under <a href='https://github.com/citelab/gini5/blob/uml-rename/LICENSE'>MIT License</a>"
+
+color_scheme: nil # "dark"
+
