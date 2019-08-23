@@ -63,5 +63,50 @@ While it might sound complicated, all the things mentioned above are just implem
 
 ## Examples
 
-TBU
+Let's investigate the network topology in [Overview](#overview) section. Note that the cloud must be the only host device in a LAN. All services provided by a cloud instance is accessible by any external host. The switch connecting all containers in the cloud private network can either be physical switch or virtual switch. In the case of virtual switch, [Service Function Chaining]({{site.baseurl}}/features/service-function-chaining) feature is also enabled.
+
+To demonstrate two activities taking place in a cloud network: service discovery and load balancing. First build and run the network topology. When all components are up, enter either `Cloud_1` or `Cloud_2` command-line interface by double clicking their respective icons. Running the command `list` returns nothing, because no service is started yet. We now try to start an HTTP service in this cloud instance. The service will run on port 8080 and initially with 3 containers.
+
+```sh
+$ start citelab/flask-server:latest web 8080 --scale=3 --command=8080
+$ list
+web
+$ show web
+{
+    "Image": "citelab/flask-server:latest",
+    "Service name": "web",
+    "Port": 8080,
+    "Number of containers": 3,
+    "Containers": [
+        {
+            "374f2bda8338": "web_01_Switch_1"
+        },
+        {
+            "eb30f9ef0e52": "web_02_Switch_1"
+        },
+        {
+            "6da53e3dd510": "web_03_Switch_1"
+        }
+    ],
+    "Mode": "tcp",
+    "LB algorithm": "roundrobin"
+}
+```
+
+After the web service has been started successfully, we want to request its content from another host outside of that cloud network. Open `Mach_1`'s terminal and do the following a few times:
+
+```sh
+$ curl 172.31.0.254:8080
+```
+
+The 3 containers' information are returned on a Round-robin basis. Coincidence? Not really. Look at the "LB algorithm" key in the details for `web` service, it is specifying the load balancing algorithm for this service to be Round-robin. We can actually change that by using the `config` command in the cloud terminal:
+
+```sh
+$ config web balance first
+Updated!
+```
+
+Try `curl` again, and the order of the returned hostnames may not be the same anymore. We can also change load balancing mode to layer 7 instead of the default layer 4, but that is outside the scope of this example.
+
+If you want to write your own cloud service to use in Gini5, simply write and build a Docker image of your application and if necessary, push it on Docker Hub. Gini will be able to fetch and start it easily without needing to restart gBuilder.
 

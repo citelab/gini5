@@ -61,5 +61,39 @@ Here are the commands that can be used for SFC-related actions:
 
 ## Examples
 
-TBU
+To improve security and Quality-of-Service (QoS) for cloud services, redirecting traffic through a set of predefined network functions for firewall filtering, Intrusion Protection System (IPS) investigation is often a good idea and a common use case for Service Function Chaining.
+
+Let's look at this network topology with a cloud instance connected by an OVS:
+
+<center>
+    <img src="{{site.baseurl}}/assets/images/sfc-example-01.png" alt="SFC topology">
+</center>
+
+Start the network, and then right click the POX Controller icon > Load modules > Custom > gini.custom.service_function_chaining. We can then open `Cloud_1`'s terminal, and do the following:
+
+```sh
+$ start citelab/flask-server:latest web 80
+```
+
+This starts a web service running on port 80. Open `Mach_4`'s terminal and send an HTTP request to the proxy IP address. It will return a reply from the actual container hosting the web application. Suppose that we want to block all traffic from the internet to this web service. This is equivalent to applying a block-all filter on this specific flow of traffic. Here is what we can do using SFC:
+
+```sh
+$ sfc_init
+SFC orchestrator started
+$ sfc_addnode firewall f01
+Service added
+$ sfc_addchain f01
+Service chain created with id 7a93b5007f40-1
+$ sfc_addpath internet web 7a93b5007f40-1
+```
+
+`Mach_4` will no longer see reply from the web server container because traffic distributed from the proxy to containers running `web` now has to go through a middle container running a firewall application. By default, the firewall drops all traffic instead of forward them. So the `web` container cannot receive any request from the proxy server, or more correctly, `Mach_4`.
+
+To remove this service chain, run the following command:
+
+```sh
+$ sfc_delpath internet web
+```
+
+And send HTTP requests from `Mach_4` again, we can now see replies from the web server like before.
 
