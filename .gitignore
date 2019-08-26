@@ -24,3 +24,4 @@ backend/src/pox/ext/gini/samples/*.xml
 *.swp
 *.deb
 .idea/
+.venv/

@@ -11,7 +11,7 @@ class SwitchDoesNotExist(Exception):
     pass
 
 
-class GVirtualSwitchShell(object, Cmd):
+class GVirtualSwitchShell(Cmd, object):
     """An interactive shell to manage open virtual switches.
 
     Supported shell commands and their ovs-ofctl respective commands.
@@ -35,7 +35,8 @@ class GVirtualSwitchShell(object, Cmd):
         if not self._check_valid_switch(switch_name):
             raise SwitchDoesNotExist()
 
-        Cmd.__init__(self, *args, **kwargs)
+        # Cmd.__init__(self, *args, **kwargs)
+        super(GVirtualSwitchShell, self).__init__(*args, **kwargs)
         self.switch_name = switch_name
         self.cleaned_switch_name = pipes.quote(switch_name)
         self.prompt = "(%s) >> " % switch_name
@@ -93,7 +94,7 @@ class GVirtualSwitchShell(object, Cmd):
     def do_del(self, args):
         """Delete flow entries from current switch's table
 
-        USAGE: del [flow]"""
+        USAGE: del [FLOW]"""
         command = self._clean_command_line(self.OVS_OFCTL_BASE_COMMANDS["del"], args)
         runcmd = subprocess.Popen(command, shell=True, stdout=self.stdout)
         runcmd.communicate()
@@ -101,7 +102,7 @@ class GVirtualSwitchShell(object, Cmd):
     def do_dump(self, args):
         """Display the current flow table
 
-        USAGE: dump [flow]"""
+        USAGE: dump [FLOW]"""
         command = self._clean_command_line(self.OVS_OFCTL_BASE_COMMANDS["dump"], args)
         runcmd = subprocess.Popen(command, shell=True, stdout=self.stdout)
         runcmd.communicate()
@@ -109,7 +110,7 @@ class GVirtualSwitchShell(object, Cmd):
     def do_mod(self, args):
         """Modify the actions in entries from switch's table
 
-        USAGE: mod flow"""
+        USAGE: mod FLOW"""
         command = self._clean_command_line(self.OVS_OFCTL_BASE_COMMANDS["mod"], args)
         runcmd = subprocess.Popen(command, shell=True, stdout=self.stdout)
         runcmd.communicate()
@@ -142,8 +143,10 @@ class GVirtualSwitchShell(object, Cmd):
                     cmds[cmd] = getattr(self, name).__doc__
             self.stdout.write("Interactive shell to manage open virtual switch through ovs-ofctl.\n\n")
             self.stdout.write("List of available commands:\n")
+            col_width = max([len(word) for word in cmds.keys()]) + 4
             for key, value in cmds.items():
-                self.stdout.write("\t%s\t%s\n" % (key, value.split("\n")[0]))
+                self.stdout.write("\t%s%s\n" %
+                                  (key.ljust(col_width), value.split("\n")[0]))
 
     def cmdloop(self, intro=None):
         """Override Cmd.cmdloop to add handler for SIGINT

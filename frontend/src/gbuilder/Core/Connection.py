@@ -10,58 +10,71 @@ from Devices.Mach import *
 from UI.Edge import *
 from Devices.OpenFlowController import *
 from Devices.OpenVirtualSwitch import *
+from Devices.Cloud import Cloud
 
 # The connection rules for building topologies
 connection_rule = dict()
 
-connection_rule[Mach.device_type] = (
+connection_rule[Mach.device_type] = [
     Switch.device_type,
     Subnet.device_type,
     Bridge.device_type,
     Hub.device_type,
     OpenVirtualSwitch.device_type
-)
-connection_rule[Router.device_type] = (
+]
+connection_rule[Router.device_type] = [
     Subnet.device_type,
     Switch.device_type,
     OpenVirtualSwitch.device_type
-)
-connection_rule[Switch.device_type] = (
+]
+connection_rule[Switch.device_type] = [
     Mach.device_type,
     Subnet.device_type,
     Switch.device_type,
     Router.device_type,
-    OpenVirtualSwitch.device_type
-)
-connection_rule[OpenVirtualSwitch.device_type] = (
+    OpenVirtualSwitch.device_type,
+    Cloud.device_type,
+]
+connection_rule[OpenVirtualSwitch.device_type] = [
     Mach.device_type,
     Subnet.device_type,
     Switch.device_type,
     Router.device_type,
     OpenFlowController.device_type,
-    OpenVirtualSwitch.device_type
-)
-connection_rule[Bridge.device_type] = (
+    OpenVirtualSwitch.device_type,
+    Cloud.device_type
+]
+connection_rule[Bridge.device_type] = [
     Mach.device_type,
     Subnet.device_type,
-)
-connection_rule[Hub.device_type] = (
+    Cloud.device_type
+]
+connection_rule[Hub.device_type] = [
     Mach.device_type,
     Subnet.device_type,
-)
-connection_rule[Subnet.device_type] = (
+    Cloud.device_type
+]
+connection_rule[Subnet.device_type] = [
     Mach.device_type,
     Switch.device_type,
     Router.device_type,
     Bridge.device_type,
     Hub.device_type,
     Firewall.device_type,
-    OpenVirtualSwitch.device_type
-)
-connection_rule[Firewall.device_type] = (Subnet.device_type,)
-connection_rule[OpenFlowController.device_type] = (
     OpenVirtualSwitch.device_type,
-)
+    Cloud.device_type
+]
+connection_rule[Firewall.device_type] = [Subnet.device_type]
+connection_rule[OpenFlowController.device_type] = [
+    OpenVirtualSwitch.device_type,
+]
+connection_rule[Cloud.device_type] = [
+    Switch.device_type,
+    Subnet.device_type,
+    Bridge.device_type,
+    Hub.device_type,
+    OpenVirtualSwitch.device_type
+]
 
 
 class Connection(Edge):

@@ -8,7 +8,8 @@ from Core.Item import *
 realMnumber = 3
 deviceTypes = {"Bridge": Bridge, "Firewall": Firewall, "Hub": Hub, "Router": Router,
                "Subnet": Subnet, "Switch": Switch, "Mach": Mach,
-               "OpenFlowController": OpenFlowController, "OVSwitch": OpenVirtualSwitch}
+               "OpenFlowController": OpenFlowController, "OVSwitch": OpenVirtualSwitch,
+               "Cloud": Cloud}
 
 
 class View(QtGui.QGraphicsView):
@@ -182,9 +183,9 @@ class View(QtGui.QGraphicsView):
 
                 def isValid(dest, source):
                     if dest.device_type in connection_rule[source.device_type]:
-                        if dest.device_type == "Mach":
+                        if dest.device_type in ["Mach", "Cloud"]:
                             if len(dest.edges()) == 1:
-                                return "Mach cannot have more than one connection!"
+                                return "%s cannot have more than one connection!" % dest.device_type
                         elif dest.device_type == "Subnet":
                             if len(dest.edges()) == 2:
                                 return "Subnet cannot have more than two connections!"
@@ -375,6 +376,6 @@ class Scene(QtGui.QGraphicsScene):
             interfaces.setCurrent(item)
             routes.setCurrent(item)
             properties.display()
-            if type(item) in ("Router", "Mach"):
+            if type(item) in ["Router", "Mach", "Cloud"]:
                 interfaces.display()
                 routes.display()

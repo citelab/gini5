@@ -1,4 +1,4 @@
-"""A device that can have interfaces"""
+"""A device that can have network interfaces"""
 
 from Device import *
 from Attachable import *
@@ -262,7 +262,7 @@ class Interfaceable(Attachable):
                             target
                         )
                 elif interface[QtCore.QString("subnet")] == subnet and \
-                        self.device_type == "Mach":
+                        self.device_type in ["Mach", "Cloud"]:
                     self.addEntry(
                         interface[QtCore.QString("mask")],
                         "",

@@ -27,7 +27,7 @@ sudo apt-get install python-minimal
 Run these commands to clone the repository and set up your environment variable to run Gini components:
 
 ```bash
-git clone -b uml-rename https://github.com/citelab/gini5
+git clone --recursive https://github.com/citelab/gini5
 
 # cd into directory where you cloned Gini
 # Add an environment variable called "GINI_HOME" which link to that directory
@@ -58,6 +58,8 @@ sudo apt-get install -y	libreadline-dev \
 			iproute2 \
 			bridge-utils
 
+pip install docker
+
 # Run these commands to download and compile libslack from source
 wget http://libslack.org/download/libslack-0.6.tar.gz
 tar xzf libslack-0.6.tar.gz
@@ -76,7 +78,7 @@ Consult the official Docker documentation on how to install Docker on your machi
 
 Gini is running Docker containers under the hood with the assumption that your user account has enough permission to use Docker. After installing, run the command `docker run hello-world`, if there is an error message saying that you don't have permission to run Docker, please follow the instructions here: https://docs.docker.com/install/linux/linux-postinstall/, or run these two commands:
 
-```bash 
+```bash
 sudo groupadd docker
 sudo usermod -aG docker $USER
 ```

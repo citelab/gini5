@@ -48,6 +48,10 @@ class Program:
                                   dest="machDir",
                                   default="",
                                   help="Specify the Mach configuration directory")
+        self.optParser.add_option("-C", "--cloud-dir",
+                                  dest="cloud_dir",
+                                  default="",
+                                  help="Specify the Cloud configuration directory")
         self.optParser.add_option("-o", "--controller-dir",
                                   dest="controllerDir",
                                   default="",
@@ -70,6 +74,7 @@ class Program:
         usageString += " [-r router-dir]"
         usageString += " [-u mach-dir]"
         usageString += " [-b bin-dir]"
+        usageString += " [-C cloud-dir]"
         usageString += " [-k]"
         return usageString
 
@@ -120,6 +125,7 @@ class Program:
                 self.options.switchDir = lines[1].strip()
                 self.options.routerDir = lines[2].strip()
                 self.options.machDir = lines[3].strip()
+                self.options.cloud_dir = lines[3].strip()
                 self.options.binDir = lines[4].strip()
                 self.options.controllerDir = lines[5].strip()
                 setupFileHandle.close()

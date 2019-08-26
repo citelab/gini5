@@ -7,12 +7,12 @@ realMnumber = 2
 alist = {'m1ip': '1', 'm1name': '1', 'm1mac': '1', 'm1port': '1',
          'm2ip': '2', 'm2name': '2', 'm2mac': '2', 'm2port': '2'}
 # The list of device types and their current index numbers
-hostTypes = {"Mach": 0}
+hostTypes = {"Mach": 0, "Cloud": 0}
 netTypes = {"Switch": 0, "Subnet": 0, "Router": 0, "OpenFlowController": 0, "OVSwitch": 0}
 customTypes = {"Custom": 0}
 nodeTypes = {"Mach": hostTypes, "Switch": netTypes, "Subnet": netTypes,
              "Router": netTypes, "OVSwitch": netTypes, "Custom": customTypes,
-             "OpenFlowController": netTypes}
+             "OpenFlowController": netTypes, "Cloud": hostTypes}
 
 commonTypes = ["Mach", "Subnet", "Switch", "Router"]
 unimplementedTypes = ["Mach_FreeDOS", "Mach_Android", "Firewall"]   # remove the unimplementedTypes from the UI
