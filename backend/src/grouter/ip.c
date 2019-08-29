@@ -11,6 +11,9 @@
 #include "mtu.h"
 #include "protocols.h"
 #include "ip.h"
+#include "tcp.h"
+#include "tcp_impl.h"
+#include "udp.h"
 #include "icmp.h"
 #include "fragment.h"
 #include "packetcore.h"
@@ -21,9 +24,6 @@
 
 #include <slack/std.h>
 #include <slack/prog.h>
-
-route_entry_t route_tbl[MAX_ROUTES];       	// routing table
-mtu_entry_t MTU_tbl[MAX_MTU];		        // MTU table
 
 extern pktcore_t *pcore;
 
@@ -44,8 +44,9 @@ void IPInit()
 void IPIncomingPacket(gpacket_t *in_pkt)
 {
 	char tmpbuf[MAX_TMPBUF_LEN];
+
 	// get a pointer to the IP packet
-        ip_packet_t *ip_pkt = (ip_packet_t *)&in_pkt->data.data;
+    ip_packet_t *ip_pkt = (ip_packet_t *)&in_pkt->data.data;
 	uchar bcast_ip[] = IP_BCAST_ADDR;
 
 	// Is this IP packet for me??
@@ -136,6 +137,7 @@ int IPProcessForwardingPacket(gpacket_t *in_pkt)
 	// done in this function...
 	if (IPCheck4Errors(in_pkt) == EXIT_FAILURE)
 		return EXIT_FAILURE;
+
 
 	// find the route... if it does not exist, should we send a
 	// ICMP network/host unreachable message -- CHECK??
@@ -313,14 +315,18 @@ int IPProcessMyPacket(gpacket_t *in_pkt)
 		if (ip_pkt->ip_prot == ICMP_PROTOCOL) {
 			ICMPProcessPacket(in_pkt);
 		  return EXIT_SUCCESS;
-    }
+        }
 
-		// Is packet UDP/TCP (only UDP implemented now)
+		// Is packet UDP/TCP
 		// May be we can deal with other connectionless protocols as well.
 		if (ip_pkt->ip_prot == UDP_PROTOCOL){
 			UDPProcess(in_pkt);
 		  return EXIT_SUCCESS;
-    }
+        }
+		if (ip_pkt->ip_prot == TCP_PROTOCOL){
+			TCPProcess(in_pkt);
+		  return EXIT_SUCCESS;
+        }
 
 	}
 	return EXIT_FAILURE;
@@ -328,12 +334,36 @@ int IPProcessMyPacket(gpacket_t *in_pkt)
 
 
 /*
- * TODO: implement UDP processing routines..
- * this is necessary for implementing some routing protocols.
+ * this function implements UDP processing with LWIP's UDP library
  */
 int UDPProcess(gpacket_t *in_pkt)
 {
-	verbose(2, "[UDPProcess]:: packet received for processing.. NOT YET IMPLEMENTED!! ");
+	verbose(2, "[UDPProcess]:: packet received for processing...");
+
+    struct pbuf *p = malloc(sizeof(struct pbuf)); // can also be done with pbuf_alloc()
+    p->payload = in_pkt->data.data;
+    p->len = ((ip_packet_t *)(in_pkt->data.data))->ip_hdr_len * 4 + UDP_HLEN;
+    p->tot_len = p->len;
+    p->type = PBUF_REF;
+
+    udp_input(p, in_pkt, route_tbl[in_pkt->frame.src_interface].netmask,route_tbl[in_pkt->frame.src_interface].network);
+	return EXIT_SUCCESS;
+}
+
+/*
+ * this function implements TCP processing with LWIP's UDP library
+ */
+int TCPProcess(gpacket_t *in_pkt)
+{
+	verbose(2, "[TCPProcess]:: packet received for processing...");
+
+    struct pbuf *p = malloc(sizeof(struct pbuf)); // can also be done with pbuf_alloc()
+    p->payload = in_pkt->data.data;
+    p->len = ntohs(((ip_packet_t *)(in_pkt->data.data))->ip_pkt_len);
+    p->tot_len = p->len;
+    p->type = PBUF_REF;
+
+    tcp_input(p, in_pkt);
 	return EXIT_SUCCESS;
 }
 
@@ -348,7 +378,7 @@ int UDPProcess(gpacket_t *in_pkt)
  */
 int IPOutgoingPacket(gpacket_t *pkt, uchar *dst_ip, int size, int newflag, int src_prot)
 {
-        ip_packet_t *ip_pkt = (ip_packet_t *)pkt->data.data;
+    ip_packet_t *ip_pkt = (ip_packet_t *)pkt->data.data;
 	ushort cksum;
 	char tmpbuf[MAX_TMPBUF_LEN];
 	uchar iface_ip_addr[4];
@@ -358,7 +388,6 @@ int IPOutgoingPacket(gpacket_t *pkt, uchar *dst_ip, int size, int newflag, int s
 	ip_pkt->ip_ttl = 64;                        // set TTL to default value
 	ip_pkt->ip_cksum = 0;                       // reset the checksum field
 	ip_pkt->ip_prot = src_prot;  // set the protocol field
-
 
 	if (newflag == 0)
 	{
@@ -388,9 +417,9 @@ int IPOutgoingPacket(gpacket_t *pkt, uchar *dst_ip, int size, int newflag, int s
 		verbose(2, "[IPOutgoingPacket]:: lookup next hop ");
 		// find the nexthop and interface and fill them in the "meta" frame
 		// NOTE: the packet itself is not modified by this lookup!
-		if (findRouteEntry(route_tbl, gNtohl(tmpbuf, ip_pkt->ip_dst),
-				   pkt->frame.nxth_ip_addr, &(pkt->frame.dst_interface)) == EXIT_FAILURE)
-				   return EXIT_FAILURE;
+		if (findRouteEntry(route_tbl, gNtohl(tmpbuf, ip_pkt->ip_dst), pkt->frame.nxth_ip_addr, &(pkt->frame.dst_interface)) == EXIT_FAILURE) {
+            return EXIT_FAILURE;
+        }
 
 		verbose(2, "[IPOutgoingPacket]:: lookup MTU of nexthop");
 		// lookup the IP address of the destination interface..
@@ -507,3 +536,65 @@ int isInSameNetwork(uchar *ip_addr1, uchar *ip_addr2)
 	return EXIT_FAILURE;
 }
 
+uchar ip_addr_isany(uchar *addr)
+{
+  if (addr == NULL) return 1;
+  return((addr[0] | addr[1] | addr[2] | addr[3]) == 0);
+}
+
+uchar ip_addr_cmp(uchar *addr1, uchar *addr2)
+{
+  return(addr1[0] == addr2[0] &&
+         addr1[1] == addr2[1] &&
+         addr1[2] == addr2[2] &&
+         addr1[3] == addr2[3]);
+}
+
+uchar ip_addr_netcmp(uchar *addr1, uchar *addr2, uchar *mask)
+{
+  return((addr1[0] & mask[0]) == (addr2[0] & mask[0]) &&
+         (addr1[1] & mask[1]) == (addr2[1] & mask[1]) &&
+         (addr1[2] & mask[2]) == (addr2[2] & mask[2]) &&
+         (addr1[3] & mask[3]) == (addr2[3] & mask[3]));
+}
+
+void print_ip4(uchar *addr) {
+    unsigned char bytes[4];
+    bytes[0] = addr[0] & 0xFF;
+    bytes[1] = addr[1] & 0xFF;
+    bytes[2] = addr[2] & 0xFF;
+    bytes[3] = addr[3] & 0xFF;
+    printf("%d.%d.%d.%d\n", bytes[3], bytes[2], bytes[1], bytes[0]);
+}
+
+void ip_addr_set(uchar *dest, uchar *src) {
+    memcpy(dest, src, 4 * sizeof(unsigned short));
+}
+
+/*
+ * convert uchar[4] to int
+ */
+u32_t ip4_addr_get_u32(uchar *src) {
+    return (src[0] << 24) | (src[1] << 16) | (src[2] << 8) | src[3];
+}
+
+/*
+ * converts LWIP's ip_output() function to GINI's IPOutgoingPacket()
+ */
+err_t
+ip_output(struct pbuf *p, uchar *src_ip, uchar *dst_ip, u8_t ttl, u8_t tos, int src_prot) {
+    // create GINI's gpacket_t
+	gpacket_t *out_pkt = (gpacket_t *) malloc(sizeof(gpacket_t));
+    if (out_pkt == NULL) {
+        printf("could not allocate gpacket_t\n");
+        return ERR_MEM;
+    }
+
+    // write pbuf's payload to GINI's gpacket_t, at the correct offset
+    int offset = sizeof(ip_packet_t);
+    memcpy((void*)((uchar*)out_pkt->data.data + offset), p->payload, p->len);
+
+    // call IP function
+    int res = IPOutgoingPacket(out_pkt, dst_ip, p->len, 1, src_prot);
+    return res;
+}
