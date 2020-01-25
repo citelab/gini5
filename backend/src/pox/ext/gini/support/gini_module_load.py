@@ -11,6 +11,7 @@ to be loaded from gBuilder.
 from pox.core import core
 import pox.lib.util as poxutil
 import pox.openflow.libopenflow_01 as of
+from pox.openflow import ConnectionUp
 import os
 import time
 import threading
@@ -25,7 +26,7 @@ class ModuleFileReader(threading.Thread):
         self.current_module = None
 
     def _flush_rules(self):
-        log.info("Remove current handlers and flows..")
+        log.info("remove current handlers and flows..")
         core.openflow._eventMixin_handlers.clear()
 
         msg = of.ofp_flow_mod(match=of.ofp_match(), command=of.OFPFC_DELETE)
@@ -62,17 +63,21 @@ class ModuleFileReader(threading.Thread):
                 else:
                     self._flush_rules()
 
-                    log.info("gini_module_load: loading module - " + module)
+                    log.info("loading module - " + module)
                     try:
                         mod = importlib.import_module(module)
                         try:
                             mod.launch()
                             self.current_module = mod
+                            # workaround for the case the new module only handles new connections
+                            for conn in core.openflow._connections.values():
+                                core.openflow.raiseEvent(ConnectionUp, conn, conn.features)
+                            log.info("module %s loaded" % module)
                         except Exception as e:
-                            log.error("gini_module_load: failed to launch module - " + module)
+                            log.error("failed to launch module - " + module)
                             log.error(str(e))
                     except Exception as e:
-                        log.error("gini_module_load: module does not exist - " + module)
+                        log.error("module does not exist - " + module)
                         log.error(str(e))
 
                 module_file.close()
