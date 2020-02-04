@@ -463,6 +463,8 @@ def create_virtual_machines(gini, opts):
 
             # Export command prompt for VM, start shell inside docker container
             entrypoint_script.write("\nexport PS1='root@%s >> '\n" % ip)
+            entrypoint_script.write("\ncd /root\n")
+            entrypoint_script.write("\nif [ -e run.sh ]; then\n\t./run.sh \nfi\n")
             entrypoint_script.write("/bin/ash\n")
             entrypoint_script.close()
             os.chmod("entrypoint.sh", 0755)
