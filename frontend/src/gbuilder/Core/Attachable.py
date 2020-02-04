@@ -55,9 +55,9 @@ class Attachable(Device):
             cmd_tshark += " ^M'"
 
             # execute commands
-            p = subprocess.Popen(cmd_split, stdout=subprocess.PIPE, shell=True)
-            p = subprocess.Popen(cmd_resize, stdout=subprocess.PIPE, shell=True)
-            p = subprocess.Popen(cmd_switch_focus, stdout=subprocess.PIPE, shell=True)
-            p = subprocess.Popen(cmd_screen, stdout=subprocess.PIPE, shell=True)
-            p = subprocess.Popen(cmd_tshark, stdout=subprocess.PIPE, shell=True)
-            p = subprocess.Popen(cmd_switch_focus, stdout=subprocess.PIPE, shell=True)
+            #p = subprocess.Popen(cmd_split, stdout=subprocess.PIPE, shell=True)
+            #p = subprocess.Popen(cmd_resize, stdout=subprocess.PIPE, shell=True)
+            #p = subprocess.Popen(cmd_switch_focus, stdout=subprocess.PIPE, shell=True)
+            #p = subprocess.Popen(cmd_screen, stdout=subprocess.PIPE, shell=True)
+            #p = subprocess.Popen(cmd_tshark, stdout=subprocess.PIPE, shell=True)
+            #p = subprocess.Popen(cmd_switch_focus, stdout=subprocess.PIPE, shell=True)
