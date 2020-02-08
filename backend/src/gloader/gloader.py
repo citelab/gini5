@@ -487,7 +487,7 @@ def create_virtual_machines(gini, opts):
                 docker_run_command += "--mac-address %s " % mac
                 docker_run_command += "--network %s " % switch_name
                 docker_run_command += "--ip %s " % ip
-            docker_run_command += "citelab/alpine:latest /bin/ash > /dev/null &&\n"
+            docker_run_command += "citelab/glinux:latest /bin/ash > /dev/null &&\n"
 
             start_script.write(docker_run_command)
 
