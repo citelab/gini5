@@ -3,6 +3,7 @@ FROM alpine:latest
 LABEL maintainer="trung.vuongthien@mail.mcgill.ca"
 
 RUN apk add --update --no-cache \
+	busybox-extras \
         curl \
         iptables \
 	iptables-doc \
