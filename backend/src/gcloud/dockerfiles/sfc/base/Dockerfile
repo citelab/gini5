@@ -15,7 +15,9 @@ RUN apk add --update --no-cache \
 	nmap \
 	iproute2 \
 	nftables \ 
-	iperf
+	iperf \
+	openssh \
+	openssh-server
 
 RUN apk add --update --no-cache --repository http://dl-cdn.alpinelinux.org/alpine/edge/testing \
 	hping3 \
