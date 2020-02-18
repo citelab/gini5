@@ -8,8 +8,7 @@ class Mach(Interfaceable):
     def __init__(self):
         super(Mach, self).__init__()
 
-        self.setProperty("filetype", "cow")
-        self.setProperty("filesystem", "root_fs_beta2")
+        self.setProperty("os", "alpine")
 
         self.setProperty("ipv4", "")
         self.setProperty("port", "")

@@ -1,6 +1,7 @@
 """A device that can be attached to"""
 
 from Device import *
+from Core.globals import options
 import subprocess
 import os
 import time
@@ -29,7 +30,10 @@ class Attachable(Device):
             window_name += " (" + self.getName() + ")"
 
         print("Attaching to device: %s" % name)
-        command += "xterm -fa 'Monospace' -fs 14 -title \"" + window_name + "\" -e  screen -r " + window_name
+        if options["gnome"] == True:
+            command += "gnome-terminal -fa 'Monospace' -fs 14 -title \"" + window_name + "\" -e  screen -r " + window_name
+        else:
+            command += "xterm -fa 'Monospace' -fs 14 -title \"" + window_name + "\" -e  screen -r " + window_name
 
         self.shell = subprocess.Popen(str(command), shell=True)
 
