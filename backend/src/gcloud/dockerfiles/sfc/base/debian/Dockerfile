@@ -1,30 +1,24 @@
-FROM alpine:latest
+FROM debian:latest
 
 LABEL maintainer="trung.vuongthien@mail.mcgill.ca"
 
-RUN apk add --update --no-cache \
-	busybox-extras \
+RUN apt update 
+RUN apt install -y \
         curl \
         iptables \
-	iptables-doc \
         ebtables \
         tcpdump \
 	man  \
-	man-pages \
-	mdocml-apropos  \
 	nmap \
 	iproute2 \
+	net-tools \
 	nftables \ 
 	iperf \
-	openssh \
 	openssh-server \
-	lynx
-
-RUN apk add --update --no-cache --repository http://dl-cdn.alpinelinux.org/alpine/edge/testing \
+	lynx \
 	hping3 \
-	hping3-doc \
-	ettercap \
-	ettercap-doc 
+	ettercap-graphical 
+
 
 RUN mkdir /book_files && mkdir /book_files/iptables && mkdir /book_files/hping
 COPY ruleset_1C.sh /book_files/iptables/ruleset_1C.sh
