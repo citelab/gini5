@@ -54,8 +54,8 @@ class GINI_NW:
                         newVM.fileSystem.name = os.environ["GINI_SHARE"] + "/filesystem/" + self.getTextPart(para)
                     if para.tagName.lower() == "mem":
                         newVM.mem = self.getTextPart(para)
-                    if para.tagName.lower() == "kernel":
-                        newVM.kernel = self.getTextPart(para)
+                    if para.tagName.lower() == "os":
+                        newVM.os = self.getTextPart(para)
                     if para.tagName.lower() == "boot":
                         newVM.boot = self.getBoot(para)
                     if para.tagName.lower() == "if":

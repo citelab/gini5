@@ -34,7 +34,7 @@ class Switch:
 
 class VM:
     name = ""
-    fileSystem = None
+    os = None
     mem = ""
     kernel = ""
     boot = ""
@@ -50,10 +50,8 @@ class VM:
 
     def printMe(self):
         print "[Name: " + self.name + "]",
-        if self.fileSystem:
-            print "[fileSystem: ",
-            self.fileSystem.printMe()
-            print "]",
+        if self.os:
+            print "[os-version: " + self.os + "]",
         if self.mem:
             print "[Mem: " + self.mem + "]",
         if self.kernel:
