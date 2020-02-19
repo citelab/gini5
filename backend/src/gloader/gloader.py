@@ -469,7 +469,9 @@ def create_virtual_machines(gini, opts):
             entrypoint_script.write("\ncd /root\n")
             entrypoint_script.write("\nif [ -e run.sh ]; then\n\t./run.sh \nfi\n")
             if mach.os == "glinux":
-                entrypoint_script.write("/bin/ash\n")                
+                entrypoint_script.write("/bin/ash\n")
+            else:
+                entrypoint_script.write("/bin/bash\n")          
 
             entrypoint_script.close()
             os.chmod("entrypoint.sh", 0755)
