@@ -8,7 +8,7 @@ class Mach(Interfaceable):
     def __init__(self):
         super(Mach, self).__init__()
 
-        self.setProperty("os", "alpine")
+        self.setProperty("os", "glinux")
 
         self.setProperty("ipv4", "")
         self.setProperty("port", "")

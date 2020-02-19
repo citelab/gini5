@@ -452,7 +452,10 @@ def create_virtual_machines(gini, opts):
 
             # entry script for docker container
             entrypoint_script = open("entrypoint.sh", "w")
-            entrypoint_script.write("#!/bin/ash\n\n")
+            if mach.os == "glinux":
+                entrypoint_script.write("#!/bin/ash\n\n")
+            else
+                entrypoint_script.write("#!/bin/bash\n\n")
             for nwIf in mach.interfaces:
                 for route in nwIf.routes:
                     entry_command = "route add -%s %s " % (route.type, route.dest)
@@ -465,7 +468,10 @@ def create_virtual_machines(gini, opts):
             entrypoint_script.write("\nexport PS1='root@%s >> '\n" % ip)
             entrypoint_script.write("\ncd /root\n")
             entrypoint_script.write("\nif [ -e run.sh ]; then\n\t./run.sh \nfi\n")
-            entrypoint_script.write("/bin/ash\n")
+            if mach.os == "glinux":
+                entrypoint_script.write("/bin/ash\n")                
+            else 
+                entrypoint_script.write("/bin/bash\n")
             entrypoint_script.close()
             os.chmod("entrypoint.sh", 0755)
 
@@ -487,7 +493,10 @@ def create_virtual_machines(gini, opts):
                 docker_run_command += "--mac-address %s " % mac
                 docker_run_command += "--network %s " % switch_name
                 docker_run_command += "--ip %s " % ip
-            docker_run_command += "citelab/glinux:latest /bin/ash > /dev/null &&\n"
+            if mach.os == "glinux":
+                docker_run_command += "citelab/glinux:latest /bin/ash > /dev/null &&\n"                
+            else 
+                docker_run_command += "citelab/debian:latest /bin/bash > /dev/null &&\n"
 
             start_script.write(docker_run_command)
 

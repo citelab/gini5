@@ -48,10 +48,6 @@ class GINI_NW:
             newVM = VM(vm.getAttribute("name"))
             for para in vm.childNodes:
                 if para.nodeType == para.ELEMENT_NODE:
-                    if para.tagName.lower() == "filesystem":
-                        newVM.fileSystem = FileSystem()
-                        newVM.fileSystem.type = para.getAttribute("type")
-                        newVM.fileSystem.name = os.environ["GINI_SHARE"] + "/filesystem/" + self.getTextPart(para)
                     if para.tagName.lower() == "mem":
                         newVM.mem = self.getTextPart(para)
                     if para.tagName.lower() == "os":
