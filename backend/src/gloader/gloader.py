@@ -454,7 +454,7 @@ def create_virtual_machines(gini, opts):
             entrypoint_script = open("entrypoint.sh", "w")
             if mach.os == "glinux":
                 entrypoint_script.write("#!/bin/ash\n\n")
-            else
+            else:
                 entrypoint_script.write("#!/bin/bash\n\n")
             for nwIf in mach.interfaces:
                 for route in nwIf.routes:
@@ -470,7 +470,7 @@ def create_virtual_machines(gini, opts):
             entrypoint_script.write("\nif [ -e run.sh ]; then\n\t./run.sh \nfi\n")
             if mach.os == "glinux":
                 entrypoint_script.write("/bin/ash\n")                
-            else 
+            else: 
                 entrypoint_script.write("/bin/bash\n")
             entrypoint_script.close()
             os.chmod("entrypoint.sh", 0755)
@@ -495,7 +495,7 @@ def create_virtual_machines(gini, opts):
                 docker_run_command += "--ip %s " % ip
             if mach.os == "glinux":
                 docker_run_command += "citelab/glinux:latest /bin/ash > /dev/null &&\n"                
-            else 
+            else:
                 docker_run_command += "citelab/debian:latest /bin/bash > /dev/null &&\n"
 
             start_script.write(docker_run_command)
