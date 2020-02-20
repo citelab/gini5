@@ -242,7 +242,6 @@ class ReceiveCanvasInfoCommand(Command):
 
 class ReceiveStartCommand(Command):
     def execute(self):
-        print "starting..."
         self.server.getTM().start()
         self.server.getTimer().start(1000)
 
@@ -252,7 +251,6 @@ class ReceiveStartCommand(Command):
             return
 
         command = GL_PROG + " -c " + os.environ["GINI_HOME"] + "/" + self.args + " -s %s -r %s -u %s -o %s -C %s" % (data_dir, data_dir, data_dir, data_dir, data_dir)
-        print "Command : " + command
 
         subprocess.Popen(["/bin/bash", "-c", command])
 
