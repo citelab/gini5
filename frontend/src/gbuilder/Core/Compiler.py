@@ -365,7 +365,7 @@ class Compiler:
         """
         for mach in self.compile_list["Mach"]:
             self.output.write("<vm name=\"" + mach.getName() + "\">\n")
-
+            self.output.write("<os>" + mach.getProperty('os') + "</os>")
             interfaces = mach.getInterfaces()
             if len(interfaces) < 1:
                 self.generate_connection_warning(mach, 1)
