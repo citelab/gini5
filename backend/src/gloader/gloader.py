@@ -461,7 +461,7 @@ def create_entrypoint_script(mach, ip):
 def create_docker_run_cmdline(mach, is_ovs, mac, ip, switch_name):
     ostr = ""
     # create command line
-    ostr = "docker run -it --detach --privileged --name %s " % mach.name
+    ostr = "docker run -it --detach --privileged --name %s --hostname %s" % (mach.name, mach.name)
     ostr += "-v %s/data/%s:/root " % (os.environ["GINI_HOME"], mach.name)
     ostr += "--entrypoint /root/entrypoint.sh "
     if not is_ovs:
