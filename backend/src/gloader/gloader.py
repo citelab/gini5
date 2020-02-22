@@ -430,6 +430,51 @@ def get_switch_to_connect(gini, host):
 
     return None, None, None
 
+def create_entrypoint_script(mach, ip):
+    ostr = ""
+
+    if mach.os == "glinux":
+        ostr +="#!/bin/ash\n\n"
+    else:
+        ostr += "#!/bin/bash\n\n"
+
+    for nwIf in mach.interfaces:
+        for route in nwIf.routes:
+            entry_command = "route add -%s %s " % (route.type, route.dest)
+            entry_command += "netmask %s " % route.netmask
+            if route.gw:
+                entry_command += "gw %s " % route.gw
+            ostr += entry_command + "\n")
+
+    # Export command prompt for VM, start shell inside docker container
+    ostr += "\ncd /root\n"    
+    if mach.os == "glinux":
+        ostr += "\nexport PS1='GL:root@%s >> '\n" % ip
+    else:
+        ostr += "\necho \"export PS1=DB:root@%s >> '\" > .bashrc \n" % ip
+    ostr += "\nif [ -e run.sh ]; then\n\t./run.sh \nfi\n"
+    if mach.os == "glinux":
+        ostr += "/bin/ash\n"
+    else:
+        ostr += "/bin/bash\n"
+
+    return ostr
+
+def create_docker_run_cmdline(mach, is_ovs, mac, ip, switch_name):
+    ostr = ""
+    # create command line
+    ostr = "docker run -it --detach --privileged --name %s " % mach.name
+    ostr += "-v %s/data/%s:/root " % (os.environ["GINI_HOME"], mach.name)
+    ostr += "--entrypoint /root/entrypoint.sh "
+    if not is_ovs:
+        ostr += "--mac-address %s " % mac
+        ostr += "--network %s " % switch_name
+        ostr += "--ip %s " % ip
+        if mach.os == "glinux":
+            ostr += "citelab/glinux:latest /bin/ash > /dev/null &&\n"                
+        else:
+            ostr += "citelab/debian:latest /bin/bash > /dev/null &&\n"
+    return ostr
 
 def create_virtual_machines(gini, opts):
     """create Mach config file, and start the Mach"""
@@ -452,27 +497,7 @@ def create_virtual_machines(gini, opts):
 
             # entry script for docker container
             entrypoint_script = open("entrypoint.sh", "w")
-            if mach.os == "glinux":
-                entrypoint_script.write("#!/bin/ash\n\n")
-            else:
-                entrypoint_script.write("#!/bin/bash\n\n")
-            for nwIf in mach.interfaces:
-                for route in nwIf.routes:
-                    entry_command = "route add -%s %s " % (route.type, route.dest)
-                    entry_command += "netmask %s " % route.netmask
-                    if route.gw:
-                        entry_command += "gw %s " % route.gw
-                    entrypoint_script.write(entry_command + "\n")
-
-            # Export command prompt for VM, start shell inside docker container
-            entrypoint_script.write("\nexport PS1='root@%s >> '\n" % ip)
-            entrypoint_script.write("\ncd /root\n")
-            entrypoint_script.write("\nif [ -e run.sh ]; then\n\t./run.sh \nfi\n")
-            if mach.os == "glinux":
-                entrypoint_script.write("/bin/ash\n")
-            else:
-                entrypoint_script.write("/bin/bash\n")          
-
+            entrypoint_script.write(create_entrypoint_script(mach, ip))
             entrypoint_script.close()
             os.chmod("entrypoint.sh", 0755)
 
@@ -484,22 +509,8 @@ def create_virtual_machines(gini, opts):
             # Script for safely terminating the machine
             stop_script_path = "./.stopit.sh"
             stop_out = open(stop_script_path, "w")
-            stop_out.write("#!/bin/bash\n")
-
-            # create command line
-            docker_run_command = "docker run -it --detach --privileged --name %s " % mach.name
-            docker_run_command += "-v %s/data/%s:/root " % (os.environ["GINI_HOME"], mach.name)
-            docker_run_command += "--entrypoint /root/entrypoint.sh "
-            if not is_ovs:
-                docker_run_command += "--mac-address %s " % mac
-                docker_run_command += "--network %s " % switch_name
-                docker_run_command += "--ip %s " % ip
-            if mach.os == "glinux":
-                docker_run_command += "citelab/glinux:latest /bin/ash > /dev/null &&\n"                
-            else:
-                docker_run_command += "citelab/debian:latest /bin/bash > /dev/null &&\n"
-
-            start_script.write(docker_run_command)
+            stop_out.write("#!/bin/bash\n")  
+            start_script.write(create_docker_run_cmdline(mach, is_ovs, mac, ip, switch_name))
 
             if is_ovs:
                 ovs_connect_command = "ovs-docker add-port %s eth1 %s --ipaddress=%s/24 --macaddress=%s &&\n" \
