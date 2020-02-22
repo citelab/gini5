@@ -444,18 +444,16 @@ def create_entrypoint_script(mach, ip):
             entry_command += "netmask %s " % route.netmask
             if route.gw:
                 entry_command += "gw %s " % route.gw
-            ostr += entry_command + "\n")
+            ostr += entry_command + "\n"
 
     # Export command prompt for VM, start shell inside docker container
     ostr += "\ncd /root\n"    
+    ostr += "\nif [ -e run.sh ]; then\n\t./run.sh \nfi\n"    
     if mach.os == "glinux":
         ostr += "\nexport PS1='GL:root@%s >> '\n" % ip
+        ostr += "/bin/ash\n"        
     else:
         ostr += "\necho \"export PS1=DB:root@%s >> '\" > .bashrc \n" % ip
-    ostr += "\nif [ -e run.sh ]; then\n\t./run.sh \nfi\n"
-    if mach.os == "glinux":
-        ostr += "/bin/ash\n"
-    else:
         ostr += "/bin/bash\n"
 
     return ostr
