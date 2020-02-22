@@ -453,7 +453,7 @@ def create_entrypoint_script(mach, ip):
         ostr += "\nexport PS1='GL:root@%s >> '\n" % ip
         ostr += "/bin/ash\n"        
     else:
-        ostr += "\necho \"export PS1=DB:root@%s >> '\" > .bashrc \n" % ip
+        ostr += "\necho \"export PS1='DB:root@%s >> '\" > .bashrc \n" % ip
         ostr += "/bin/bash\n"
 
     return ostr
