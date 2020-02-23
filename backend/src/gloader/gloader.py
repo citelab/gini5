@@ -452,9 +452,12 @@ def create_entrypoint_script(mach, ip):
     if mach.os == "glinux":
         ostr += "\nexport PS1='GL:root@%s >> '\n" % ip
         ostr += "/bin/ash\n"        
-    else:
+    elif mach.os == "debian":
         ostr += "\necho \"export PS1='DB:root@%s >> '\" > .bashrc \n" % ip
         ostr += "/bin/bash\n"
+    else:
+        ostr += "\necho \"export PS1='JS:root@%s >> '\" > .bashrc \n" % ip
+        ostr += "/bin/bash\n"    
 
     return ostr
 
@@ -470,8 +473,10 @@ def create_docker_run_cmdline(mach, is_ovs, mac, ip, switch_name):
         ostr += "--ip %s " % ip
         if mach.os == "glinux":
             ostr += "citelab/glinux:latest /bin/ash > /dev/null &&\n"                
-        else:
+        elif mach.os == "debian":
             ostr += "citelab/debian:latest /bin/bash > /dev/null &&\n"
+        else:
+            ostr += "citelab/jessie:latest /bin/bash > /dev/null &&\n"            
     return ostr
 
 def create_virtual_machines(gini, opts):
