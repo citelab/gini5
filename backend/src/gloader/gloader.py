@@ -452,7 +452,7 @@ def create_entrypoint_script(mach, ip):
     if mach.os == "glinux":
         ostr += "\nexport PS1='GL:root@%s >> '\n" % ip
         ostr += "/bin/ash\n"        
-    elif mach.os == "debian":
+    elif mach.os == "buster":
         ostr += "\necho \"export PS1='DB:root@%s >> '\" > .bashrc \n" % ip
         ostr += "/bin/bash\n"
     else:
@@ -473,8 +473,8 @@ def create_docker_run_cmdline(mach, is_ovs, mac, ip, switch_name):
         ostr += "--ip %s " % ip
         if mach.os == "glinux":
             ostr += "citelab/glinux:latest /bin/ash > /dev/null &&\n"                
-        elif mach.os == "debian":
-            ostr += "citelab/debian:latest /bin/bash > /dev/null &&\n"
+        elif mach.os == "buster":
+            ostr += "citelab/buster:latest /bin/bash > /dev/null &&\n"
         else:
             ostr += "citelab/jessie:latest /bin/bash > /dev/null &&\n"            
     return ostr
