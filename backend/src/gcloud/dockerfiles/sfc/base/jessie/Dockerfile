@@ -1,4 +1,4 @@
-FROM debian:latest
+FROM debian:8.7
 
 LABEL maintainer="trung.vuongthien@mail.mcgill.ca"
 
@@ -12,10 +12,9 @@ RUN apt install -y \
 	nmap \
 	iproute2 \
 	net-tools \
-	nftables \ 
 	iperf \
-	tshark \
 	dsniff \
+	openssh-client \	
 	openssh-server \
 	lynx \
 	hping3 
