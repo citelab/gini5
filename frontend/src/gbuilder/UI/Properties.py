@@ -351,7 +351,7 @@ class RoutesWindow(InterfacesWindow):
             return
         from Core.Interfaceable import Interfaceable
         if not isinstance(self.currentItem, Interfaceable):
-            returnf
+            return
 
         if self.currentInterface == len(self.currentItem.getInterfaces()):
             return
