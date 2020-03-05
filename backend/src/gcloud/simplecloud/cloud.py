@@ -255,7 +255,10 @@ class MyCloud:
         self.proxy = None
         self.services = {}
         self.used_ports = set()
-        self.sfc_orchestrator = SfcOrchestrator(self.network)
+        try:
+            self.sfc_orchestrator = SfcOrchestrator(self.network)
+        except SfcException:
+            self.sfc_orchestrator = None
 
         try:
             self.create_registry()

@@ -3,6 +3,7 @@
 
 from simplecloud import cloud, logger
 from simplecloud import sfc_orchestrator as sfc
+from simplecloud import restapi
 from cmd import Cmd
 
 import os
@@ -602,6 +603,8 @@ if __name__ == "__main__":
     parser.add_argument("-g", "--gateway-ip", type=str,
                         metavar="GATEWAY_IP", dest="gateway_ip",
                         help="Reserve an IPv4 address for the gateway")
+    parser.add_argument("--log", type=str, metavar="LOG_MODE", default="info",
+                        dest="log_mode", help="Specify logger mode")
 
     validate_group = parser.add_mutually_exclusive_group()
     validate_group.add_argument("--validate-ip", dest="validate", action="store_true",
@@ -624,11 +627,11 @@ if __name__ == "__main__":
     signal.signal(signal.SIGTERM, sigterm_handler)
 
     try:
-        logger.debug("Starting services...")
+        logger.info("Starting services...")
 
         my_cloud = cloud.MyCloud(**kwargs)
 
-        logger.debug("Everything is up")
+        logger.info("Everything is up")
         cloud_shell = CloudShell(my_cloud)
 
         def listener_loop():
@@ -636,6 +639,9 @@ if __name__ == "__main__":
 
         t = Thread(target=listener_loop, daemon=True)
         t.start()
+
+        t_rest_api = Thread(target=restapi.run_app, daemon=True)
+        t_rest_api.start()
 
         cloud_shell.cmdloop()
 
@@ -646,3 +652,4 @@ if __name__ == "__main__":
             my_cloud.cleanup()
         logger.info('Bye')
         sys.exit()
+
