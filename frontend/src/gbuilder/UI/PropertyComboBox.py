@@ -7,15 +7,21 @@ class PropertyComboBox(QtGui.QComboBox):
         super(PropertyComboBox, self).__init__(parent)
 
         self.item = item
+        self.prop = prop
         self.PropertiesWindow = PropertiesWindow
 
         self.addItems(values)
 
         if values:
+            if hasattr(self.item, 'hostIndex'):
+                self.setCurrentIndex(self.item.hostIndex)
+                self.connect(self, QtCore.SIGNAL("currentIndexChanged(int)"), self.changeIndex)
+        self.currentIndexChanged.connect(self.comboBoxChanged)
 
-            self.setCurrentIndex(self.item.hostIndex)
+        item.setProperty(prop, self.item.properties[prop])
 
-        self.connect(self, QtCore.SIGNAL("currentIndexChanged(int)"), self.changeIndex)
+
+
 
     def changeIndex(self, index):
         self.item.hostIndex = index
@@ -30,3 +36,8 @@ class PropertyComboBox(QtGui.QComboBox):
         real_port = self.item.hostsproperty[str(text)].port
         self.item.setProperty("realmachinePort", real_port)
         self.PropertiesWindow.display()
+
+
+    def comboBoxChanged(self):
+
+        self.item.setProperty(self.prop, self.currentText())
