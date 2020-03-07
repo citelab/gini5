@@ -297,7 +297,9 @@ class CloudShell(Cmd, object):
         if self.cloud.sfc_init():
             sys.stdout.write("SFC orchestrator started\n")
         else:
-            sys.stdout.write("SFC functionality is for bridge network is not supported\n")
+            sys.stdout.write("Error when enabling SFC feature\n")
+            sys.stdout.write("Either the SDN controller is not running\n")
+            sys.stdout.write("or SFC functionality for bridge network is not supported\n")
 
     def _parse_sfc_addnode(self, line):
         argv = shlex.split(line)
@@ -640,7 +642,7 @@ if __name__ == "__main__":
         t = Thread(target=listener_loop, daemon=True)
         t.start()
 
-        t_rest_api = Thread(target=restapi.run_app, daemon=True)
+        t_rest_api = Thread(target=restapi.run_app, args=(my_cloud,), daemon=True)
         t_rest_api.start()
 
         cloud_shell.cmdloop()

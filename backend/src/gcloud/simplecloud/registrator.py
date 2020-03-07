@@ -40,3 +40,4 @@ class Registrator:
     def deregister(self, cid):
         logger.debug(f'De-registering container {cid}')
         self.consul.agent.service.deregister(cid)
+

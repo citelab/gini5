@@ -521,8 +521,7 @@ class MyCloud:
         Starts the SFC functionality for this cloud instance
         """
         if self.network.ovs:
-            self.sfc_orchestrator.open_connection()
-            return True
+            return self.sfc_orchestrator.open_connection()
         return False
 
     def sfc_add_service(self, function, service_name):
