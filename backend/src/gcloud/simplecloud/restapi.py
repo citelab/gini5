@@ -7,10 +7,12 @@ from simplecloud import logger
 
 
 # only the function run_app should be available to public
-__all__ = ['run_app']
+__all__ = ['run_app', 'current_host', 'current_port']
 
 
 app = Flask(__name__)
+current_host = None
+current_port = 0
 _cloud = None
 
 
@@ -184,8 +186,10 @@ def sfc_path_delete(pathid):
 
 
 def run_app(cloud_instance, host='0.0.0.0', port=8080):
-    global _cloud
+    global _cloud, current_host, current_port
     _cloud = cloud_instance
+    current_host = host
+    current_port = port
     logger.info(f'Starting REST application on {host}:{port}')
     app.run(host=host, port=port, threaded=True)
 
