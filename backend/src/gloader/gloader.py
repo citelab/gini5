@@ -471,12 +471,13 @@ def create_docker_run_cmdline(mach, is_ovs, mac, ip, switch_name):
         ostr += "--mac-address %s " % mac
         ostr += "--network %s " % switch_name
         ostr += "--ip %s " % ip
-        if mach.os == "glinux":
-            ostr += "citelab/glinux:latest /bin/ash > /dev/null &&\n"                
-        elif mach.os == "buster":
-            ostr += "citelab/buster:latest /bin/bash > /dev/null &&\n"
-        else:
-            ostr += "citelab/jessie:latest /bin/bash > /dev/null &&\n"            
+    if mach.os == "glinux":
+        ostr += "citelab/glinux:latest /bin/ash > /dev/null &&\n"                
+    elif mach.os == "buster":
+        ostr += "citelab/buster:latest /bin/bash > /dev/null &&\n"
+    else:
+        ostr += "citelab/jessie:latest /bin/bash > /dev/null &&\n"            
+    
     return ostr
 
 def create_virtual_machines(gini, opts):
