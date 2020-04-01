@@ -58,6 +58,7 @@ class PropertiesWindow(Dockable):
                      self.dockChanged)
         self.connect(self.model, QtCore.SIGNAL("dataChanged(QModelIndex,QModelIndex)"), self.changed)
 
+
     def addProperty(self, prop, value, editable=True, checkable=False, combo=False, enabled=True):
         """
         Add a property to display in the window.
@@ -74,9 +75,11 @@ class PropertiesWindow(Dockable):
             val.setEnabled(False)
         elif not editable:
             val.setEditable(False)
-
         if prop == "id":
             self.model.insertRow(0, [pr, val])
+	    #TODO: find the bug that generated "Name" and "name" (The following 2 lines for temp use)
+        elif prop == "name":
+            pass
         else:
             self.model.appendRow([pr, val])
             if checkable:
@@ -88,10 +91,16 @@ class PropertiesWindow(Dockable):
                 self.sourceView.setIndexWidget(index, checkbox)
                 if value == "True":
                     checkbox.setChecked(True)
+
         if combo:
             index = self.model.indexFromItem(val)
             combobox = PropertyComboBox(self.currentItem, self, prop, value)
+            selectedIndex = combobox.findText(self.currentItem.properties[prop])
+            combobox.setCurrentIndex(selectedIndex)
             self.sourceView.setIndexWidget(index, combobox)
+            combobox.currentIndexChanged.connect(combobox.comboBoxChanged)
+
+
 
     def changed(self, index, index2):
         """
@@ -148,6 +157,9 @@ class PropertiesWindow(Dockable):
                 checkable = True
             elif prop == "Hosts":
                 combo = True
+            elif prop == "os":
+                combo = True
+                value = ["glinux","buster","jessie"]
             elif self.currentItem.device_type in ["Switch", "OVSwitch"]:
                 if prop == "subnet" or prop == "mask":
                     continue    # editable = False
