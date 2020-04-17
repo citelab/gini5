@@ -255,7 +255,10 @@ class MyCloud:
         self.proxy = None
         self.services = {}
         self.used_ports = set()
-        self.sfc_orchestrator = SfcOrchestrator(self.network)
+        try:
+            self.sfc_orchestrator = SfcOrchestrator(self.network)
+        except SfcException:
+            self.sfc_orchestrator = None
 
         try:
             self.create_registry()
@@ -518,8 +521,7 @@ class MyCloud:
         Starts the SFC functionality for this cloud instance
         """
         if self.network.ovs:
-            self.sfc_orchestrator.open_connection()
-            return True
+            return self.sfc_orchestrator.open_connection()
         return False
 
     def sfc_add_service(self, function, service_name):

@@ -558,6 +558,22 @@ def create_virtual_machines(gini, opts):
     return True
 
 
+def check_port_available(port):
+    sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    result = sock.connect_ex(("0.0.0.0", port))
+    if result == 0:
+        return False
+    else:
+        return True
+
+
+def find_available_port(lower_range, upper_range):
+    for port in range(lower_range, upper_range+1):
+        if check_port_available(port):
+            return port
+    return -1
+
+
 def create_cloud(gini, opts):
     """Creates cloud instance with a proxy"""
     # make_dir(opts.cloud_dir)
@@ -604,6 +620,10 @@ def create_cloud(gini, opts):
             config_file_path = "%s/config.json" % sub_cloud_dir
             with open(config_file_path, "w") as f:
                 f.write(json.dumps(cloud_config))
+            rest_api_port = find_available_port(15000, 16000)
+            if rest_api_port == -1:
+                print "[FAILED] Cannot find an unused port for the REST server"
+                return False
 
             screen_command = "screen -d -m -L -S %s " % cloud.name
             docker_command = "docker run -it --rm --privileged --network host " \
@@ -615,7 +635,10 @@ def create_cloud(gini, opts):
                              "-v %s:%s " \
                              "--name cloud-manager-%s " \
                              "citelab/simplecloud:latest " \
-                             "python main.py -f /code/config.json" % (config_file_path, entrypoint_script, entrypoint_script, switch_name)
+                             "python main.py -f /code/config.json " \
+                             "--rest-port %d" % (config_file_path, entrypoint_script,
+                                                 entrypoint_script, switch_name,
+                                                 rest_api_port)
 
             runcmd = subprocess.Popen(screen_command + docker_command, shell=True, stdout=subprocess.PIPE)
             runcmd.communicate()
@@ -630,22 +653,6 @@ def create_cloud(gini, opts):
         os.chdir(old_dir)
 
     return True
-
-
-def check_port_available(port):
-    sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-    result = sock.connect_ex(("0.0.0.0", port))
-    if result == 0:
-        return False
-    else:
-        return True
-
-
-def find_available_port(lower_range, upper_range):
-    for port in range(lower_range, upper_range+1):
-        if check_port_available(port):
-            return port
-    return -1
 
 
 def create_openflow_controllers(gini, opts):
@@ -831,7 +838,7 @@ def destroy_GINI(gini, opts):
         print "\nTerminating Clouds..."
         result = result and destroy_clouds(gini.clouds)
 
-        system('docker rm -f $(docker ps -aq)')
+        system('docker rm -f $(docker ps -aq) 2> /dev/null')
 
         print "\nTerminating routers..."
         result = result and destroy_virtual_routers(gini.vr, opts.routerDir)

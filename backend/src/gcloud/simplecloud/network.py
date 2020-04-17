@@ -505,3 +505,4 @@ class OpenVSwitchNetwork(BaseNetwork):
 
     def resolve_interface(self, cid):
         return self.containers.get(cid, None)
+

@@ -153,8 +153,11 @@ class SfcOrchestrator:
             self.client.connect((server_name, server_port))
             msg = self.msg_gen.new_hello_message()
             self.client.send(msg.pack().encode())
+            return True
         except:
+            logger.error('Failed to connect to the SDN controller')
             self.client = None
+            return False
 
     def _start_vnf(self, function, service_name):
         vnf_class = vnf.get(function)
@@ -172,6 +175,7 @@ class SfcOrchestrator:
         Start an instance of a service function (in a Docker container)
         """
         if function not in vnf:
+            logger.warning('Virtual network function not supported')
             return False
         else:
             if service_name not in self.services:
@@ -226,7 +230,11 @@ class SfcOrchestrator:
         """
         Create a service chain from existing service nodes in the network
         """
-        if not services or self.client is None:
+        if not servies:
+            logger.warning('List of services cannot be empty')
+            return
+        if self.client is None:
+            logger.warning('There is no connection to the SDN controller')
             return
 
         chain_id = f"{self.network.dpid:08x}-{self.chain_index}"
@@ -258,6 +266,7 @@ class SfcOrchestrator:
         Remove a service chain identified by (dpid,idx)
         """
         if self.client is None:
+            logger.warning('There is no connection to the SDN controller')
             return
 
         chain = self.chains.get(chain_id, None)
@@ -298,6 +307,7 @@ class SfcOrchestrator:
         Create a service path from src to dst via the service chain (dpid,idx)
         """
         if self.client is None:
+            logger.warning('There is no connection to the SDN controller')
             return False
 
         path_id = (src,dst)
@@ -323,6 +333,7 @@ class SfcOrchestrator:
         Remove a service path identified by (src,dst)
         """
         if self.client is None:
+            logger.warning('There is no connection to the SDN controller')
             return False
 
         path_id = (src, dst)
@@ -363,3 +374,4 @@ class SfcOrchestrator:
                 self.client.close()
             except:
                 pass
+

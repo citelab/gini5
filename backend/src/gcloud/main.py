@@ -3,6 +3,7 @@
 
 from simplecloud import cloud, logger
 from simplecloud import sfc_orchestrator as sfc
+from simplecloud import restapi
 from cmd import Cmd
 
 import os
@@ -55,12 +56,6 @@ def _parse_args(argv):
 
 
 class CloudShell(Cmd, object):
-    """Supported commands:
-    - start
-    - list
-    - show (all, one service)
-    - stop
-    - scale"""
     def __init__(self, cloud_obj, *args, **kwargs):
         super(CloudShell, self).__init__(*args, **kwargs)
         self.cloud = cloud_obj
@@ -296,7 +291,9 @@ class CloudShell(Cmd, object):
         if self.cloud.sfc_init():
             sys.stdout.write("SFC orchestrator started\n")
         else:
-            sys.stdout.write("SFC functionality is for bridge network is not supported\n")
+            sys.stdout.write("Error when enabling SFC feature\n")
+            sys.stdout.write("Either the SDN controller is not running\n")
+            sys.stdout.write("or SFC functionality for bridge network is not supported\n")
 
     def _parse_sfc_addnode(self, line):
         argv = shlex.split(line)
@@ -555,9 +552,12 @@ class CloudShell(Cmd, object):
                 self.stdout.write("\t%s%s\n" %
                                   (key.ljust(col_width), value.split("\n")[0]))
 
+    def do_meta(self, line):
+        """Print some relevant information about this cloud instance.
 
-class KeyNotFoundError(Exception):
-    pass
+        Usage: meta"""
+        self.stdout.write("REST API is running on: %s:%d\n"
+                            % (restapi.current_host, restapi.current_port))
 
 
 def parse_file(config_path):
@@ -571,7 +571,7 @@ def parse_file(config_path):
 
     # config file must contain subnet range
     if "subnet" not in configs:
-        raise KeyNotFoundError("You need to specify the subnet range")
+        raise KeyError("You need to specify the subnet range")
 
     logger.info(json.dumps(configs, indent=2, sort_keys=True))
 
@@ -602,6 +602,10 @@ if __name__ == "__main__":
     parser.add_argument("-g", "--gateway-ip", type=str,
                         metavar="GATEWAY_IP", dest="gateway_ip",
                         help="Reserve an IPv4 address for the gateway")
+    parser.add_argument("--rest-port", type=int, metavar="PORT", required=True,
+                        dest="restapi_port", help="Specify the port of the REST API")
+    parser.add_argument("--log", type=str, metavar="LOG_MODE", default="info",
+                        dest="log_mode", help="Specify logger mode")
 
     validate_group = parser.add_mutually_exclusive_group()
     validate_group.add_argument("--validate-ip", dest="validate", action="store_true",
@@ -624,11 +628,11 @@ if __name__ == "__main__":
     signal.signal(signal.SIGTERM, sigterm_handler)
 
     try:
-        logger.debug("Starting services...")
+        logger.info("Starting services...")
 
         my_cloud = cloud.MyCloud(**kwargs)
 
-        logger.debug("Everything is up")
+        logger.info("Everything is up")
         cloud_shell = CloudShell(my_cloud)
 
         def listener_loop():
@@ -636,6 +640,12 @@ if __name__ == "__main__":
 
         t = Thread(target=listener_loop, daemon=True)
         t.start()
+
+        t_rest_api = Thread(target=restapi.run_app,
+                            args=(my_cloud,),
+                            kwargs={'port': parsed.restapi_port},
+                            daemon=True)
+        t_rest_api.start()
 
         cloud_shell.cmdloop()
 
@@ -646,3 +656,4 @@ if __name__ == "__main__":
             my_cloud.cleanup()
         logger.info('Bye')
         sys.exit()
+
