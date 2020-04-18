@@ -331,6 +331,26 @@ class CloudShell(Cmd, object):
             else:
                 sys.stdout.write("Network service creation failed\n")
 
+    def complete_sfc_controlnode(self, text, *ignored):
+        if self.cloud.sfc_orchestrator:
+            return [name for name in nodes if name.startswith(text)]
+        else:
+            return []
+
+    def do_sfc_controlnode(self, line):
+        """Execute a command inside the service node CLI
+
+        Usage: sfc_controlnode NAME COMMAND
+        Example: sfc_controlnode firewall01 iptables -P FORWARD ACCEPT"""
+        argv = shlex.split(line)
+        self.stdout.write(line + '\n')
+        if len(argv) < 2:
+            self.stdout.write("Usage: sfc_controlnode NAME COMMAND")
+        else:
+            service_name = argv[0]
+            command = argv[1:]
+            self.cloud.sfc_run_service_command(service_name, command)
+
     def _parse_sfc_delnode(self, line):
         argv = shlex.split(line)
         _parsed, argv = _parse_args(argv)

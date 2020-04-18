@@ -530,6 +530,10 @@ class MyCloud:
         """
         return self.sfc_orchestrator.start_service_node(function, service_name)
 
+    def sfc_run_service_command(self, service_name, command):
+        """Execute a command inside the service shell"""
+        return self.sfc_orchestrator.execute_service_node(service_name, command)
+
     def sfc_remove_service(self, service_name, force=False):
         """
         Remove a network function service, if force is true and there exists

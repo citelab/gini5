@@ -3,6 +3,7 @@
 
 from simplecloud import docker_client, docker_api_client, logger
 from simplecloud.utils.northbound import *
+import docker
 import socket
 
 NORTHBOUND_PORT = 8081
@@ -56,8 +57,17 @@ class NetworkFunction:
     def stop(self):
         try:
             self.container.remove(force=True)
-        except:
-            pass
+        except docker.errors.APIError:
+            logger.warning(f'Failed to remove container {self.shell_name}')
+
+    def execute(self, command):
+        try:
+            ret, out = self.container.exec_run(command, privileged=True)
+            logger.debug(f'Container output: {out.encode()}')
+            return ret == 0
+        except docker.errors.APIError:
+            logger.warning(f'Failed to execute command on {self.shell_name}')
+            return False
 
     def __str__(self):
         return self.shell_name
@@ -185,6 +195,16 @@ class SfcOrchestrator:
                 logger.warning(f"Namespace {service_name} has already been used. "
                                f"Ignoring this operation")
             return True
+
+    def execute_service_node(self, service_name, command):
+        """
+        Execute a command inside the Docker container of a service node
+        """
+        network_function = self.services.get(service_name, None)
+        if not network_function:
+            return False
+        else:
+            return network_function.execute(command)
 
     def remove_service_node(self, service_name, force=False):
         """
