@@ -143,7 +143,7 @@ Note that for `POST` requests, the request body should be a JSON object. For all
 - Summary: Create new traffic routes through some SFC
 - Parameters:
     - `paths`: A list of path descriptions, each is a JSON with the following structure:
-        - `src`: The source of this path, use `Internet` to indicate traffic coming from external source. All traffic that comes from the source will be routed to go through the service function chain before reaching the destination
+        - `src`: The source of this path, use `internet` to indicate traffic coming from external source. All traffic that comes from the source will be routed to go through the service function chain before reaching the destination
         - `dst`: The destination of this path
         - `chain`: The ID of the service function chain that traffic must go through
 - Response:
