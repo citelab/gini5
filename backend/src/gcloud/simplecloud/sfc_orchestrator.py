@@ -230,7 +230,7 @@ class SfcOrchestrator:
         """
         Create a service chain from existing service nodes in the network
         """
-        if not servies:
+        if not services:
             logger.warning('List of services cannot be empty')
             return
         if self.client is None:

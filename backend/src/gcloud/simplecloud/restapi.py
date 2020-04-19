@@ -40,7 +40,7 @@ def index():
 @app.route('/api/v1.0/cloud/list', methods=['GET'])
 def cloud_list_services():
     services = _cloud.list_services()
-    return jsonify(list(services))
+    return jsonify({'serivces': list(services)})
 
 
 @app.route('/api/v1.0/cloud/config/<string:serviceid>', methods=['POST'])
@@ -51,7 +51,8 @@ def cloud_config_service(serviceid):
         key = request.json['key']
         value = request.json['value']
         action = request.json.get('action', 'put')
-        _cloud.registry_update(serviceid, key, value, action)
+        status = _cloud.registry_update(serviceid, key, value, action)
+        return jsonify({'success': status})
     except KeyError:
         abort(400, description='missing parameter')
 
