@@ -452,15 +452,16 @@ class MyCloud:
         """
         if name in self.services:
             logger.warning(f"Service {name} already exists")
-            return
+            return False
         if port in self.used_ports:
             logger.warning(f"Port {port} has already been used!")
-            return
+            return False
         new_service = MyCloudService(
             image, name, self.network,
             port, scale, command)
         self.services[name] = new_service
         self.used_ports.add(port)
+        return True
 
     def initialize_services(self, services_list):
         """

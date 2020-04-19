@@ -299,7 +299,7 @@ class SfcOrchestrator:
         """
         res = {}
         for chain_id, chain in self.chains.items():
-            res[chain_id] = ",".join([node.shell_name for node in chain])
+            res[chain_id] = str([node.shell_name for node in chain])
         return res
 
     def create_service_path(self, src, dst, chain_id):

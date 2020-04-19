@@ -40,7 +40,7 @@ def index():
 @app.route('/api/v1.0/cloud/list', methods=['GET'])
 def cloud_list_services():
     services = _cloud.list_services()
-    return jsonify({'serivces': list(services)})
+    return jsonify({'services': list(services)})
 
 
 @app.route('/api/v1.0/cloud/config/<string:serviceid>', methods=['POST'])
@@ -63,9 +63,7 @@ def cloud_scale_service(serviceid):
         abort(400, description='json expected')
     if 'size' not in request.json:
         abort(400, description='missing size')
-    if not request.json['size'].isdigit():
-        abort(400, description='invalid size type')
-    status = _cloud.scale_service(serviceid, int(size))
+    status = _cloud.scale_service(serviceid, request.json['size'])
     return jsonify({'success': status})
 
 
@@ -87,8 +85,8 @@ def cloud_start():
         name = request.json['name']
         port = int(request.json['port'])
         scale = int(request.json.get('scale', 1))
-        command = request.json.get('command', '')
-        _cloud.start_service(image, name, port, scale, command)
+        command = request.json.get('command', None)
+        status = _cloud.start_service(image, name, port, scale, command)
         return jsonify({'success': status})
     except KeyError:
         abort(400, description='missing parameter')
@@ -122,7 +120,7 @@ def sfc_nodes():
 
 
 @app.route('/api/v1.0/sfc/nodes/<string:nodeid>', methods=['DELETE'])
-def sfc_node_delete(node):
+def sfc_node_delete(nodeid):
     status = _cloud.sfc_remove_service(nodeid, force=True)
     return jsonify({'success': status})
 
@@ -139,7 +137,7 @@ def sfc_chains():
             status = True
             for chain in request.json['chains']:
                 services = chain['services']
-                status = status and _cloud.sfc_create_chain(services)
+                status = status and (_cloud.sfc_create_chain(services) is not None)
             return jsonify({'success': status})
         except KeyError:
             abort(400, description='missing parameter')
@@ -151,7 +149,7 @@ def sfc_chain_delete(chainid):
     return jsonify({'success': status})
 
 
-@app.route('/api/v1.0/sfc/paths', methods=['GET', 'POST'])
+@app.route('/api/v1.0/sfc/paths', methods=['GET', 'POST', 'DELETE'])
 def sfc_paths():
     if request.method == 'GET':
         resp = _cloud.sfc_show_paths()
@@ -165,25 +163,22 @@ def sfc_paths():
                 src = path['src']
                 dst = path['dst']
                 chainid = path['chain']
-                status = status and _cloud.sfc_create_path(src, dst, chain)
+                status = status and _cloud.sfc_create_path(src, dst, chainid)
             return jsonify({'success': status})
         except KeyError:
             abort(400, description='missing parameter')
-
-
-@app.route('/api/v1.0/sfc/paths/<string:pathid>', methods=['DELETE'])
-def sfc_path_delete(pathid):
-    if not request.json:
-        abort(400, description='json expected')
-    try:
-        status = True
-        for path in request.json['paths']:
-            src = path['src']
-            dst = path['dst']
-            status = status and _cloud.sfc_remove_path(src, dst)
-        return jsonify({'success': status})
-    except KeyError:
-        abort(400, description='missing parameter')
+    elif request.method == 'DELETE':
+        if not request.json:
+            abort(400, description='json expected')
+        try:
+            status = True
+            for path in request.json['paths']:
+                src = path['src']
+                dst = path['dst']
+                status = status and _cloud.sfc_remove_path(src, dst)
+            return jsonify({'success': status})
+        except KeyError:
+            abort(400, description='missing parameter')
 
 
 def run_app(cloud_instance, host='0.0.0.0', port=8080):
