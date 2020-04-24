@@ -94,20 +94,24 @@ class MyCloudService:
             }
         )
 
+        container_public_name = f'{self.name}_{self.idx:02d}'
+
         pending_container = docker_api_client.create_container(
             image=self.image,
-            name=f'{self.name}_{self.idx:02d}_{self.network.name}',
+            name=f'{container_public_name}_{self.network.name}',
             command=self.command,
             detach=True,
             host_config=host_config,
             ports=[self.port],
             environment={
                 'SERVICE_NAME': self.name,
-                'SERVICE_ID': f'{self.name}_{self.idx:02d}'
+                'SERVICE_ID': container_public_name
             }
         )
 
         container = docker_client.containers.get(pending_container)
+        setattr(container, 'public_name', container_public_name)
+        setattr(container, 'weight', '1')
         self.idx += 1
 
         return container
@@ -136,7 +140,7 @@ class MyCloudService:
             "Port": self.port,
             "Number of containers": self.size,
             "Containers": [
-                {c.id[:12]: c.name} for c in self.containers
+                {c.id[:12]: {"Name": c.public_name, "Weight": c.weight}} for c in self.containers
             ],
             "Mode": self.mode or 'tcp',
             "LB algorithm": self.balance or 'roundrobin'
@@ -190,6 +194,12 @@ class MyCloudService:
                     logger.error(e)
         return True
 
+    def set_container_weight(self, name, weight):
+        for container in self.containers:
+            if container.public_name == name:
+                setattr(container, 'weight', weight)
+                return
+
     def stop(self):
         """
         Stop all containers
@@ -200,7 +210,7 @@ class MyCloudService:
                 _stop_container(container)
             except (OvsException,):
                 pass
-        self.containers = []
+        self.containers.clear()
 
     def __str__(self):
         return f'Service: {self.name}'
@@ -400,8 +410,8 @@ class MyCloud:
         """
         if service not in self.services:
             return False
-        if key not in proxy_configs or value not in proxy_configs[key]:
-            return False
+        # if key not in proxy_configs or value not in proxy_configs[key]:
+        #     return False
 
         # craft uri from arguments
         if self.network.ovs:
@@ -411,10 +421,14 @@ class MyCloud:
         if action == 'put' and value is not None:
             resp = requests.put(uri, data=value)
             if resp.json():    # success
-                setattr(self.services[service], key, value)
+                if key in proxy_configs:    # mode or balance
+                    setattr(self.services[service], key, value)
+                else:       # assume key is of the form '{{id}}/weight'
+                    name, weight = key.split('/')
+                    self.services[service].set_container_weight(name, value)
                 return True
             return False
-        elif action == 'delete':
+        elif action == 'delete' and key in proxy_configs:
             resp = requests.delete(uri)
             if resp.json():
                 setattr(self.services[service], key, None)

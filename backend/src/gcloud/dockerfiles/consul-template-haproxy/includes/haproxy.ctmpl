@@ -23,7 +23,7 @@ backend gini_backend_{{ $key.Name }}
     mode {{ key_or_default (printf "service/%s/mode" $key.Name) "tcp" }}
     balance {{ key_or_default (printf "service/%s/balance" $key.Name) "roundrobin" }}
     option http-server-close{{ range $idx,$sv:=(service $key.Name) }}
-    server {{ $key.Name }}_{{ $idx }} {{ $sv.Address }}:{{ $sv.Port }} check{{ end }}
+    server {{ $key.Name }}_{{ add $idx 1 }} {{ $sv.Address }}:{{ $sv.Port }} weight {{ key_or_default (printf "service/%s/%s/weight" $key.Name $sv.ID) "1" }} check{{ end }}
 {{- end }}{{ end }}
 
 # only enable stats on http mode
