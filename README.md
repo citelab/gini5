@@ -58,7 +58,7 @@ sudo apt-get install -y	libreadline-dev \
 			iproute2 \
 			bridge-utils
 
-pip install docker
+python -m pip install ipaddress
 
 # Run these commands to download and compile libslack from source
 wget http://libslack.org/download/libslack-0.6.tar.gz
