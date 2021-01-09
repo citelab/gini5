@@ -85,6 +85,12 @@ sudo usermod -aG docker $USER
 
 The first command was creating a `docker` group assuming that it did not exist before. The second command was adding your account to the docker group. After running this command, you may need to log out of your account and log back in (or reboot).
 
+To pull the Docker images that Gini uses, run the script available under `scripts`:
+
+```bash
+./scripts/setup_docker.sh
+```
+
 ## Setting up SSH
 
 Change directory to `$HOME/.ssh` and run `ssh-keygen -t rsa` in that directory. When prompted, keep pressing ENTER to select the default options. Finally, run `cat id_rsa.pub >> authorized_keys`
