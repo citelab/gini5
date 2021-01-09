@@ -57,6 +57,8 @@ sudo apt-get install libreadline-dev \
          iproute2 \
          bridge-utils
 
+python -m pip install ipaddress
+
 # run these commands to download and compile libslack from source
 wget http://libslack.org/download/libslack-0.6.tar.gz
 tar xzf libslack-0.6.tar.gz
@@ -80,6 +82,12 @@ Gini is running Docker containers under the hood with the assumption that your u
 ```bash
 sudo groupadd docker
 sudo usermod -aG docker $USER
+```
+
+To pull the Docker images that Gini uses, run the script available under `scripts`:
+
+```bash
+./scripts/setup_docker.sh
 ```
 
 ## Setting up SSH
