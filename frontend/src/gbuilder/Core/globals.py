@@ -45,7 +45,7 @@ options = {
     "moveAlert": True,
     "gnome": False,
     "menumods": False,
-    "base_network": "192.168.0.0/16"
+    "base_network": "172.31.0.0/16"
 }
 
 mainWidgets = {
