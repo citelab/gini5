@@ -16,6 +16,7 @@ import os
 import time
 import threading
 import importlib
+import traceback
 
 log = core.getLogger()
 
@@ -75,10 +76,10 @@ class ModuleFileReader(threading.Thread):
                             log.info("module %s loaded" % module)
                         except Exception as e:
                             log.error("failed to launch module - " + module)
-                            log.error(str(e))
+                            log.error(traceback.format_exc())
                     except Exception as e:
                         log.error("module does not exist - " + module)
-                        log.error(str(e))
+                        log.error(traceback.format_exc())
 
                 module_file.close()
             except Exception as e:
