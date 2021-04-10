@@ -158,7 +158,7 @@ again:
  * pbuf is freed.
  *
  * @param p pbuf to be demultiplexed to a UDP PCB.
- * @param inp network interface on which the datagram was received.
+ * @param in_pkt network interface on which the datagram was received.
  *
  */
 void
