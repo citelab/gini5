@@ -681,7 +681,7 @@ void gncCmd() {
                 if (e1 != ERR_OK)
                     printf("tcp write error: %d\n", e1);
                 err_t e2 = tcp_output(pcb_established);
-                if (e1 != ERR_OK)
+                if (e2 != ERR_OK)
                     printf("tcp output error: %d\n", e2);
             }
 
@@ -794,7 +794,7 @@ void gncCmd() {
             udp_connect(pcb, ipaddr, port);
             udp_recv(pcb, udp_recv_callback, pcb);
 
-            // keep sending user input with the TCP connection
+            // keep sending user input with the UDP connection
             redefineSignalHandler(SIGINT, gncTerminate);
             char payload[DEFAULT_MTU];
             gncTerm = false;
