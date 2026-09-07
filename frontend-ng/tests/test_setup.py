@@ -415,3 +415,41 @@ def test_a_tag_that_fails_after_a_good_pull_is_explained():
     d.pullable = {XV6: "sha256:new"}
     images.pull_images([XV6], run=d, on_error=lambda ref, text: said.append(text))
     assert said and "does not resolve" in said[0]
+
+
+# -- the Compose plugin, asked about separately from the daemon ---------------- #
+def test_compose_is_detected_by_asking_for_its_version():
+    import subprocess as sp
+    from gini.setup import runtime
+    seen = []
+
+    def run(cmd, **kw):
+        seen.append(list(cmd))
+        return sp.CompletedProcess(list(cmd), 0, "Docker Compose version v2.31.0", "")
+
+    assert runtime.compose_available(run=run) is True
+    assert seen == [["docker", "compose", "version"]]
+
+
+def test_a_missing_compose_plugin_is_not_a_missing_daemon():
+    """They fail independently and constantly do on Linux, where the plugin is its own package:
+    `docker info` answers, `docker compose version` does not."""
+    import subprocess as sp
+    from gini.setup import runtime
+
+    def run(cmd, **kw):
+        if list(cmd)[:3] == ["docker", "compose", "version"]:
+            return sp.CompletedProcess(list(cmd), 125, "", "'compose' is not a docker command")
+        return sp.CompletedProcess(list(cmd), 0, "", "")
+
+    assert runtime.compose_available(run=run) is False
+    assert runtime.docker_state(run=run) == "ok", "the daemon is fine; only the plugin is absent"
+
+
+def test_every_platform_says_how_to_install_compose():
+    """A detection with no remedy just moves the dead end."""
+    from gini.setup import runtime
+    for os_name in ("linux", "macos", "windows"):
+        plan = runtime.runtime_plan(os_name)
+        assert plan.get("compose"), f"{os_name} has no compose instructions"
+    assert "docker-compose-plugin" in runtime.runtime_plan("linux")["compose"]

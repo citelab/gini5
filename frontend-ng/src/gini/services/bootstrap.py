@@ -50,6 +50,12 @@ def plan(app_version: str | None, *, run=subprocess.run, backend_hint: str | Non
     os_name = runtime.detect_os()
     rt_state = runtime.docker_state(run=run)          # "ok" | "stopped" | "missing"
     have_docker = rt_state == "ok"
+    # The daemon answers but the Compose plugin is absent: images CAN be fetched and nothing can
+    # be Run. A fourth state rather than folding it into "stopped", for the same reason "stopped"
+    # was split from "missing" — the advice is different, and the wrong advice sends somebody to
+    # start an engine that is already running.
+    if have_docker and not runtime.compose_available(run=run):
+        rt_state = "no_compose"
     backend = images.find_backend(backend_hint)
     done = marker.is_setup_done()
     stale = marker.needs_update(app_version or "")
@@ -59,7 +65,14 @@ def plan(app_version: str | None, *, run=subprocess.run, backend_hint: str | Non
     absent = (images.missing_locally(images.image_refs(app_version), run=run)
               if (have_docker and done and not stale) else [])
 
-    if rt_state == "stopped":
+    if rt_state == "no_compose":
+        rp = runtime.runtime_plan(os_name)
+        state, why = NEEDS_RUNTIME, (
+            "Docker is installed and running, but the Compose plugin it needs is missing — so "
+            "nothing can be started. `docker compose version` fails on this machine.\n\n"
+            f"{rp.get('compose', '')}\n\nBuilding and reading topologies works meanwhile; Run "
+            f"does not.")
+    elif rt_state == "stopped":
         # Installed, but the engine is not answering. Distinct from "missing" because the advice is
         # the opposite: telling somebody to install Docker when they already have it sends them to
         # fix the wrong thing, and never names the one action that works.
@@ -103,7 +116,7 @@ def plan(app_version: str | None, *, run=subprocess.run, backend_hint: str | Non
         "os": os_name,
         "arch": arch(),                    # shown, never used to choose an image
         "docker": have_docker,
-        "runtime_state": rt_state,   # "ok" | "stopped" | "missing"
+        "runtime_state": rt_state,   # "ok" | "stopped" | "missing" | "no_compose"
         "missing": absent,           # images the marker claimed but Docker lacks
         "source": str(backend) if backend else "",
         "app_version": app_version or "",

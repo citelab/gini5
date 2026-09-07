@@ -558,3 +558,55 @@ def test_a_failure_with_no_reason_says_what_to_run(monkeypatch, with_docker):
                         [(refs[0], False)])
     r = B.execute({"state": B.PULL, "refs": ["r/gini-xv6:1"], "app_version": "1", "arch": "arm64"})
     assert "docker pull r/gini-xv6:1" in r["message"]
+
+
+# -- the Compose plugin: a working Docker that still cannot Run anything ------- #
+def _no_compose(cmd=(), *a, **k):
+    """A Docker that is installed, running, and has no `compose` subcommand.
+
+    Not a contrived case — it is what `apt install docker.io` gives you on Ubuntu, because the
+    plugin is a separate package. `docker ps` works, `docker info` works, preflight was happy,
+    and Run died on the CLI's own argument parser.
+    """
+    import subprocess as sp
+    cmd = list(cmd)
+    if cmd[:3] == ["docker", "compose", "version"]:
+        return sp.CompletedProcess(cmd, 125, "", "docker: 'compose' is not a docker command.")
+    return _docker_ok(cmd, *a, **k)
+
+
+def test_a_docker_without_compose_is_not_reported_as_ready():
+    """It used to be. `docker info` answers, so preflight said the machine was fine, and the
+    failure surfaced much later as:
+
+        Run failed: unknown flag: --build
+        Usage:  docker [OPTIONS] COMMAND [ARG...]
+
+    which names nothing a student could act on.
+    """
+    p = B.plan("6.8.1", run=_no_compose)
+    assert p["state"] == B.NEEDS_RUNTIME
+    assert p["runtime_state"] == "no_compose"
+
+
+def test_the_message_names_compose_and_not_a_stopped_engine():
+    """The engine IS running. Telling somebody to start it sends them to fix the wrong thing —
+    the same mistake that split "stopped" from "missing" in the first place."""
+    why = B.plan("6.8.1", run=_no_compose)["why"]
+    assert "compose" in why.lower()
+    assert "not running" not in why, why
+
+
+def test_a_complete_docker_is_still_ready():
+    """The other half — this must not become "nobody can ever Run"."""
+    assert B.plan("6.8.1", run=_docker_ok)["runtime_state"] == "ok"
+
+
+def test_compose_is_only_asked_about_when_the_daemon_answers():
+    """A machine with no Docker at all needs the INSTALL steps, not a note about a plugin."""
+    import subprocess as sp
+
+    def nothing(cmd=(), *a, **k):
+        return sp.CompletedProcess(list(cmd), 1, "", "Cannot connect to the Docker daemon")
+    p = B.plan("6.8.1", run=nothing)
+    assert p["runtime_state"] == "stopped" and p["state"] == B.NEEDS_RUNTIME

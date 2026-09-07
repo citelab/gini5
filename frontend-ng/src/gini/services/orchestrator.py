@@ -1231,6 +1231,9 @@ class Orchestrator:
 
     def up(self, config: RuntimeConfig, workdir: str | Path,
            auto_internet: bool = True, laptop_id: str = "") -> tuple[bool, str]:
+        ok, msg = self._ensure_compose()            # the thing that launches everything below
+        if not ok:
+            return False, msg
         if config.routers or config.ovs_switches:   # routers & OVS use the gRouter image
             ok, msg = self._ensure_grouter_image()
             if not ok:
@@ -1401,6 +1404,32 @@ class Orchestrator:
                     "Start Docker Desktop (or `colima start`), give it a moment, and press Run "
                     "again.")
         return ""
+
+    def _ensure_compose(self) -> tuple[bool, str]:
+        """Compose is what actually launches a topology, and it goes missing far more often than
+        Docker does.
+
+        Without this the failure surfaces as Docker's own argument parser, which names nothing:
+
+            Run failed: unknown flag: --build
+            Usage:  docker [OPTIONS] COMMAND [ARG...]
+
+        `docker compose up --build -d` on a CLI with no `compose` subcommand makes the TOP-LEVEL
+        parser reject the first flag it does not recognise. Nobody would read "install a plugin"
+        out of that, and a student who has just watched `docker ps` work has every reason to
+        believe Docker is fine — it is; Compose is a separate package on Linux and Ubuntu's
+        `docker.io` does not carry it.
+
+        Checked here as well as at first run because Docker can change underneath an install, and
+        this is where it actually bites.
+        """
+        from ..setup.runtime import compose_available, detect_os, runtime_plan
+        if compose_available():
+            return True, ""
+        rp = runtime_plan(detect_os())
+        return False, ("Docker is running, but `docker compose` is not available on this machine, "
+                       "so nothing can be started.\n\n" + rp.get("compose", "")
+                       + "\n\nCheck it with:  docker compose version")
 
     def _ensure_grouter_image(self) -> tuple[bool, str]:
         """The real gRouter runs from a locally-built image. Check it exists and, if we

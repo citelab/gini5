@@ -58,9 +58,11 @@ class FirstRunDialog(QDialog):
         # rather than a button that would only fail.
         if plan["state"] == bootstrap.NEEDS_RUNTIME:
             rp = plan.get("runtime_plan") or {}
-            # A stopped engine needs the START command; an absent one needs the INSTALL steps.
-            hint = (rp.get("start", "") if plan.get("runtime_state") == "stopped"
-                    else rp.get("manual", "") or rp.get("needs", ""))
+            # A stopped engine needs the START command, a missing plugin the plugin's install
+            # line, and an absent Docker the full INSTALL steps. Three causes, three answers.
+            hint = {"stopped": rp.get("start", ""),
+                    "no_compose": rp.get("compose", "")}.get(
+                        plan.get("runtime_state"), rp.get("manual", "") or rp.get("needs", ""))
             if hint:
                 man = QLabel(hint)
                 man.setWordWrap(True)
