@@ -252,3 +252,124 @@ def test_it_paints_without_raising(app):
     v.feed(b"\033[31mred\033[0m \033[1mbold\033[0m plain\r\nsecond line\r\n")
     v.render(QPixmap(v.size()))
 
+
+
+# -- a resize must scroll, never truncate ------------------------------------ #
+#
+# This is the bug that made a working network look broken. A traceroute in the right-hand pane
+# came back with hops missing from the middle and one line out of order, while the same commands
+# in the external terminal were perfect. Nothing was wrong with the routing: the hops were
+# printed, and the pane deleted them.
+#
+# pyte implements a shrink as `delete_lines()` at the top of the screen — an editing operation,
+# not a scroll — and `HistoryScreen` only records history from `index()`. So lines removed by a
+# resize are destroyed, reachable neither on screen nor in the scrollback. `_refit()` calls
+# `resize()` on every geometry change, and a dock in a splitter gets a lot of those.
+
+LINES = ["M1:/app# traceroute M6",
+         "traceroute to M6 (10.0.3.11), 30 hops max, 60 byte packets",
+         " 1  R1 (10.0.1.1)  1.271 ms",
+         " 2  R2-eth1 (10.0.4.2)  1.975 ms",
+         " 3  M6 (10.0.3.11)  2.774 ms"]
+
+
+def _document(v):
+    """Everything the widget can still show: scrollback then live screen, blanks dropped."""
+    scr = v._screen
+    top = ["".join(c.data for c in line.values()).rstrip() for line in scr.history.top]
+    buf = [v._row_text(scr.buffer[y]).rstrip() for y in range(scr.lines)]
+    return [line for line in top + buf if line]
+
+
+def _fed(app, rows=24, cols=80):
+    """A fed screen that is still SPARSE.
+
+    Deliberately does not call `_document()` to check itself, because reading every row
+    materialises pyte's sparse buffer — and a dense buffer hides the bug this file exists for.
+    `delete_lines` only skips its move when the source row is ABSENT, so a fixture that verified
+    itself by reading the screen was testing a state the running terminal never reaches. Mutation
+    testing caught it: removing the densify step from `_scroll_off` changed nothing.
+
+    The cursor row is proof enough that the feed landed, and reads no cells.
+    """
+    v = TerminalView()
+    v._screen.resize(rows, cols)
+    for line in LINES:
+        v.feed((line + "\r\n").encode())
+    assert v._screen.cursor.y == len(LINES), "fixture did not land"
+    return v
+
+
+def test_shrinking_the_pane_loses_no_output(app):
+    """Dragging the splitter used to delete twelve lines outright."""
+    v = _fed(app)
+    v._scroll_off(12)
+    v._screen.resize(12, 80)
+    assert _document(v) == LINES
+
+
+def test_a_transient_collapse_does_not_empty_the_terminal(app):
+    """`cols_rows()` floors at MIN_ROWS, so one layout pass at a small height took the screen down
+    to four rows. Before this, that emptied the whole terminal — history included."""
+    v = _fed(app)
+    for rows in (_tv.MIN_ROWS, DEFAULT_ROWS):
+        v._scroll_off(rows)
+        v._screen.resize(rows, 80)
+    assert _document(v) == LINES
+
+
+def test_a_shrink_leaves_no_line_behind_out_of_order(app):
+    """The stray line. `delete_lines` only MOVES a row when the source row exists in pyte's
+    sparse buffer, so on a screen never written to the bottom an old line survives in place and
+    reappears later among newer output. That is where ` 1  M2 (10.0.1.11)` came from, sitting
+    between one command's result and the next command's prompt."""
+    v = _fed(app)
+    v._scroll_off(4)
+    v._screen.resize(4, 80)
+    doc = _document(v)
+    assert doc == LINES, doc
+    assert len(doc) == len(set(doc)), f"a line survived twice: {doc}"
+
+
+def test_repeated_resizing_never_accumulates_damage(app):
+    """A session is many layout passes, not one. Each used to punch a hole wherever the top of
+    the screen happened to be, which is why the losses looked random."""
+    v = _fed(app)
+    for rows in (8, 24, 6, 24, 10, 24):
+        v._scroll_off(rows)
+        v._screen.resize(rows, 80)
+    assert _document(v) == LINES
+
+
+def test_growing_the_pane_destroys_nothing(app):
+    v = _fed(app, rows=12)
+    v._scroll_off(24)                      # a no-op: growing removes nothing
+    v._screen.resize(24, 80)
+    assert _document(v) == LINES
+
+
+def test_a_resize_event_does_not_refit_synchronously(app):
+    """Debounced. A layout pass hands the widget several sizes in a row and one can be collapsed;
+    acting on each would resize the PTY repeatedly and shunt the live screen into scrollback for
+    a geometry that existed for a single frame."""
+    v = _fed(app)
+    seen = []
+    v.size_changed.connect(lambda c, r: seen.append((c, r)))
+    # The handler directly: offscreen Qt does not deliver a resizeEvent for v.resize().
+    from PySide6.QtCore import QSize
+    from PySide6.QtGui import QResizeEvent
+    v.resizeEvent(QResizeEvent(QSize(200, 60), QSize(640, 320)))
+    assert seen == [], "resizeEvent refitted immediately instead of waiting for the geometry"
+    assert v._refit_timer.isActive(), "the refit was not scheduled at all"
+    assert _document(v) == LINES
+
+
+def test_the_deferred_refit_still_happens(app):
+    """Debouncing must not become 'never'. The PTY has to learn the new size."""
+    v = _fed(app)
+    seen = []
+    v.size_changed.connect(lambda c, r: seen.append((c, r)))
+    v.resize(200, 60)
+    v._refit()                             # what the timer fires
+    assert seen, "the PTY was never told the new geometry"
+    assert _document(v) == LINES, "and the deferred refit still kept every line"

@@ -22,7 +22,7 @@ from __future__ import annotations
 
 import sys
 
-from PySide6.QtCore import QSize, Qt, Signal
+from PySide6.QtCore import QSize, Qt, QTimer, Signal
 from PySide6.QtGui import QColor, QFont, QFontMetricsF, QPainter
 from PySide6.QtWidgets import QSizePolicy, QWidget
 
@@ -74,6 +74,11 @@ FONT_RATIO = 0.9
 MIN_PT = 7.0
 
 MIN_COLS, MIN_ROWS = 20, 4
+#: How long to let the geometry settle before resizing the emulator and the PTY. A layout pass
+#: hands this widget several sizes in a row — a dock being shown, a tab switch, a splitter drag —
+#: and one of them can be a collapsed one. Acting on each would resize the PTY repeatedly and
+#: shunt the live screen into the scrollback for a size that existed for one frame.
+REFIT_MS = 120
 DEFAULT_COLS, DEFAULT_ROWS = 80, 24
 SCROLLBACK = 5000
 
@@ -109,6 +114,9 @@ class TerminalView(QWidget):
         self._sel_head = None                          # (doc_row, col) where it is now
         self._selecting = False
         self.setMouseTracking(False)                   # only track while a button is held
+        self._refit_timer = QTimer(self)               # see resizeEvent
+        self._refit_timer.setSingleShot(True)
+        self._refit_timer.timeout.connect(self._refit)
 
     # -- geometry ----------------------------------------------------------- #
     def _metrics(self) -> None:
@@ -128,7 +136,46 @@ class TerminalView(QWidget):
 
     def resizeEvent(self, e) -> None:                 # noqa: N802 - Qt naming
         super().resizeEvent(e)
-        self._refit()
+        # DEBOUNCED. See REFIT_MS: a transient size during layout is not a user resizing their
+        # terminal, and acting on it moves everything on screen into the scrollback.
+        self._refit_timer.start(REFIT_MS)
+
+    def _row_text(self, line) -> str:
+        return "".join(line[x].data for x in range(self._screen.columns))
+
+    def _scroll_off(self, rows: int) -> None:
+        """Move the lines a SHRINK is about to destroy into the scrollback.
+
+        pyte implements a shrink as `delete_lines()` at the top of the screen — an EDITING
+        operation, not a scroll — and `HistoryScreen` only appends to history from `index()`. So
+        every line a resize removes is destroyed outright and reachable nowhere. Shrinking a
+        24-row screen to 12 loses twelve lines for good; a transient collapse to MIN_ROWS empties
+        the terminal. That is what made a traceroute in this pane look like a broken network: the
+        hops were printed, and the pane deleted them.
+
+        DENSIFY FIRST, and this is the subtle half. `delete_lines` only moves a row when the
+        SOURCE row exists in pyte's sparse buffer:
+
+            if y + count <= bottom:
+                if y + count in self.buffer:
+                    self.buffer[y] = self.buffer.pop(y + count)
+
+        On a screen never written to the bottom those source rows are absent, so the destination
+        is left ALONE — an old line survives in place instead of scrolling away, and turns up
+        later out of order among newer output. Touching every row makes the buffer dense so the
+        moves actually happen, which is what makes the shrink deterministic rather than a
+        function of how far down the screen had been written.
+        """
+        screen = self._screen
+        if rows >= screen.lines:
+            return                                    # growing destroys nothing
+        for y in range(screen.lines):
+            screen.buffer[y]                          # defaultdict: materialise the sparse rows
+        doomed = [screen.buffer[y] for y in range(screen.lines - rows)]
+        while doomed and not self._row_text(doomed[-1]).strip():
+            doomed.pop()                              # unwritten screen, not output
+        for line in doomed:
+            screen.history.top.append(line)
 
     def _refit(self) -> None:
         """Recompute the grid and tell the PTY if it changed.
@@ -138,6 +185,7 @@ class TerminalView(QWidget):
         """
         cols, rows = self.cols_rows()
         if (cols, rows) != (self._screen.columns, self._screen.lines):
+            self._scroll_off(rows)                    # a shrink must scroll, never truncate
             self._screen.resize(rows, cols)           # pyte takes (lines, columns)
             self.size_changed.emit(cols, rows)
         self.update()
