@@ -316,3 +316,98 @@ def test_a_thrown_recorder_does_not_break_apply(app):
     b._on_apply()
     assert applied, "recording swallowed the apply itself"
     b.close()
+
+
+# ============================================================================ #
+# Stage 4: what the KERNEL did
+#
+# Tier 1 records what the student did. This records what the kernel did about it, which is what
+# turns "switched to lottery" into "switched to lottery and pid 7 stopped starving".
+#
+# Two things make it safe to record from a path that runs every second: StateWatcher is
+# edge-triggered (once per condition per episode, re-arming when it clears), and the promoted set
+# is deliberately short.
+# ============================================================================ #
+def _snap(specs, run=None, ticks=0):
+    from gini.domain.xv6 import Proc, Snapshot
+    return Snapshot(procs=[Proc(pid, st, nm) for pid, st, nm in specs],
+                    running_pid=run, ticks=ticks)
+
+
+def _state_with_recorder():
+    """A MachineState wired the way MainWindow wires it, with a recording sink."""
+    from gini.domain.machine_state import MachineState
+    seen: list = []
+    st = MachineState(_Kernel(), device_id="d1")
+    st.on_record = lambda s, evs: seen.extend(evs)
+    return st, seen
+
+
+def test_the_watcher_hands_its_events_to_the_chain():
+    st, seen = _state_with_recorder()
+    for _ in range(6):                      # pid 2 runnable and never running -> starvation
+        st._ingest(_snap([(1, "running", "init"), (2, "runnable", "grind")], run=1))
+    assert "starvation" in [e.kind for e in seen]
+
+
+def test_recording_does_not_consume_what_the_coach_reads():
+    """`drain_events()` EMPTIES the queue and the Coach is its consumer. A recorder that drained
+    too would race it, and each would get some of the events."""
+    st, seen = _state_with_recorder()
+    for _ in range(6):
+        st._ingest(_snap([(1, "running", "init"), (2, "runnable", "grind")], run=1))
+    assert seen, "the recorder saw nothing"
+    assert st.pending_events(), "recording ate the Coach's events"
+    assert [e.kind for e in st.drain_events()] == [e.kind for e in seen]
+
+
+def test_a_thrown_recorder_cannot_stop_the_poll_loop():
+    """THE safety property for this stage. The watcher runs inside the Lab's live poll; a chain
+    that broke it would take the Machine Lab's updates down with it — the failure mode this
+    project has already had once."""
+    from gini.domain.machine_state import MachineState
+    st = MachineState(_Kernel(), device_id="d1")
+    st.on_record = lambda s, evs: (_ for _ in ()).throw(RuntimeError("chain fell over"))
+    for _ in range(6):
+        st._ingest(_snap([(1, "running", "init"), (2, "runnable", "grind")], run=1))
+    assert st.latest is not None, "the poll stopped ingesting"
+    assert st.pending_events(), "the watcher stopped detecting"
+
+
+def test_the_coach_is_still_notified():
+    """on_record must not have displaced on_event — the proactive Coach reads the same events."""
+    from gini.domain.machine_state import MachineState
+    st = MachineState(_Kernel(), device_id="d1")
+    fired = []
+    st.on_event = lambda s: fired.append(1)
+    st.on_record = lambda s, evs: None
+    for _ in range(6):
+        st._ingest(_snap([(1, "running", "init"), (2, "runnable", "grind")], run=1))
+    assert fired, "the Coach stopped being told"
+
+
+def test_only_the_teachable_kinds_reach_the_chain():
+    """"idle" is a steady state every lab passes through, and "control" is the student's own act,
+    already recorded as a tune when they did it — recording it here would count one act twice."""
+    from gini.ui.main_window import MainWindow
+    promoted = MainWindow._RECORDED_KERNEL_EVENTS
+    assert set(promoted) == {"starvation", "cpu_monopoly", "zombie_leak"}
+    assert "idle" not in promoted and "control" not in promoted
+
+
+def test_an_observation_is_not_counted_as_a_failed_check():
+    """Reusing `witness` would have made `summarize` read a starvation observation as a check
+    that did not pass, and the headline would say "2 of 5 checks passed" about something that was
+    never a check."""
+    from gini.domain import narration as N
+    from gini.domain import proof as P
+    from gini.domain import proof_events as ev
+    from gini.domain.ticket import mint
+    c = P.Chain.start(mint().code, t=1.0)
+    c.append(*ev.observe("M1", "starvation", "pid 7 has stayed RUNNABLE for 6 slices", 7), t=2.0)
+    c.append(*ev.witness("reach(a -> b)", "ok"), t=3.0)
+    s = N.summarize(c.entries)
+    assert s["witness_total"] == 1 and s["witness_passed"] == 1
+    assert s["witnessed"] == 2, "the observation still counts as something GINI measured"
+    line = N.describe(c.entries[1])
+    assert "observed" in line and "checked" not in line, line

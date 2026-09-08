@@ -41,12 +41,17 @@ LOAD = "load"
 # submission narrated as "placed a Machine, ran, opened a console, submitted" while the whole
 # assignment went unrecorded. See docs/design/os-lab-provenance.md.
 LAB_OPEN, TUNE, SPAWN, BUILD = "lab_open", "tune", "spawn", "build"
+#: What the KERNEL did, as opposed to what the student did to it. Separate from `witness` on
+#: purpose: `summarize` counts a witness as passed when its verdict is "ok", so folding a
+#: starvation observation in there would make the report say "2 of 5 checks passed" about
+#: something that was never a check. A phenomenon observed is not a test failed.
+OBSERVE = "observe"
 STOPPED, RESUMED = "stopped", "resumed"
 
 CONSTRUCTION = (PLACE, REMOVE, CONNECT, DISCONNECT, CONFIGURE)
 OPERATION = (RUN, STOP, OPEN_CONSOLE, MEASURE, INVOKE, COMMAND,
              LAB_OPEN, TUNE, SPAWN, BUILD)
-WITNESSED = (WITNESS, OBJECTIVE)
+WITNESSED = (WITNESS, OBJECTIVE, OBSERVE)
 #: A student's own words, and the weakest tier there is — deliberately NOT folded in with
 #: `witnessed`, because a witness is something GINI measured and an answer is something a person
 #: typed. Nothing here checks it against the teacher's key; that is a person's job.
@@ -251,6 +256,24 @@ def build(device: str, shadow: str, ok: bool, sha256: str = "", lines: int = 0,
                    "action": "revert" if action == "revert" else "load",
                    "ok": bool(ok), "sha256": clip(sha256, 64), "lines": int(lines or 0),
                    "log": [clip(x, 200) for x in (log or [])]}
+
+
+def observe(device: str, kind: str, detail: str, pid: int | None = None) -> tuple[str, dict]:
+    """A phenomenon GINI measured on the running kernel — starvation, a CPU monopoly, a zombie.
+
+    The other half of an OS lab's evidence. Tier 1 records what the student DID; this records what
+    the kernel did about it, which is what turns "switched to lottery" into "switched to lottery
+    and pid 7 stopped starving".
+
+    Nearly free: `machine_state.StateWatcher` already detects these on every poll and they were
+    being thrown away. It is EDGE-TRIGGERED — each condition fires once when it becomes true and
+    re-arms when it clears — so this cannot flood a chain, which is the only reason it is safe to
+    record from a polling path at all.
+    """
+    d = {"on": clip(device, 64), "what": clip(kind, 40), "detail": clip(detail, 300)}
+    if pid is not None:
+        d["pid"] = int(pid)
+    return OBSERVE, d
 
 
 def measure(name: str, result: dict) -> tuple[str, dict]:

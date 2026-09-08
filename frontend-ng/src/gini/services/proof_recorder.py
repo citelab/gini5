@@ -520,6 +520,16 @@ class ProofRecorder:
             ev.build(str(device or ""), str(shadow or ""), bool(ok), str(sha256 or ""),
                      int(lines or 0), list(log or []), action)))
 
+    def note_observed(self, device: str, kind: str, detail: str,
+                      pid: int | None = None) -> None:
+        """A phenomenon the kernel showed — from MachineState's watcher, off the poll thread.
+
+        The watcher is edge-triggered (once per condition per episode, re-arming when it clears),
+        which is what makes it safe to record from a path that runs every second.
+        """
+        self._guard(lambda: self._record(
+            ev.observe(str(device or ""), str(kind or ""), str(detail or ""), pid)))
+
     def note_answer(self, question_id: str, prompt: str, text: str) -> bool:
         """Record the student's answer to one of the lab's questions.
 

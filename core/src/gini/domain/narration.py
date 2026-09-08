@@ -121,6 +121,10 @@ def describe(entry: Entry) -> str:
         # The compiler's own words, indented under the attempt, the way COMMAND puts a command's
         # output under it. A failed build is the interesting one and it must carry its reason.
         return head + "".join(f"\n            {line}" for line in (d.get("log") or []))
+    if k == ev.OBSERVE:
+        # No verdict and no tick: this is a phenomenon that occurred, not a check that passed or
+        # failed, and dressing it as either would misrepresent it.
+        return f"GINI observed on {d.get('on', '?')}: {d.get('detail', '?')}"
     if k == ev.MEASURE:
         got = d.get("summary") or ", ".join(f"{a}={b}" for a, b in
                                             sorted(d.get("measurement", {}).items()))

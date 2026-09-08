@@ -224,6 +224,11 @@ class MachineState:
     vm: object = None                             # virtual-memory reader (snapshot()->VmSnapshot)
     fs: object = None                             # file-system reader (snapshot()->FsSnapshot)
     on_event: object = None                       # callback(self) fired on new pedagogical events
+    # callback(self, events) fired with the SAME events, for the proof chain. Separate from
+    # `on_event` because that one only notifies — the Coach then calls `drain_events()`, which
+    # EMPTIES the queue. A recorder that also drained would race the Coach and each would get
+    # some of the events; this observes without consuming, as events are produced.
+    on_record: object = None
     _events: list = field(default_factory=list)
     _prev_card: dict = field(default_factory=dict)
     # The two data "planes" the mode toggles between: each is (provider, vm, fs). The injected
@@ -428,6 +433,13 @@ class MachineState:
         if not events:
             return
         self._events.extend(events)
+        # FIRST, and never allowed to raise: the chain is a bystander here and a watcher that
+        # broke the poll loop would take the Lab's live updates down with it.
+        if self.on_record:
+            try:
+                self.on_record(self, list(events))
+            except Exception:                     # noqa: BLE001
+                pass
         if self.on_event and any(e.kind != "control" for e in events):
             try:
                 self.on_event(self)

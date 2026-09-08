@@ -3724,8 +3724,36 @@ class MainWindow(QMainWindow):
                 ms = MachineState(demo, device_id=device_id, mode="demo")
             # new teachable kernel events -> notify the assistant (proactive Coach)
             ms.on_event = lambda s, did=device_id: self.ctx.bus.machine_events.emit(did)
+            # ...and the same events into the proof chain, WITHOUT consuming them. The Coach
+            # drains the queue; this is handed the events as they are produced, so the two cannot
+            # race for them. See docs/design/os-lab-provenance.md.
+            ms.on_record = self._record_kernel_events
             states[device_id] = ms
         return ms
+
+    #: Which of the watcher's events are worth a line in a student's proof. Deliberately short.
+    #:
+    #: "idle" is a steady state, not a phenomenon — every lab passes through it and a chain full
+    #: of it would bury the three that mean something. "control" is the student's OWN action
+    #: (they switched a policy), already recorded as a `tune` when they did it, and recording it
+    #: again here would double-count one act as both a deed and an observation.
+    _RECORDED_KERNEL_EVENTS = ("starvation", "cpu_monopoly", "zombie_leak")
+
+    def _record_kernel_events(self, ms, events) -> None:
+        """Put the kernel's own teachable moments into the chain. Called from the POLL THREAD.
+
+        Under-promotes on purpose: a quiet chain is easier to widen than a noisy one is to trust.
+        """
+        rec = getattr(self, "proof_recorder", None)
+        if rec is None:
+            return
+        name = ""
+        dev = self.ctx.topology.devices.get(getattr(ms, "device_id", "")) if self.ctx else None
+        name = str(getattr(dev, "name", "") or getattr(ms, "device_id", "") or "")
+        for e in events or []:
+            if getattr(e, "kind", "") not in self._RECORDED_KERNEL_EVENTS:
+                continue
+            rec.note_observed(name, e.kind, getattr(e, "detail", ""), getattr(e, "pid", None))
 
     def _xv6_for_peripheral(self, device_id: str) -> str | None:
         """The xv6 Machine a peripheral is wired to (grammar guarantees at most one), or None."""
