@@ -228,7 +228,7 @@ class MachineLab(QDialog):
     launch_failed = Signal(str)            # a refused launch, from the worker thread that tried it
 
     def __init__(self, parent, theme: ThemeManager, device, state: MachineState | None = None,
-                 live=False, on_console=None, on_log=None) -> None:
+                 live=False, on_console=None, on_log=None, recorder=None) -> None:
         super().__init__(parent)
         self.theme = theme
         self.device = device
@@ -246,6 +246,11 @@ class MachineLab(QDialog):
         # a user choice on the state — Real means live kernel, Demo means the stand-in feed.
         self.live = (self.state.mode == "real")
         self._running = False
+        # The proof recorder, when there is one. An OS student's work happens in here and used to
+        # leave no trace: a submission narrated as "placed a Machine, ran, opened a console,
+        # submitted" while the whole assignment went unrecorded. See
+        # docs/design/os-lab-provenance.md. None in tests and in the standalone demo.
+        self._recorder = recorder
 
         t = theme.theme
         self.setWindowTitle(f"Machine Lab — {device.name}")
@@ -506,6 +511,7 @@ class MachineLab(QDialog):
         # opens the scheduler in its OWN window; the hub (and its mini-stat poll) stays live, so the
         # scheduler can be open alongside Memory/CPU/etc.
         self._ensure_sched_window()
+        self._rec("note_lab_open", self._dev_name(), "Process Scheduler")
         self._sched_win.show()
         self._sched_win.raise_()
         if self.live:
@@ -525,6 +531,29 @@ class MachineLab(QDialog):
             self._update_banner()
             return False
         return True
+
+    # -- proof of activity -------------------------------------------------- #
+    def _rec(self, method: str, *a, **kw) -> None:
+        """Record one act of OS-lab work. NEVER raises, whatever happens behind it.
+
+        One guarded funnel rather than a try/except at eleven call sites, and guarded even though
+        `ProofRecorder._guard` already swallows — because the thing on the other end may be absent
+        (no code armed, a test, the offline demo) or older than this build. Load is the most
+        consequential button in this window: a build that stopped working because the proof chain
+        hiccuped would be a far worse bug than a missing entry. Same reasoning as
+        terminal_panel._pump.
+        """
+        r = self._recorder
+        fn = getattr(r, method, None) if r is not None else None
+        if fn is None:
+            return
+        try:
+            fn(*a, **kw)
+        except Exception:                     # noqa: BLE001 — recording is never load-bearing
+            pass
+
+    def _dev_name(self) -> str:
+        return str(getattr(self.device, "name", "") or "")
 
     def _retire(self, attr: str) -> None:
         """Close and destroy a previously opened child window before opening another.
@@ -558,6 +587,7 @@ class MachineLab(QDialog):
         if not self._require_data():
             return
         self._retire("_sclab")
+        self._rec("note_lab_open", self._dev_name(), "System Calls")
         from .syscall_lab import SyscallLab
         # live /sc over the serial when running; DemoScheduler.sc() offline
         src = getattr(self.state.provider, "sc", None)
@@ -569,6 +599,7 @@ class MachineLab(QDialog):
         """Contention: the one kernel phenomenon nothing else here can show. Needs 2+ harts to be
         meaningful, which is why xv6 now boots multi-core; the panel says so if it is not."""
         self._retire("_locklab")
+        self._rec("note_lab_open", self._dev_name(), "Locks")
         from .lock_lab import LockLab
         self._locklab = LockLab(self, self.theme, device=self.device,
                                 provider=self.state.provider, live=self.live)
@@ -583,6 +614,7 @@ class MachineLab(QDialog):
         catch = getattr(self.state.provider, "catch_trap", None)   # live gdb freeze (Phase 2/4)
         alarms = getattr(self.state.provider, "alarms", None)      # sigalarm-lab strip (Phase 3)
         self._retire("_traplab")
+        self._rec("note_lab_open", self._dev_name(), "Traps")
         self._traplab = TrapLab(self, self.theme, device=self.device,
                                 traps_source=src if callable(src) else None,
                                 catch_source=catch if callable(catch) else None,
@@ -597,12 +629,14 @@ class MachineLab(QDialog):
         from .cpu_journey import CpuJourney
         cpu = self.state.latest.cpu if (self.state.latest and self.state.latest.cpu) else None
         self._retire("_journey")
+        self._rec("note_lab_open", self._dev_name(), "CPU Journey")
         self._journey = CpuJourney(self, self.theme, device=self.device, cpu=cpu, frame=frame)
         self._journey.show(); self._journey.raise_()
 
     def _open_games(self) -> None:
         from .games_lab import GamesLab
         self._retire("_games")
+        self._rec("note_lab_open", self._dev_name(), "Games")
         self._games = GamesLab(self, self.theme, self.device, self.state, live=self.live)
         self._games.show()
         self._games.raise_()
@@ -616,6 +650,7 @@ class MachineLab(QDialog):
         # in Demo it uses canned fingerprints so the panel + classify game work offline.
         from .fingerprint_lab import FingerprintLab
         self._retire("_fplab")
+        self._rec("note_lab_open", self._dev_name(), "Fingerprints")
         self._fplab = FingerprintLab(self, self.theme, self.device, self.state, live=self.live)
         self._fplab.show()
         self._fplab.raise_()
@@ -626,6 +661,7 @@ class MachineLab(QDialog):
         if not self._require_data():
             return
         self._retire("_cpulab")
+        self._rec("note_lab_open", self._dev_name(), "CPU & Registers")
         from .cpu_lab import CpuLab
         self._cpulab = CpuLab(self, self.theme, self.device, self.state, live=self.live)
         self._cpulab.show()
@@ -635,6 +671,7 @@ class MachineLab(QDialog):
         if not self._require_data():
             return
         self._retire("_memory")
+        self._rec("note_lab_open", self._dev_name(), "Virtual Memory")
         from .memory_lab import MemoryLab
         # render from the shared MachineState's VM reader (demo stand-in or the Mac GDB bridge),
         # so the Memory face and the Ask GINI card see one source.
@@ -649,6 +686,7 @@ class MachineLab(QDialog):
         if not self._require_data():
             return
         self._retire("_storage")
+        self._rec("note_lab_open", self._dev_name(), "File System")
         from .storage_lab import StorageLab
         self._storage = StorageLab(self, self.theme, device=self.device, provider=self.state.fs,
                                    state=self.state)
@@ -657,6 +695,7 @@ class MachineLab(QDialog):
 
     def _open_syscall_builder(self) -> None:
         self._retire("_syscalls")
+        self._rec("note_lab_open", self._dev_name(), "Syscall Builder")
         from .syscall_builder import SyscallBuilder
         # If the live provider knows how to write+recompile (Mac-side), let Apply drive it;
         # offline the builder still generates and previews the exact code.
@@ -909,6 +948,10 @@ class MachineLab(QDialog):
         if pid is None:
             return
         prio, tk = self._sc_prio.value(), self._sc_tickets.value()
+        # A deliberate Set on one process. Recorded as two knobs because that is what a marker
+        # needs to see — a lottery lab is about tickets, a priority lab about priority.
+        self._rec("note_tune", self._dev_name(), f"priority (pid {pid})", "", prio)
+        self._rec("note_tune", self._dev_name(), f"tickets (pid {pid})", "", tk)
         self._bg(lambda: (self.state.provider.set_priority(pid, prio),
                           self.state.provider.set_tickets(pid, tk)))
 
@@ -1020,6 +1063,12 @@ class MachineLab(QDialog):
 
         def go():
             ok = self.state.provider.run(prog, args)
+            if ok:
+                # ON SUCCESS, not on the click. This path knows whether it worked, so the chain
+                # should not claim a launch that never happened. Off the GUI thread is fine —
+                # every recorder entry point takes the lock (see note_command).
+                self._rec("note_spawn", self._dev_name(),
+                          f"{prog} {args}".strip(), "launch")
             if not ok:
                 # Do not let this vanish. The commonest cause is an xv6 image built before the
                 # program existed, and a silent failure is indistinguishable from a slow launch.
@@ -1034,6 +1083,10 @@ class MachineLab(QDialog):
             self.on_log("error", f"xv6: {why}")
 
     def _kill(self, pid: int) -> None:
+        # At the ACT, unlike launch: this path gets no result back to wait for. The process tree
+        # is what shows whether it worked, and stage 4's witnesses are what will say so in the
+        # chain.
+        self._rec("note_spawn", self._dev_name(), f"pid {pid}", "kill", pid)
         self._bg(lambda: self._act_then_refresh(lambda: self.state.provider.kill(pid)))
 
     def _act_then_refresh(self, action) -> None:
@@ -1073,6 +1126,10 @@ class MachineLab(QDialog):
         live bridge (the write halts the kernel via gdb, so we must not do it inline or on every
         drag tick)."""
         v = self._slice.value()
+        # BEFORE the write, and from the UI rather than from MachineState.set_timeslice — which
+        # computes the same transition but is also called programmatically, and a reconcile is not
+        # a student's decision.
+        self._rec("note_tune", self._dev_name(), "time slice", self.state.timeslice, v)
         self._update_slice_lbl()
         if self.live:
             self._bg(lambda: self.state.set_timeslice(v))
@@ -1082,6 +1139,9 @@ class MachineLab(QDialog):
     def _apply_policy(self, name) -> None:
         """Switch the scheduler policy live. For the live bridge the write goes over the serial
         off the GUI thread; offline it re-picks against the demo so the change is visible at once."""
+        # `_sync_policy_combo` blocks this signal while repopulating from the kernel's own POLICY
+        # roster, and `ev.tune` drops a no-op anyway — so what reaches the chain is a choice.
+        self._rec("note_tune", self._dev_name(), "scheduler policy", self.state.policy, name)
         if self.live:
             self._bg(lambda: self.state.set_policy(name))
         else:
@@ -1324,6 +1384,16 @@ class MachineLab(QDialog):
     def _on_load_result(self, ok, log, action) -> None:
         if self._closed:
             return
+        # THE assignment, successes and failures alike. `action` is also "reboot" here, which is
+        # not a build and must not read as one.
+        #
+        # No sha256 yet: it has to match the source that TRAVELS with the submission, and nothing
+        # ships those files until stage 5 — a hash recorded here from a manifest polled three
+        # seconds ago could disagree with what a marker opens, which is worse than no hash.
+        if action in ("load", "revert"):
+            tail = [ln for ln in str(log or "").splitlines() if ln.strip()][-6:]
+            self._rec("note_build", self._dev_name(), self._current_shadow_name(), bool(ok),
+                      "", 0, tail, action)
         self._set_build_btns(True)
         if action == "reboot" and ok:
             self._hide_wedge()                    # a fresh boot clears the warning

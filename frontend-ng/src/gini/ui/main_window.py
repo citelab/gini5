@@ -3794,7 +3794,7 @@ class MainWindow(QMainWindow):
                 # No `live=`: the parameter exists but MachineLab overrides it from the data
                 # mode two lines into __init__, and the value passed here was the same phantom
                 # `ms.live` that broke the Terminal above. Passing it read as if it did something.
-                self, self.theme, dev, state=ms,
+                self, self.theme, dev, state=ms, recorder=self.proof_recorder,
                 on_console=lambda: self._open_terminal(device_id),
                 on_log=lambda lvl, msg: self.ctx.bus.log.emit(lvl, msg))  # mirror to GINI Console
         except Exception as e:
