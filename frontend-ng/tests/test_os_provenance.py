@@ -240,3 +240,79 @@ def test_the_lab_still_does_the_work_it_was_asked_to(app):
     lab._kill(9)
     assert kern.killed == [9], "recording swallowed the action itself"
     lab.close()
+
+
+# -- stage 3: the sub-labs --------------------------------------------------- #
+#
+# Most sub-lab buttons turn out NOT to be evidence. `lock_lab._reset` and
+# `fingerprint_lab._reset` clear counters; memory's and storage's "simulate" buttons are
+# demo-mode teaching devices with no kernel behind them, and recording a SIMULATED page fault as
+# though a student had observed a real one would be worse than recording nothing. Wiring all nine
+# faces would have buried the entries that matter under resets.
+#
+# Two are real: applying a syscall writes five edits into the kernel and recompiles it, and the
+# Real/Demo flip changes how everything around it should be read.
+
+
+def test_switching_to_demo_is_recorded(app):
+    """Work against the stand-in is exploration, not an observation of a kernel. A marker who
+    cannot tell the two apart is being misled by a chain that looks busy."""
+    rec = _Rec()
+    lab = _lab(app, rec)
+    lab._set_data_mode("demo")
+    on, knob, before, after = _args(rec, "tune")[0]
+    assert (knob, after) == ("data mode", "demo")
+    lab.close()
+
+
+def _builder(app, rec, on_apply=None):
+    """A builder with a valid form. Generate refuses without a legal C identifier, and without a
+    codegen Apply returns before it does anything at all."""
+    from gini.ui.syscall_builder import SyscallBuilder
+    b = SyscallBuilder(None, _theme(app), device=_Dev(), on_apply=on_apply, recorder=rec)
+    b.name_edit.setText("ticks_since_boot")
+    b._on_generate()
+    assert b._codegen is not None, b.status.text()
+    return b
+
+
+def test_applying_a_syscall_is_recorded_like_a_build(app):
+    """Apply writes five edits into the kernel and recompiles it — the same class of act as a
+    shadow build, and just as much the assignment."""
+    rec = _Rec()
+    b = _builder(app, rec, on_apply=lambda codegen: None)
+    b._on_apply()
+    call = _args(rec, "build")[0]
+    assert call[2] is True and call[1].startswith("syscall ")
+    b.close()
+
+
+def test_a_syscall_apply_that_FAILED_is_recorded_too(app):
+    rec = _Rec()
+
+    def boom(_codegen):
+        raise RuntimeError("could not write sysfile.c")
+    b = _builder(app, rec, on_apply=boom)
+    b._on_apply()
+    call = _args(rec, "build")[0]
+    assert call[2] is False
+    assert "sysfile.c" in call[5][0], "a failed apply must carry its reason"
+    b.close()
+
+
+def test_the_builder_still_reports_a_failure_to_the_student(app):
+    """Recording must not have eaten the message the student needs to see."""
+    rec = _Rec()
+    b = _builder(app, rec, on_apply=lambda _c: (_ for _ in ()).throw(RuntimeError("nope")))
+    b._on_apply()
+    assert "Apply failed" in b.status.text()
+    b.close()
+
+
+def test_a_thrown_recorder_does_not_break_apply(app):
+    """Same guarantee as the Machine Lab's, through the same shared helper."""
+    applied = []
+    b = _builder(app, _Rec(explode=True), on_apply=applied.append)
+    b._on_apply()
+    assert applied, "recording swallowed the apply itself"
+    b.close()

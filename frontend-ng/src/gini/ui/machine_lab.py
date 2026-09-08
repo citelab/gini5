@@ -393,6 +393,10 @@ class MachineLab(QDialog):
         NEVER called automatically — the state also never auto-falls-back, so Real stays Real."""
         if self._running:
             self._toggle_run()                    # stop the poll loop before swapping the source
+        # Recorded because it changes how every entry AROUND it should be read: work done against
+        # the demo stand-in is exploration, not an observation of a kernel, and a marker who
+        # cannot tell the two apart is being misled by a chain that looks busy.
+        self._rec("note_tune", self._dev_name(), "data mode", self.state.mode, mode)
         self.state.set_mode(mode)
         self.live = (mode == "real")
         for k, b in self._mode_btns.items():
@@ -543,14 +547,8 @@ class MachineLab(QDialog):
         hiccuped would be a far worse bug than a missing entry. Same reasoning as
         terminal_panel._pump.
         """
-        r = self._recorder
-        fn = getattr(r, method, None) if r is not None else None
-        if fn is None:
-            return
-        try:
-            fn(*a, **kw)
-        except Exception:                     # noqa: BLE001 — recording is never load-bearing
-            pass
+        from .lab_record import record
+        record(self._recorder, method, *a, **kw)
 
     def _dev_name(self) -> str:
         return str(getattr(self.device, "name", "") or "")
@@ -701,7 +699,7 @@ class MachineLab(QDialog):
         # offline the builder still generates and previews the exact code.
         apply_fn = getattr(self.state.provider, "apply_syscall", None)
         self._syscalls = SyscallBuilder(
-            self, self.theme, device=self.device,
+            self, self.theme, device=self.device, recorder=self._recorder,
             on_apply=apply_fn if callable(apply_fn) else None)
         self._syscalls.show()
         self._syscalls.raise_()
