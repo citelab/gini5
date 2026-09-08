@@ -513,12 +513,16 @@ class ProofRecorder:
         self._guard(lambda: self._record(
             ev.spawn(str(device or ""), str(what or ""), action, pid)))
 
-    def note_build(self, device: str, shadow: str, ok: bool, sha256: str = "",
-                   lines: int = 0, log=None, action: str = "load") -> None:
-        """The student compiled their own kernel code — successes AND failures."""
+    def note_build(self, device: str, shadow: str, ok: bool, sources=None,
+                   log=None, action: str = "load") -> None:
+        """The student compiled their own kernel code — successes AND failures.
+
+        `sources` is `{filename: {"sha256", "lines"}}` as the files stood when the build ran. It
+        is what binds this entry to the code that travels with the submission.
+        """
         self._guard(lambda: self._record(
-            ev.build(str(device or ""), str(shadow or ""), bool(ok), str(sha256 or ""),
-                     int(lines or 0), list(log or []), action)))
+            ev.build(str(device or ""), str(shadow or ""), bool(ok), dict(sources or {}),
+                     list(log or []), action)))
 
     def note_observed(self, device: str, kind: str, detail: str,
                       pid: int | None = None) -> None:
@@ -632,5 +636,19 @@ class ProofRecorder:
             self._complain(e)
             return {"ok": False, "message": f"Could not write the proof: {e}"}
         return {"ok": True, "path": str(path), "proof": proof, "topology": topology,
+                # An OS lab's deliverable. Scoped to the xv6 machines in THIS topology — the
+                # shadow directories are per-machine and outlive the topology that made them, so
+                # gathering everything under ~/.gini/xv6-shadows/ would put one lab's work into
+                # another lab's submission. Never fatal: a proof that could not be written is a
+                # failure, a proof whose sources could not be read is still a proof.
+                "shadows": self._collect_shadows(topology),
                 "receipt": _proof.receipt_code(proof),
                 "message": f"Proof written to {path}"}
+
+    def _collect_shadows(self, topology: dict) -> dict:
+        try:
+            from .xv6_shadows import collect, xv6_machines
+            return collect(xv6_machines(topology))
+        except Exception as e:                              # noqa: BLE001
+            self._complain(e)
+            return {}

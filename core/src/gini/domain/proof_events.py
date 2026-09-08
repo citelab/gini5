@@ -235,7 +235,7 @@ def spawn(device: str, what: str, action: str = "launch",
     return SPAWN, d
 
 
-def build(device: str, shadow: str, ok: bool, sha256: str = "", lines: int = 0,
+def build(device: str, shadow: str, ok: bool, sources: dict | None = None,
           log: list[str] | None = None, action: str = "load") -> tuple[str, dict]:
     """The student compiled their own kernel code. THE assignment, in one entry.
 
@@ -247,14 +247,24 @@ def build(device: str, shadow: str, ok: bool, sha256: str = "", lines: int = 0,
     The tail, not the head, because that is where the error is: `command` truncates from the front
     for the same reason in reverse, since `ping` says what matters first and then repeats itself.
 
-    `sha256` binds this entry to the source that was compiled. The file travels with the
-    submission and the server checks it against this, the way `topology_matches` already checks the
-    topology — so a marker reads provably the code this entry describes. It also means a shadow
-    edited AFTER the last build no longer matches, which the report should say rather than hide.
+    `sources` is `{filename: {"sha256", "lines"}}` for the shadow files as they stood WHEN THIS
+    BUILD RAN. It binds the entry to the code that was compiled: the files travel with the
+    submission and the server checks them against this, the way `topology_matches` already checks
+    the topology, so a marker reads provably the code this entry describes.
+
+    A file edited AFTER the last build therefore no longer matches, and that is REPORTED rather
+    than refused. Unlike a topology mismatch — which means the submitted work is not the proven
+    work — this only means "what you sent is not what you last compiled", which is a normal thing
+    to have done and no grounds for throwing an evening away.
     """
+    src = {}
+    for name, meta in (sources or {}).items():
+        meta = meta if isinstance(meta, dict) else {"sha256": meta}
+        src[clip(str(name), 64)] = {"sha256": clip(str(meta.get("sha256", "")), 64),
+                                    "lines": int(meta.get("lines") or 0)}
     return BUILD, {"on": clip(device, 64), "shadow": clip(shadow, 40),
                    "action": "revert" if action == "revert" else "load",
-                   "ok": bool(ok), "sha256": clip(sha256, 64), "lines": int(lines or 0),
+                   "ok": bool(ok), "sources": src,
                    "log": [clip(x, 200) for x in (log or [])]}
 
 

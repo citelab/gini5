@@ -1385,13 +1385,19 @@ class MachineLab(QDialog):
         # THE assignment, successes and failures alike. `action` is also "reboot" here, which is
         # not a build and must not read as one.
         #
-        # No sha256 yet: it has to match the source that TRAVELS with the submission, and nothing
-        # ships those files until stage 5 — a hash recorded here from a manifest polled three
-        # seconds ago could disagree with what a marker opens, which is worse than no hash.
+        # The sources are hashed HERE, from the files on disk, at the moment the build ran — not
+        # from the shadow manifest, which is polled every three seconds and could disagree with
+        # what a marker will open. These same files travel with the submission and the server
+        # checks them against these hashes.
         if action in ("load", "revert"):
             tail = [ln for ln in str(log or "").splitlines() if ln.strip()][-6:]
+            try:
+                from ..services.xv6_shadows import hashes_for
+                sources = hashes_for(self._dev_name())
+            except Exception:                     # noqa: BLE001 — never block a build on this
+                sources = {}
             self._rec("note_build", self._dev_name(), self._current_shadow_name(), bool(ok),
-                      "", 0, tail, action)
+                      sources, tail, action)
         self._set_build_btns(True)
         if action == "reboot" and ok:
             self._hide_wedge()                    # a fresh boot clears the warning

@@ -11,10 +11,17 @@ swallows whatever the recorder throws, for the same reason `terminal_panel._pump
 console tap whole.
 """
 import os
+import sys
+from pathlib import Path
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
 import pytest
+
+# The Teaching Center is a sibling distribution; stage 5's checks live on its side of the wire.
+_TC = Path(__file__).resolve().parents[2] / "teaching-center" / "src"
+if str(_TC) not in sys.path:
+    sys.path.insert(0, str(_TC))
 
 QtWidgets = pytest.importorskip("PySide6.QtWidgets")
 
@@ -123,7 +130,7 @@ def test_changing_the_time_slice_is_recorded(app):
     lab = _lab(app, rec)
     lab._slice.setValue(7)
     lab._apply_slice()
-    on, knob, before, after = _args(rec, "tune")[0]
+    on, knob, _before, after = _args(rec, "tune")[0]
     assert (on, knob, after) == ("M1", "time slice", 7)
     lab.close()
 
@@ -155,7 +162,7 @@ def test_killing_a_process_is_recorded(app):
     rec = _Rec()
     lab = _lab(app, rec)
     lab._kill(7)
-    on, what, action, pid = _args(rec, "spawn")[0]
+    _on, what, action, pid = _args(rec, "spawn")[0]
     assert (action, pid) == ("kill", 7) and "7" in what
     lab.close()
 
@@ -178,8 +185,8 @@ def test_a_FAILED_build_is_recorded_with_the_compiler_tail(app):
     lab._on_load_result(False, log, "load")
     call = _args(rec, "build")[0]
     assert call[2] is False
-    assert "undeclared" in call[5][-1]
-    assert len(call[5]) <= 6, "the whole build log does not belong in a proof chain"
+    assert "undeclared" in call[4][-1]
+    assert len(call[4]) <= 6, "the whole build log does not belong in a proof chain"
     lab.close()
 
 
@@ -196,8 +203,8 @@ def test_a_revert_is_recorded_as_a_revert(app):
     rec = _Rec()
     lab = _lab(app, rec)
     lab._on_load_result(True, "", "revert")
-    # (device, shadow, ok, sha256, lines, log, action)
-    assert _args(rec, "build")[0][6] == "revert"
+    # (device, shadow, ok, sources, log, action)
+    assert _args(rec, "build")[0][5] == "revert"
     lab.close()
 
 
@@ -260,7 +267,7 @@ def test_switching_to_demo_is_recorded(app):
     rec = _Rec()
     lab = _lab(app, rec)
     lab._set_data_mode("demo")
-    on, knob, before, after = _args(rec, "tune")[0]
+    _on, knob, _before, after = _args(rec, "tune")[0]
     assert (knob, after) == ("data mode", "demo")
     lab.close()
 
@@ -296,7 +303,7 @@ def test_a_syscall_apply_that_FAILED_is_recorded_too(app):
     b._on_apply()
     call = _args(rec, "build")[0]
     assert call[2] is False
-    assert "sysfile.c" in call[5][0], "a failed apply must carry its reason"
+    assert "sysfile.c" in call[4][0], "a failed apply must carry its reason"
     b.close()
 
 
@@ -411,3 +418,122 @@ def test_an_observation_is_not_counted_as_a_failed_check():
     assert s["witnessed"] == 2, "the observation still counts as something GINI measured"
     line = N.describe(c.entries[1])
     assert "observed" in line and "checked" not in line, line
+
+
+# ============================================================================ #
+# Stage 5: the deliverable travels with the submission
+#
+# A networking lab's artifact IS the topology — hashed into the chain and shipped in the package,
+# so a marker opens provably the thing the proof describes. An OS lab's artifact is gini_sched.c,
+# which lives on the HOST under ~/.gini/xv6-shadows/<machine>/ and was in neither the project file
+# nor the package. A marker got a chain saying a kernel had been built and no way to read it.
+# ============================================================================ #
+SRC = "int gini_pick(void){\n  return 0;\n}\n"
+
+
+@pytest.fixture()
+def shadows(tmp_path, monkeypatch):
+    """A GINI home with one machine's kernel code in it."""
+    monkeypatch.setenv("GINI_HOME_DIR", str(tmp_path))
+    from gini.services import xv6_shadows as X
+    d = X.shadow_dir("M1")
+    d.mkdir(parents=True, exist_ok=True)
+    (d / "gini_sched.c").write_text(SRC, encoding="utf-8")
+    return X
+
+
+def test_the_kernel_code_is_gathered_with_its_hash(shadows):
+    got = shadows.collect(["M1"])
+    assert list(got) == ["M1/gini_sched.c"]
+    rec = got["M1/gini_sched.c"]
+    assert rec["text"] == SRC and rec["lines"] == 3
+    assert rec["sha256"] == shadows.digest(SRC)
+
+
+def test_only_the_machines_in_this_topology_are_gathered(shadows):
+    """Shadow directories are per-machine and outlive the topology that made them. A student who
+    has done three labs has three directories, and gathering the lot would put one lab's work into
+    another lab's submission."""
+    other = shadows.shadow_dir("M9")
+    other.mkdir(parents=True, exist_ok=True)
+    (other / "gini_sched.c").write_text("someone else's lab\n", encoding="utf-8")
+    got = shadows.collect(["M1"])
+    assert list(got) == ["M1/gini_sched.c"]
+
+
+def test_only_the_shadow_files_are_gathered(shadows):
+    """Listed, not globbed: an editor's .swp or a stray note must never reach a marker."""
+    d = shadows.shadow_dir("M1")
+    (d / "notes.txt").write_text("my todo list", encoding="utf-8")
+    (d / ".gini_sched.c.swp").write_text("junk", encoding="utf-8")
+    assert list(shadows.collect(["M1"])) == ["M1/gini_sched.c"]
+
+
+def test_an_enormous_file_sends_its_hash_but_not_its_text(shadows, monkeypatch):
+    """The binding stays honest while the upload stays bounded."""
+    monkeypatch.setattr(shadows, "MAX_SOURCE_BYTES", 8)
+    rec = shadows.collect(["M1"])["M1/gini_sched.c"]
+    assert "text" not in rec and rec["omitted"]
+    assert rec["sha256"] == shadows.digest(SRC)
+
+
+def test_the_shadow_path_is_defined_once(shadows):
+    """services/compiler.py writes the bind-mount and this module gathers it. Two copies of the
+    rule would let GINI submit an empty directory while the student's work sat elsewhere — with
+    nothing anywhere looking wrong."""
+    from gini.services import compiler
+    assert "xv6_shadows" in Path(compiler.__file__).read_text(encoding="utf-8")
+
+
+# -- what the server does with it -------------------------------------------- #
+def _chain_with_build(sources, ok=True):
+    from gini.domain import proof as P
+    from gini.domain import proof_events as ev
+    from gini.domain.ticket import mint
+    c = P.Chain.start(mint().code, t=1.0)
+    c.append(*ev.build("M1", "sched", ok, sources=sources), t=2.0)
+    return {"entries": [{"kind": e.kind, "data": e.data, "t": e.t, "seq": e.seq}
+                        for e in c.entries]}
+
+
+def test_the_server_pairs_each_file_with_what_was_compiled(shadows):
+    from gini_teaching_center import activities as ACT
+    sha = shadows.digest(SRC)
+    proof = _chain_with_build({"gini_sched.c": {"sha256": sha, "lines": 3}})
+    got = ACT.check_sources(shadows.collect(["M1"]), proof)
+    assert len(got) == 1 and got[0]["matches"] is True
+    assert got[0]["never_built"] is False and got[0]["text"] == SRC
+
+
+def test_a_file_edited_after_the_last_build_is_flagged_not_refused(shadows):
+    """A source mismatch is not fraud-shaped. It means "this is not the file you last compiled",
+    which is what happens when a student tidies up after a build — normal, innocent, and no
+    grounds for throwing an evening away. Reported for a marker to weigh."""
+    from gini_teaching_center import activities as ACT
+    proof = _chain_with_build({"gini_sched.c": {"sha256": "deadbeef", "lines": 3}})
+    got = ACT.check_sources(shadows.collect(["M1"]), proof)
+    assert got[0]["matches"] is False and got[0]["never_built"] is False
+
+
+def test_a_source_no_build_ever_mentioned_says_so(shadows):
+    """The louder case: code handed in that was never compiled is not a submission."""
+    from gini_teaching_center import activities as ACT
+    got = ACT.check_sources(shadows.collect(["M1"]), _chain_with_build({}))
+    assert got[0]["never_built"] is True and got[0]["matches"] is False
+
+
+def test_a_FAILED_build_does_not_count_as_what_was_compiled(shadows):
+    """The chain is checked against the last SUCCESSFUL build — that is the kernel the student
+    left running. A failed attempt compiled nothing."""
+    from gini_teaching_center import activities as ACT
+    sha = shadows.digest(SRC)
+    proof = _chain_with_build({"gini_sched.c": {"sha256": sha, "lines": 3}}, ok=False)
+    assert ACT.built_sources(proof) == {}
+    assert ACT.check_sources(shadows.collect(["M1"]), proof)[0]["never_built"] is True
+
+
+def test_a_networking_submission_is_unchanged(shadows):
+    """No shadows, no section. A network lab's report must look exactly as it always has."""
+    from gini_teaching_center import activities as ACT
+    assert ACT.check_sources(None, _chain_with_build({})) == []
+    assert ACT.check_sources({}, {"entries": []}) == []

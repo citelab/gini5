@@ -452,7 +452,7 @@ class ProofStrip(QWidget):
         proof = result.get("proof") or {}
         path = result.get("path", "")
         try:
-            outbox.queue(proof, result.get("topology"))
+            outbox.queue(proof, result.get("topology"), result.get("shadows"))
         except Exception as e:                                   # noqa: BLE001
             # The proof file is still on disk; say so rather than pretending nothing happened.
             self._say(f"Could not queue the submission: {e}", bad=True)
@@ -472,7 +472,7 @@ class ProofStrip(QWidget):
         def work():
             try:
                 answer = tc_submit.submit(url, str(proof.get("ticket", "")), proof,
-                                          result.get("topology"))
+                                          result.get("topology"), result.get("shadows"))
             except tc_submit.Insecure as e:
                 # The work is already queued, so this is safe to report and leave: fixing the
                 # address and pressing Retry now sends it. An escaping exception here would kill

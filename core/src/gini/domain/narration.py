@@ -114,7 +114,8 @@ def describe(entry: Entry) -> str:
         return f"{verb} {d.get('what', '?')}{pid} on {d.get('on', '?')}."
     if k == ev.BUILD:
         what = "Reverted" if d.get("action") == "revert" else "Built"
-        n = d.get("lines") or 0
+        src = d.get("sources") or {}
+        n = sum(int((m or {}).get("lines") or 0) for m in src.values())
         size = f", {_count(n, 'line')}" if n else ""
         head = (f"{what} the {d.get('shadow', '?')} shadow on {d.get('on', '?')}{size} — "
                 f"{'compiled' if d.get('ok') else 'FAILED'}.")

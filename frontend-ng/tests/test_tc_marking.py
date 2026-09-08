@@ -47,6 +47,14 @@ def _post(url, path, body, session=""):
         return json.loads(r.read() or b"null")
 
 
+def _get(url, path, session=""):
+    req = urllib.request.Request(url + path, method="GET")
+    if session:
+        req.add_header("Authorization", f"Bearer {session}")
+    with urllib.request.urlopen(req, timeout=10) as r:
+        return json.loads(r.read() or b"null")
+
+
 @pytest.fixture
 def course(tmp_path, monkeypatch, tls_pair, trust_tls):
     """A live TLS server with one released activity, and a submission already handed in."""
@@ -275,3 +283,47 @@ def test_accepting_needs_a_staff_session(course):
     code, proof, topo = _expired_proof(course)
     with pytest.raises(tc_staff.Refused):
         tc_staff.accept(course["url"], "", proof, topo.to_dict())
+
+
+# -- an OS lab's deliverable, over the wire ----------------------------------- #
+#
+# The end-to-end path stage 5 exists for: a student's kernel code leaves gBuilder in the
+# submission, the server checks it against the build entries in the chain, and a marker gets both
+# the code and the verdict on whether it is the code that was compiled.
+def test_a_kernel_submission_carries_the_code_and_the_server_checks_it(course):
+    from gini.domain import proof_events as ev
+    from gini.services import xv6_shadows as X
+
+    url, tok = course["url"], course["admin"]
+    src = "int gini_pick(void){\n  return 0;\n}\n"
+    sha = X.digest(src)
+
+    with urllib.request.urlopen(url + "/api/activity?course=comp535&lab=lab1&rc=" + _rc(),
+                                timeout=10) as r:
+        code = json.loads(r.read())["code"]
+    topo = Topology("xv6-lab")
+    m1 = topo.add_device("xv6")
+    chain = P.Chain.start(code.replace("-", ""), assignment="comp535/lab1", gini_version="test")
+    chain.append("place", {"id": m1.id, "type": "xv6", "name": m1.name})
+    chain.append(*ev.build(m1.name, "sched", True,
+                           sources={"gini_sched.c": {"sha256": sha, "lines": 3}}))
+    chain.append("submit", {"artifact": P.artifact_summary(topo.to_dict())})
+    proof = P.build_proof(chain, "test")
+
+    shadows = {f"{m1.name}/gini_sched.c": {"sha256": sha, "lines": 3, "bytes": len(src),
+                                           "text": src}}
+    answer = tc_submit.submit(url, code, proof, topo.to_dict(), shadows)
+    assert answer.get("ok"), answer
+
+    rep = _get(url, "/api/receipt?receipt=" + answer["receipt"], tok)
+    files = rep["sources"]
+    assert len(files) == 1
+    assert files[0]["text"] == src, "the marker cannot read the assignment"
+    assert files[0]["matches"] is True, "the code sent is the code the chain says was compiled"
+
+
+def test_a_networking_submission_reports_no_sources(course):
+    """The fixture's own submission has no kernel code. A network lab's report must look exactly
+    as it always has."""
+    rep = _get(course["url"], "/api/receipt?receipt=" + course["receipt"], course["admin"])
+    assert rep["sources"] == []

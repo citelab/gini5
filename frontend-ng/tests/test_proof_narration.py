@@ -215,7 +215,8 @@ def _os_chain() -> P.Chain:
     c.append(*ev.spawn("M1", "grind", "launch"), t=T0 + 90)
     c.append(*ev.build("M1", "sched", False,
                        log=["gini_sched.c:88: error: 'p' undeclared"]), t=T0 + 300)
-    c.append(*ev.build("M1", "sched", True, sha256="abc123", lines=142), t=T0 + 600)
+    c.append(*ev.build("M1", "sched", True,
+                       sources={"gini_sched.c": {"sha256": "abc123", "lines": 142}}), t=T0 + 600)
     return c
 
 

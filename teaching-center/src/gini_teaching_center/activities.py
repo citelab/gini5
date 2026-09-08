@@ -300,6 +300,60 @@ def topology_matches(topology: dict, proof: dict) -> bool:
     return bool(topology) and _proof.artifact_summary(topology).get("sha256") == artifact_hash(proof)
 
 
+def built_sources(proof: dict) -> dict:
+    """`{filename: sha256}` from the LAST successful build in the chain, per file.
+
+    The last one because that is the kernel the student left running. Earlier builds are the story
+    of getting there and the report narrates them; only the final one is the thing to check the
+    submitted files against.
+    """
+    out: dict = {}
+    for entry in proof.get("entries") or []:
+        if (entry or {}).get("kind") != _ev.BUILD:
+            continue
+        data = entry.get("data") or {}
+        if not data.get("ok"):
+            continue
+        for name, meta in (data.get("sources") or {}).items():
+            sha = str((meta or {}).get("sha256") or "")
+            if sha:
+                out[str(name)] = sha
+    return out
+
+
+def check_sources(shadows: dict | None, proof: dict) -> list:
+    """Pair each submitted source with what the chain says was compiled. REPORTED, never refused.
+
+    A topology mismatch is fraud-shaped: it means the work handed in is not the work proved, so
+    `prepare` refuses it. A source mismatch is not. It means "the file you sent is not the file you
+    last compiled", which is what happens when a student tidies up after a build, or starts the
+    next experiment before handing in — normal, innocent, and no grounds for throwing an evening
+    away. So it is surfaced for the marker to weigh and nothing more.
+
+    Matching on the FILENAME, not the full "<machine>/<file>" key, because a build entry knows
+    which files it compiled and not which host directory they came from.
+    """
+    want = built_sources(proof)
+    out = []
+    for key, meta in sorted((shadows or {}).items()):
+        meta = meta if isinstance(meta, dict) else {}
+        name = str(key).rsplit("/", 1)[-1]
+        got, expected = str(meta.get("sha256") or ""), want.get(name, "")
+        out.append({
+            "path": str(key),
+            "lines": int(meta.get("lines") or 0),
+            "bytes": int(meta.get("bytes") or 0),
+            "text": meta.get("text", ""),
+            "omitted": str(meta.get("omitted") or ""),
+            # "" when the chain records no successful build of this file at all — which is itself
+            # worth seeing: a source handed in that was never compiled is not a submission.
+            "built_sha256": expected,
+            "matches": bool(expected) and got == expected,
+            "never_built": not expected,
+        })
+    return out
+
+
 def artifact_hash(proof: dict) -> str:
     """The topology's fingerprint, from the chain's submit entry."""
     for entry in reversed(proof.get("entries") or []):
@@ -344,6 +398,11 @@ def prepare(payload: dict, code_row: dict, activity: dict,
     if topology is not None and not topology_matches(topology, proof):
         raise Rejected(WRONG_TOPOLOGY,
                        "the submitted topology is not the one this proof was generated from")
+
+    # The student's kernel code. Checked against the chain and REPORTED, never refused — see
+    # check_sources. Kept in the payload so it travels with the submission into the report.
+    if payload.get("shadows") and not isinstance(payload.get("shadows"), dict):
+        raise Rejected(BAD_PROOF, "the submitted sources are not a mapping")
 
     if accepted_by:
         # Recorded IN the payload, so it travels with the submission and shows in the report. A
@@ -469,6 +528,9 @@ def report(row: dict, activity: dict, twins: list, attempts: list | None = None,
         # Prompt, what the student wrote, and the teacher's key — side by side and unjudged.
         # There is no mark here and no auto-comparison: a person reads these.
         "questions": answered(proof, questions),
+        # The kernel code, each file paired with the hash the chain says was compiled. An OS lab's
+        # deliverable, which a marker could previously read nothing of.
+        "sources": check_sources(payload.get("shadows"), proof),
         "entries": len(proof.get("entries") or []),
         "artifact": payload.get("artifact"),
         # Whether the teacher can actually OPEN this, or only read about it. An older gBuilder

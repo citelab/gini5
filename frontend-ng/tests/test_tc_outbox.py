@@ -52,7 +52,7 @@ def test_summary_surfaces_what_was_recorded_but_never_shown(box):
     outbox.queue(a_proof("ABCD1234EFGH"), root=box, now=1000.0)
     outbox.queue(a_proof("MNPQ5678RSTU"), root=box, now=2000.0)
 
-    def refuse(url, code, proof, topo):
+    def refuse(url, code, proof, topo, shadows=None):     # mirrors tc_submit.submit
         return {"ok": False, "error": "the course server refused: code expired"}
 
     outbox.flush("http://x", refuse, root=box, now=3000.0)

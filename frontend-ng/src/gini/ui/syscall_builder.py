@@ -240,7 +240,7 @@ class SyscallBuilder(QDialog):
                 # cannot tell "never tried" from "tried nine times".
                 record(self._recorder, "note_build",
                        str(getattr(self.device, "name", "") or ""),
-                       f"syscall {name}" if name else "syscall", False, "", 0, [str(e)])
+                       f"syscall {name}" if name else "syscall", False, None, [str(e)])
                 self.status.setText(f"⚠ Apply failed: {e}")
                 self.status.setStyleSheet(_scss(f"color:{t.danger};font-size:12px;"))
         else:

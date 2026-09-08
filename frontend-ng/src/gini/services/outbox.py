@@ -41,8 +41,8 @@ def _path(root: Path, receipt: str) -> Path:
     return root / f"{receipt.replace('-', '')}.json"
 
 
-def queue(proof: dict, topology: dict | None = None, *, root: Path | None = None,
-          now: float | None = None) -> Path:
+def queue(proof: dict, topology: dict | None = None, shadows: dict | None = None, *,
+          root: Path | None = None, now: float | None = None) -> Path:
     """Record a submission as pending. Called before the upload is attempted, never after."""
     root = root if root is not None else outbox_root()
     root.mkdir(parents=True, exist_ok=True)
@@ -62,6 +62,9 @@ def queue(proof: dict, topology: dict | None = None, *, root: Path | None = None
         "assignment": str(proof.get("assignment", "")),
         "proof": proof,
         "topology": topology,
+        # The student's kernel code, for an OS lab. Queued with everything else so a submission
+        # that waits out a bad network still carries the assignment when it finally lands.
+        "shadows": shadows or {},
         "queued": queued,
         "attempts": 0,
         "last_error": "",
@@ -113,8 +116,8 @@ def summary(root: Path | None = None, now: float | None = None) -> dict:
 def flush(url: str, send, *, root: Path | None = None, now: float | None = None) -> dict:
     """Try every pending submission. Returns `{sent, kept, errors}`.
 
-    `send(url, code, proof, topology) -> dict` is injected rather than imported so this can be
-    tested without a server, and so a caller can flush through any transport.
+    `send(url, code, proof, topology, shadows) -> dict` is injected rather than imported so this
+    can be tested without a server, and so a caller can flush through any transport.
     """
     root = root if root is not None else outbox_root()
     sent, kept, errors = [], [], []
@@ -122,7 +125,7 @@ def flush(url: str, send, *, root: Path | None = None, now: float | None = None)
         receipt = entry.get("receipt", "")
         try:
             answer = send(url, entry.get("code", ""), entry.get("proof") or {},
-                          entry.get("topology"))
+                          entry.get("topology"), entry.get("shadows") or {})
         except Exception as e:                                     # noqa: BLE001
             answer = {"ok": False, "error": str(e)}
         if answer.get("ok") or answer.get("reason") in SETTLED:

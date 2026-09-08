@@ -1,7 +1,35 @@
 # Proof of activity for the OS labs
 
-**Status: design (Mahesh + Claude, 2026-09-08). No code changed. Written to be handed to whoever
-implements it.**
+**Status: IMPLEMENTED, all five stages (2026-09-08). Kept as the record of why it is shaped this
+way, and of four things the design got wrong that the wiring found.**
+
+## What the implementation changed about this plan
+
+1. **`witness` could not be reused for kernel observations.** `narration.summarize` counts a
+   witness as passed when its verdict is `"ok"`, so a starvation observation folded in there read
+   as a check that did not pass, and the headline announced "2 of 5 checks passed" about something
+   that was never a check. A phenomenon observed is not a test failed, so it got its own kind,
+   `observe` — in `WITNESSED`, since it IS something GINI measured, but outside the pass/total
+   figures.
+2. **The recorder must not consume the watcher's events.** `drain_events()` EMPTIES the queue and
+   the proactive Coach is its consumer, so a recorder wired to the same signal would have raced
+   it and each would have got some of the events. `MachineState.on_record` is handed them as they
+   are produced instead.
+3. **A source mismatch is reported, not refused.** §5 below said "when it IS sent it must match or
+   be refused", which contradicted the sentence after it. Refusing was wrong: unlike a topology
+   mismatch — which means the work handed in is not the work proved — a source mismatch only means
+   "this is not the file you last compiled", which is what happens when a student tidies up after
+   a build. The topology check stays a refusal; sources are flagged for a marker to weigh.
+4. **Most sub-lab buttons are not evidence.** §8 stage 3 read as "wire nine faces". On inspection
+   `lock_lab._reset` and `fingerprint_lab._reset` clear counters, and memory's and storage's
+   "simulate" buttons are DEMO-MODE devices with no kernel behind them — recording a simulated
+   page fault as though a student had observed a real one would put a fabricated observation in a
+   document whose whole value is that everything in it happened. Two acts were wired: applying a
+   syscall, and the Real/Demo flip.
+
+Volume control (§6) turned out to be unnecessary: `_apply_slice` is on `sliderReleased` and the
+scheduler knobs are behind a Set button, so they were already commit-based. `ev.tune` drops a
+no-op, which is all that was needed.
 
 The networking side records well: every command a student types in gBuilder's Terminal, and what
 it printed, lands in the proof chain. A TA reads the transcript and sees the work. The OS labs

@@ -132,7 +132,8 @@ def check_code(url: str, code: str) -> dict:
     return r if isinstance(r, dict) else {"ok": False, "error": "Unexpected reply."}
 
 
-def submit(url: str, code: str, proof: dict, topology: dict | None = None) -> dict:
+def submit(url: str, code: str, proof: dict, topology: dict | None = None,
+           shadows: dict | None = None) -> dict:
     """Hand in the work. Returns `{ok, receipt, within_session}` or `{ok: False, error}`.
 
     `topology` is what makes the submission runnable for the teacher. It is optional here only so
@@ -145,5 +146,9 @@ def submit(url: str, code: str, proof: dict, topology: dict | None = None) -> di
     body: dict = {"code": code, "proof": proof}
     if topology:
         body["topology"] = topology
+    if shadows:
+        # An OS lab's deliverable. Sent only when there IS one, so a networking submission is
+        # exactly the shape it has always been.
+        body["shadows"] = shadows
     _, r = _post(url, "/api/activity/submit", body)
     return r if isinstance(r, dict) else {"ok": False, "error": "Unexpected reply."}

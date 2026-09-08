@@ -711,10 +711,11 @@ def test_a_new_code_starts_the_faces_over(rec):
 # -- the build: THE assignment ----------------------------------------------- #
 def test_a_successful_build_records_what_was_compiled(rec):
     rec.arm(CODE)
-    rec.note_build("M1", "sched", True, sha256="abc123", lines=142)
+    rec.note_build("M1", "sched", True,
+                   sources={"gini_sched.c": {"sha256": "abc123", "lines": 142}})
     d = _data(rec, ev.BUILD)[0]
     assert d["ok"] is True and d["shadow"] == "sched"
-    assert d["sha256"] == "abc123" and d["lines"] == 142
+    assert d["sources"] == {"gini_sched.c": {"sha256": "abc123", "lines": 142}}
 
 
 def test_a_FAILED_build_is_recorded_with_the_compiler_output(rec):

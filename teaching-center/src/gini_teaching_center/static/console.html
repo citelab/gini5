@@ -818,8 +818,41 @@ async function openReceipt(receipt){
              sent by a gBuilder that only uploaded the proof.</span>`}
       </div>
       ${qBlock(r.questions)}
+      ${srcBlock(r.sources)}
       <pre>${esc(r.narration)}</pre>
     </div>`;
+}
+
+// THE KERNEL CODE a student wrote. For an OS lab this is the deliverable, and until it travelled
+// with the submission a marker could read a chain saying a kernel had been built and see nothing of
+// what was in it.
+//
+// Each file is paired with the hash the chain says was compiled. A mismatch is SHOWN, never treated
+// as a refusal: it means "this is not the file you last compiled", which is what happens when a
+// student tidies up after a build or starts the next experiment before handing in. "Never
+// compiled" is the louder one — a source handed in that no build in the chain mentions.
+function srcBlock(src){
+  if (!src || !src.length) return '';
+  return `<div style="margin-top:20px">
+    <div class="big" style="font-size:17px">Their kernel code</div>
+    <div class="note">Checked against the chain: each file's hash is compared with what the last
+      successful build recorded.</div>
+    ${src.map(f => `<div class="qcard">
+      <div class="rowb" style="margin:0">
+        <span class="mono"><b>${esc(f.path)}</b></span>
+        <span class="note" style="margin:0">${f.lines} lines</span>
+        ${f.never_built
+          ? `<span class="tag warn">never compiled — no build in the chain mentions this file</span>`
+          : f.matches
+            ? `<span class="tag live">matches the build</span>`
+            : `<span class="tag warn">edited after the last build</span>`}
+      </div>
+      ${f.omitted
+        ? `<div class="note">Not sent: ${esc(f.omitted)}. Its hash still travelled, so the
+           check above is still meaningful.</div>`
+        : `<pre style="max-height:420px">${esc(f.text)}</pre>`}
+    </div>`).join('')}
+  </div>`;
 }
 
 // What the lab asked, what they wrote, and the key — laid out for a person to read and judge.
