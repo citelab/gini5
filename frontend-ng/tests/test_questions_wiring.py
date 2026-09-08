@@ -103,10 +103,58 @@ def test_a_lab_with_no_questions_asks_nothing(strip):
     assert strip._questions_checked() is True
 
 
+def _exhaust_reminders(strip, monkeypatch):
+    """Press Generate until the reminders are used up, so the CHOICE is what comes next."""
+    monkeypatch.setattr("PySide6.QtWidgets.QMessageBox.exec", lambda self: self.setResult(0))
+    for i in range(strip.REMINDERS):
+        assert strip._questions_checked() is False, f"reminder {i + 1} let it through"
+    monkeypatch.undo()
+
+
+def test_the_first_presses_are_refused_not_merely_warned(strip, monkeypatch, qtbot):
+    """A single dismissible dialog is a single dismissible dialog. Three refusals mean nobody
+    arrives at a blank by accident — and the fourth press still goes through, so a student who
+    ran out of time is not trapped."""
+    strip.armChecked.emit(mint(questions=True).pretty, REPLY)
+    said = []
+    monkeypatch.setattr("PySide6.QtWidgets.QMessageBox.exec",
+                        lambda self: said.append(self.text()) or self.setResult(0))
+    for _ in range(strip.REMINDERS):
+        with qtbot.waitSignal(strip.answerFirst):
+            assert strip._questions_checked() is False
+    assert len(said) == strip.REMINDERS
+    assert "Which command showed the route?" in said[0]
+    assert "GINI Labs" in said[0], "point them at the tab by its name"
+
+
+def test_only_the_last_reminder_admits_the_next_press_will_go_through(strip, monkeypatch):
+    """Saying it up front would just teach three clicks. Never saying it would leave somebody at
+    a deadline believing they are locked out, which is worse than the thing this prevents."""
+    strip.armChecked.emit(mint(questions=True).pretty, REPLY)
+    said = []
+    monkeypatch.setattr("PySide6.QtWidgets.QMessageBox.exec",
+                        lambda self: said.append(self.text()) or self.setResult(0))
+    for _ in range(strip.REMINDERS):
+        strip._questions_checked()
+    assert not any("go through" in t for t in said[:-1]), said
+    assert "go through" in said[-1]
+
+
+def test_arming_a_new_code_starts_the_count_again(strip, monkeypatch):
+    """The count belongs to the lab, not to the session. A student on their second lab of the
+    afternoon gets the same three reminders as the first."""
+    strip.armChecked.emit(mint(questions=True).pretty, REPLY)
+    _exhaust_reminders(strip, monkeypatch)
+    assert strip._reminders == strip.REMINDERS
+    strip.armChecked.emit(mint(questions=True).pretty, REPLY)
+    assert strip._reminders == 0
+
+
 def test_an_unanswered_question_stops_and_asks(strip, monkeypatch):
     """A warning, never a refusal — but not silence either, or a student hands in having simply
-    never noticed the tab."""
+    never noticed the tab. This is the state AFTER the reminders are spent."""
     strip.armChecked.emit(mint(questions=True).pretty, REPLY)
+    _exhaust_reminders(strip, monkeypatch)
     seen = {}
 
     def fake_exec(self):
@@ -126,6 +174,7 @@ def test_an_unanswered_question_stops_and_asks(strip, monkeypatch):
 
 def test_choosing_to_answer_first_stops_the_hand_in(strip, monkeypatch, qtbot):
     strip.armChecked.emit(mint(questions=True).pretty, REPLY)
+    _exhaust_reminders(strip, monkeypatch)
     monkeypatch.setattr("PySide6.QtWidgets.QMessageBox.exec", lambda self: self.setResult(1))
     monkeypatch.setattr("PySide6.QtWidgets.QMessageBox.clickedButton",
                         lambda self: self.buttons()[1])
@@ -158,8 +207,8 @@ def win(qtbot):
 def test_the_tab_is_there_after_terminal(win):
     from PySide6.QtWidgets import QDockWidget
     titles = [d.windowTitle() for d in win.findChildren(QDockWidget)]
-    assert "Ask Questions" in titles
-    assert titles.index("Ask Questions") > titles.index("Terminal")
+    assert "GINI Labs" in titles
+    assert titles.index("GINI Labs") > titles.index("Terminal")
 
 
 def test_pressing_record_in_the_panel_writes_to_the_chain(win):
@@ -173,20 +222,20 @@ def test_pressing_record_in_the_panel_writes_to_the_chain(win):
 
 def test_the_dock_tab_counts_what_is_outstanding(win):
     win.proof_strip.armChecked.emit(mint(questions=True).pretty, REPLY)
-    assert win._questions_dock.windowTitle() == "Ask Questions (2)"
+    assert win._questions_dock.windowTitle() == "GINI Labs (2)"
     win.proof_recorder.note_answer("q1", "?", "10.0.0.2")
     win._refresh_questions()
-    assert win._questions_dock.windowTitle() == "Ask Questions (1)"
+    assert win._questions_dock.windowTitle() == "GINI Labs (1)"
 
 
 def test_the_dock_flags_questions_it_could_not_fetch(win):
     win.proof_strip.armChecked.emit(mint(questions=True).pretty, {})
-    assert win._questions_dock.windowTitle() == "Ask Questions (!)"
+    assert win._questions_dock.windowTitle() == "GINI Labs (!)"
 
 
 def test_the_tab_is_quiet_for_a_lab_that_asks_nothing(win):
     win.proof_strip.armChecked.emit(mint().pretty, {"ok": True, "activity": "c/l", "title": "x"})
-    assert win._questions_dock.windowTitle() == "Ask Questions"
+    assert win._questions_dock.windowTitle() == "GINI Labs"
 
 
 def test_the_panel_goes_dead_once_the_work_is_handed_in(win):

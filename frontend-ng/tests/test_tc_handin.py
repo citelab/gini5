@@ -32,6 +32,14 @@ if str(_TC) not in sys.path:
 from gini.domain import proof as P                            # noqa: E402
 from gini.services import tc_submit                           # noqa: E402
 
+
+def _rc(lab: str = "lab1", course: str = "comp535") -> str:
+    """The lab's release code. A student link will not vend without it — see
+    `test_tc_release_code.py`. Imported lazily because each fixture rebuilds the server module."""
+    from gini_teaching_center import server
+    return ((server._STORE.activity(f"{course}/{lab}") or {}).get("release_code") or "")
+
+
 HOUR = 3600.0
 
 
@@ -91,7 +99,7 @@ class _Course:
         self.url, self.token = url, token
 
     def code(self) -> str:
-        return _call(self.url, "/api/activity?course=comp535&lab=lab1")["code"]
+        return _call(self.url, "/api/activity?course=comp535&lab=lab1&rc=" + _rc())["code"]
 
     def staff(self, path):
         return _call(self.url, path, None, self.token)

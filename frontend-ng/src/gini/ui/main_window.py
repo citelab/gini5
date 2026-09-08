@@ -269,7 +269,7 @@ class MainWindow(QMainWindow):
 
     # ---- lab questions ---------------------------------------------------- #
     def _refresh_questions(self) -> None:
-        """Render the Ask Questions tab from the recorder, and put the outstanding count on the tab.
+        """Render the GINI Labs tab from the recorder, and put the outstanding count on the tab.
 
         Everything comes from the recorder: the chain is the state, so a panel that kept its own
         copy would be a second answer to "what has been answered" that could disagree with the one
@@ -285,13 +285,15 @@ class MainWindow(QMainWindow):
         tk = r.ticket
         self.questions_panel.show_state(
             armed=r.armed, submitted=submitted, questions=qs, answers=answers,
-            expects_questions=bool(tk and tk.questions))
+            expects_questions=bool(tk and tk.questions),
+            # The lab itself: what it is called and what it asks for. Both arrive with the code.
+            title=getattr(r, "activity_title", ""), brief=getattr(r, "activity_brief", ""))
         # Live only while recording is in progress — before arming there is no lab, and after
         # handing in an answer would land past the `submit` entry in a chain nobody reads again.
         self.questions_panel.set_live(r.armed and not submitted)
-        want = announce(qs, answers) if (r.armed and not submitted) else "Ask Questions"
+        want = announce(qs, answers) if (r.armed and not submitted) else "GINI Labs"
         if _lq.missing_because_offline(bool(tk and tk.questions), qs) and r.armed:
-            want = "Ask Questions (!)"
+            want = "GINI Labs (!)"
         if self._questions_dock.windowTitle() != want:
             self._questions_dock.setWindowTitle(want)
 
@@ -311,7 +313,7 @@ class MainWindow(QMainWindow):
         n = len(self.proof_recorder.questions)
         self.ctx.bus.log.emit(
             "info", f"This lab asks {n} question{'' if n == 1 else 's'} — "
-                    f"see the Ask Questions tab, on the right beside Terminal.")
+                    f"see the GINI Labs tab, on the right beside Terminal.")
 
     def _raise_questions(self) -> None:
         """Bring the tab forward — the one time this panel takes the pane.
@@ -1798,14 +1800,14 @@ class MainWindow(QMainWindow):
         self.tabifyDockWidget(srcd, termd)
         self._terminal_dock = termd
 
-        # Ask Questions — the lab's own questions, answered where the work is. Last in the stack,
+        # GINI Labs — the lab, and its questions, answered where the work is. Last in the stack,
         # after Terminal, because it is the only tab that is empty most of the time: it has
         # something to say only while a code with questions on it is being recorded.
         from .questions_panel import QuestionsPanel
         self.questions_panel = QuestionsPanel(self.theme)
         self.questions_panel.answered.connect(self._record_answer)
         self.questions_panel.refetch.connect(self._fetch_questions)
-        qd = QDockWidget("Ask Questions", self)
+        qd = QDockWidget("GINI Labs", self)
         qd.setObjectName("dock_questions")
         qd.setWidget(self.questions_panel)
         self.addDockWidget(Qt.RightDockWidgetArea, qd)

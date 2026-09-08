@@ -74,6 +74,9 @@ class ProofStrip(QWidget):
         super().__init__(parent)
         self.theme = theme
         self.recorder = recorder
+        # How many times Generate has been refused for unanswered questions on THIS code. Reset
+        # by arming, so a new lab starts its own count.
+        self._reminders = 0
         self.setObjectName("ProofStrip")
 
         root = QVBoxLayout(self)
@@ -311,11 +314,12 @@ class ProofStrip(QWidget):
         """
         activity = str(answer.get("activity") or "").strip()
         title = str(answer.get("title") or "").strip()
+        brief = str(answer.get("brief") or "").strip()
         # Kept, not just printed. The tutor asks the Teaching Center what the course says about a
         # question, and knowing WHICH lab is being recorded is what separates "your course mentions
         # this somewhere" from "this is the lab you are being marked on".
         if self.recorder is not None and hasattr(self.recorder, "note_activity"):
-            self.recorder.note_activity(activity, title)
+            self.recorder.note_activity(activity, title, brief)
         # The lab's questions ride in on the same reply — prompts only; the server strips the key.
         # Kept on the recorder rather than emitted onward, so the panel reads one source of truth
         # and a restart or a resumed code finds the same place to look.
@@ -339,6 +343,7 @@ class ProofStrip(QWidget):
         ok, message = self.recorder.arm(typed)
         if ok:
             self.code.clear()
+            self._reminders = 0            # a new lab, a fresh count — see _questions_checked
         # The refusal is shown in the strip, not in a modal: a mistyped code is an everyday
         # slip, and a dialog for it would train students to dismiss dialogs without reading.
         if not (keep_hint and ok):
@@ -363,13 +368,26 @@ class ProofStrip(QWidget):
         self.refresh(keep_hint=True)
         self._hand_in(result, receipt)
 
-    def _questions_checked(self) -> bool:
-        """Ask once about unanswered questions. Returns whether to go ahead.
+    #: How many times Generate is REFUSED before the warning becomes a choice. Three is enough
+    #: that nobody arrives at a blank by accident and few enough that a student who has run out of
+    #: time is not trapped — the last reminder says so, and the fourth press goes through.
+    REMINDERS = 3
 
-        A WARNING and never a refusal — a student who ran out of time still hands in the work they
-        did, and a blank is a fact about the attempt the marker gets to see. This exists for the
-        student who never noticed the tab, which is the only failure here worth interrupting for,
-        and it is a modal precisely because it is the last moment anything can be done about it.
+    def _questions_checked(self) -> bool:
+        """Stand between Generate and an unanswered lab. Returns whether to go ahead.
+
+        THE FIRST THREE PRESSES ARE REFUSED, with a bell. Then it becomes the old warning, with
+        "Hand in anyway" as the default, and the student decides.
+
+        This used to warn once and default to proceeding, on the principle that a student who ran
+        out of time still hands in the work they did. That principle survives — the fourth press
+        goes through, and a blank is still a fact about the attempt rather than grounds to refuse
+        an evening's work. What it did not survive was the student who never noticed the tab, for
+        whom one dismissible dialog was one dismissible dialog.
+
+        The last reminder SAYS the next press will go through. Announcing that up front would just
+        teach three clicks; withholding it entirely would leave somebody at a deadline believing
+        they are locked out, which is worse than the thing this is trying to prevent.
 
         The dialog is skipped entirely when everything is answered, so the ordinary case is
         unchanged: press Generate, get a proof.
@@ -384,13 +402,32 @@ class ProofStrip(QWidget):
             ask = ("This lab has questions and gBuilder never managed to fetch them, so none of "
                    "them have been answered.\n\nYou can hand in anyway — your instructor will "
                    "see that they were not answered — or connect to your course, fetch them in "
-                   "the Ask Questions tab, and answer first.")
+                   "the GINI Labs tab, and answer first.")
         else:
             said = _lq.nudge(qs, _lq.answers_in(r._chain.entries if r._chain else []))
             if not said:
                 return True
             ask = (said + "\n\nYou can hand in anyway — an unanswered question does not stop "
                           "you, and your instructor will see it was left blank.")
+        left = self._reminders
+        if left < self.REMINDERS:
+            self._reminders = left + 1
+            from .questions_panel import beep
+            beep()
+            box = QMessageBox(self)
+            box.setIcon(QMessageBox.Warning)
+            box.setWindowTitle("Answer the lab's questions first")
+            last = self._reminders >= self.REMINDERS
+            box.setText(ask.split("\n\nYou can hand in anyway")[0] + "\n\n" + (
+                "This is the last reminder — press Generate again and it will go through with "
+                "them left blank."
+                if last else
+                "Answer them in the GINI Labs tab, then press Generate again."))
+            box.addButton("Back to the questions", QMessageBox.RejectRole)
+            box.exec()
+            self.answerFirst.emit()
+            return False
+
         box = QMessageBox(self)
         box.setIcon(QMessageBox.Question)
         box.setWindowTitle("Questions not answered")

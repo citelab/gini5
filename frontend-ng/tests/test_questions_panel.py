@@ -1,4 +1,4 @@
-"""The Ask Questions tab: what a student actually sees, and when.
+"""The GINI Labs tab: what a student actually sees, and when.
 
 Written as the states the panel has to get right, because every one of them is a moment where a
 student could lose work or lose marks:
@@ -144,10 +144,10 @@ def test_after_handing_in_the_boxes_go_dead(panel):
 def test_the_tab_carries_the_count_of_what_is_left():
     """A beep is gone in a second. A student who comes back twenty minutes later needs something
     still on screen, and the tab is all of this panel that is visible behind another one."""
-    assert announce(QS, {}) == "Ask Questions (2)"
-    assert announce(QS, {"q1": "x"}) == "Ask Questions (1)"
-    assert announce(QS, {"q1": "x", "q2": "y"}) == "Ask Questions"
-    assert announce([], {}) == "Ask Questions"
+    assert announce(QS, {}) == "GINI Labs (2)"
+    assert announce(QS, {"q1": "x"}) == "GINI Labs (1)"
+    assert announce(QS, {"q1": "x", "q2": "y"}) == "GINI Labs"
+    assert announce([], {}) == "GINI Labs"
 
 
 def test_the_title_says_how_far_along_they_are(panel):
@@ -163,3 +163,40 @@ def test_a_long_question_cannot_set_the_panels_width(panel):
     panel.show_state(armed=True, submitted=False, questions=long_q, answers={})
     assert panel._cards["q1"]._prompt.wordWrap()
     assert panel.minimumSizeHint().width() < 700
+
+
+# -- the lab itself, above its questions --------------------------------------- #
+def _panel():
+    return QuestionsPanel(ThemeManager(_app()))
+
+
+def test_the_panel_names_the_lab_and_says_what_it_asks_for():
+    """Both have always ridden in on the arm reply and both were dropped on arrival, so the panel
+    could name a lab it could not describe — the wrong half to have when a student is working."""
+    p = _panel()
+    p.show_state(armed=True, submitted=False, questions=QS, answers={},
+                 title="Multi-LAN", brief="Join two LANs with a router and show they can talk.")
+    assert p._lab_title.text() == "Multi-LAN" and p._lab_title.isVisibleTo(p)
+    assert "Join two LANs" in p._lab_brief.text() and p._lab_brief.isVisibleTo(p)
+
+
+def test_an_unarmed_panel_shows_no_lab():
+    """A heading with nothing under it reads as a lab with no description, not as no lab."""
+    p = _panel()
+    p.show_state(armed=False, submitted=False, questions=[], answers={},
+                 title="Multi-LAN", brief="Join two LANs.")
+    assert not p._lab_title.isVisibleTo(p) and not p._lab_brief.isVisibleTo(p)
+
+
+def test_a_lab_with_no_description_shows_no_empty_gap():
+    p = _panel()
+    p.show_state(armed=True, submitted=False, questions=QS, answers={}, title="Multi-LAN")
+    assert p._lab_title.isVisibleTo(p)
+    assert not p._lab_brief.isVisibleTo(p)
+
+
+def test_the_heading_is_the_new_name():
+    p = _panel()
+    p.show_state(armed=True, submitted=False, questions=QS, answers={})
+    assert p._title.text().startswith("GINI Labs")
+    assert announce(QS, {}) == "GINI Labs (2)"

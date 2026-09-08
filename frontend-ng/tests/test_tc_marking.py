@@ -27,6 +27,14 @@ from gini.domain import proof as P                              # noqa: E402
 from gini.domain.topology import Topology                       # noqa: E402
 from gini.services import tc_staff, tc_submit                   # noqa: E402
 
+
+def _rc(lab: str = "lab1", course: str = "comp535") -> str:
+    """The lab's release code. A student link will not vend without it — see
+    `test_tc_release_code.py`. Imported lazily because each fixture rebuilds the server module."""
+    from gini_teaching_center import server
+    return ((server._STORE.activity(f"{course}/{lab}") or {}).get("release_code") or "")
+
+
 HOUR = 3600.0
 
 
@@ -73,7 +81,7 @@ def course(tmp_path, monkeypatch, tls_pair, trust_tls):
     _post(url, "/api/activities/release", {"course": "comp535", "lab": "lab1"}, tok)
 
     # a student takes a code and hands work in, exactly as gBuilder does
-    with urllib.request.urlopen(url + "/api/activity?course=comp535&lab=lab1", timeout=10) as r:
+    with urllib.request.urlopen(url + "/api/activity?course=comp535&lab=lab1&rc=" + _rc(), timeout=10) as r:
         code = json.loads(r.read())["code"]
     topo = Topology("submitted")
     r1 = topo.add_device("router"); s1 = topo.add_device("switch")
@@ -186,7 +194,7 @@ def _expired_proof(course, lab="lab1", topo=None):
     """A code taken, worked under, and left to lapse — the failure this exists for."""
     from gini_teaching_center import server as S
     url = course["url"]
-    with urllib.request.urlopen(url + f"/api/activity?course=comp535&lab={lab}", timeout=10) as r:
+    with urllib.request.urlopen(url + f"/api/activity?course=comp535&lab={lab}&rc={_rc(lab)}", timeout=10) as r:
         code = json.loads(r.read())["code"]
     topo = topo if topo is not None else Topology("late")
     if not topo.devices:

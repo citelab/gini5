@@ -37,6 +37,14 @@ from gini_teaching_center.store import Store                     # noqa: E402
 
 from gini.domain import proof_events as ev                       # noqa: E402
 
+
+def _rc(lab: str = "lab1", course: str = "comp535") -> str:
+    """The lab's release code. A student link will not vend without it — see
+    `test_tc_release_code.py`. Imported lazily because each fixture rebuilds the server module."""
+    from gini_teaching_center import server
+    return ((server._STORE.activity(f"{course}/{lab}") or {}).get("release_code") or "")
+
+
 HOUR = 3600.0
 
 #: Three, with keys — the shape the design is written around: author a few, ask some of them.
@@ -271,7 +279,7 @@ def course(tmp_path, monkeypatch, tls_pair, trust_tls):
 
 
 def _armed(call):
-    v = call("/api/activity?course=comp535&lab=lab1")
+    v = call("/api/activity?course=comp535&lab=lab1&rc=" + _rc())
     code = v["code"].replace("-", "").replace(" ", "")
     return code, call(f"/api/activity?code={code}")
 

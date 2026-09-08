@@ -494,12 +494,37 @@ async function makeCourse(){
   if (r.ok) { $('#c-id').value = $('#c-title').value = ''; loadCourses(); }
 }
 
+// The link is the only way in, so it has to be trivially copyable — a teacher pastes it into an
+// announcement, and a code typed from memory is a code typed wrong.
+async function copyLink(lab){
+  const rows = await api('/api/activities?course=' + encodeURIComponent(COURSE));
+  const a = rows.find(r => r.lab === lab);
+  if (!a) return;
+  const url = `${location.origin}/getcode?course=${encodeURIComponent(COURSE)}`
+            + `&lab=${encodeURIComponent(a.lab)}&rc=${encodeURIComponent(a.release_code||'')}`;
+  try { await navigator.clipboard.writeText(url); say('Student link copied.', true); }
+  catch (e) { prompt('Copy this link:', url); }   // clipboard needs a secure context + permission
+}
+
+// Rotating is deliberate and destructive: every link already sent stops working. Confirmed, and
+// the consequence is spelled out rather than implied by the word "new".
+async function newLink(lab){
+  if (!confirm(`Give ${lab} a new release code?\n\nEvery link already sent out for it will stop `
+             + `working, and you will need to share the new one.`)) return;
+  await api('/api/activities/newlink', {course: COURSE, lab});
+  loadActs();
+}
+
 // ---- activities -------------------------------------------------------------
 async function loadActs(){
   $('#acts-sub').textContent = 'Labs in ' + COURSE;
   loadSubs();
   const rows = await api('/api/activities?course=' + encodeURIComponent(COURSE));
-  const link = a => `${location.origin}/getcode?course=${encodeURIComponent(COURSE)}&lab=${encodeURIComponent(a.lab)}`;
+  // The link now CARRIES the release code, and without it the server will not vend. That is
+  // what stops a student who has lab3's link from reading lab4 by editing the address bar — and
+  // it is why the link must be copied from here rather than typed from memory.
+  const link = a => `${location.origin}/getcode?course=${encodeURIComponent(COURSE)}`
+                  + `&lab=${encodeURIComponent(a.lab)}&rc=${encodeURIComponent(a.release_code||'')}`;
   $('#a-list').innerHTML = rows.length ? (
       '<tr><th>Lab<th>Title<th>Status<th>Codes out<th>In<th>' +
       rows.map(a => `<tr>
@@ -507,9 +532,16 @@ async function loadActs(){
         <td><span class="tag ${a.status==='released'?'live':'draft'}">${esc(a.status)}</span>
         <td class="mono">${a.vended}<td class="mono">${a.submitted}
         <td>${a.status==='released'
-              ? `<button class="flat" onclick="release('${esc(a.lab)}',false)">Close</button>
-                 <a href="${link(a)}" target="_blank" style="margin-left:10px">student link</a>`
+              ? `<button class="flat" onclick="release('${esc(a.lab)}',false)">Close</button>`
               : `<button class="go" onclick="release('${esc(a.lab)}',true)">Release</button>`}
+            <button class="flat" style="margin-left:10px"
+                    onclick="copyLink('${esc(a.lab)}')">Copy link</button>
+            <a href="${link(a)}" target="_blank" style="margin-left:8px">open</a>
+            <span class="mono note" style="margin-left:8px" title="release code — the link will
+                  not work without it">${esc(a.release_code||'—')}</span>
+            <button class="flat" style="margin-left:6px"
+                    onclick="newLink('${esc(a.lab)}')" title="Rotate the release code. Every link
+                    already sent stops working.">New link</button>
             <button class="flat" style="margin-left:10px"
                     onclick='editAct(${JSON.stringify(JSON.stringify(a))})'>Edit</button>
             ${a.submitted

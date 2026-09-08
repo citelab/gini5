@@ -44,10 +44,16 @@ EXPIRED = "expired"
 ALREADY_USED = "already_used"
 ALREADY_CLAIMED = "already_claimed"
 NO_SUCH_RECEIPT = "no_such_receipt"
+BAD_LINK = "bad_link"
 
 _MESSAGES = {
     NO_ACTIVITY: "There is no activity here. Check the link your instructor gave you.",
     NOT_RELEASED: "This activity has not been released yet.",
+    # Says nothing about whether the lab exists, is released, or is merely mistyped. All three
+    # read the same, because the point of the code is that a student who has lab3's link cannot
+    # learn anything by editing it to lab4 — including whether lab4 is there.
+    BAD_LINK: "That link is not valid for this activity. Use the link your instructor gave you, "
+              "in full — it ends with a four-character code.",
     VENDING_CLOSED: "Codes for this activity are no longer being issued.",
     UNKNOWN_CODE: "That code was not issued by this course.",
     EXPIRED: "That code has expired. Take a new one if the activity is still open.",
@@ -70,13 +76,76 @@ def activity_id(course: str, lab: str) -> str:
 
 
 # --------------------------------------------------------------------------- #
+# the release code — what makes a student link unguessable
+# --------------------------------------------------------------------------- #
+#: How many symbols. Four is a deliberate speed bump, not a secret: 32**4 is about a million, which
+#: stops a student editing `lab3` to `lab4` in the address bar and stops nothing else. It travels in
+#: a URL, so it is in browser history, server logs and every forwarded email — treat it as "this
+#: link is not public", never as authentication.
+RELEASE_CODE_LEN = 4
+
+
+def mint_release_code(rand=None) -> str:
+    """Four symbols from the ticket alphabet — Crockford base32, no I/L/O/U.
+
+    The same alphabet as an activity code on purpose: a teacher reads this over a bench and a
+    student types it, so the two confusable pairs that cause every mistyped code (O/0, I/1) must be
+    impossible here for the same reason they are impossible there.
+    """
+    import secrets
+    rnd = rand or (lambda n: secrets.token_bytes(n))
+    return "".join(_ticket.ALPHABET[b % len(_ticket.ALPHABET)]
+                   for b in rnd(RELEASE_CODE_LEN))
+
+
+def normalize_release_code(code: str) -> str:
+    """What the student typed, reduced to what we compare. Same folding as an activity code."""
+    return _ticket.normalize(code)[:RELEASE_CODE_LEN]
+
+
+def release_code_ok(activity: dict, supplied: str) -> bool:
+    """Does this link carry the right code? An activity without one accepts anything.
+
+    The empty case is not a loophole left open — every activity is given a code when it is saved,
+    and the ones that predate the feature are backfilled at startup. It exists so that a row which
+    somehow has none still behaves, rather than becoming unreachable with no way to fix it.
+    """
+    want = normalize_release_code(str((activity or {}).get("release_code") or ""))
+    return not want or normalize_release_code(supplied) == want
+
+
+def is_draft_run(activity: dict) -> bool:
+    """Is this a rehearsal on an unreleased lab? Only reachable WITH the release code.
+
+    The whole point of handing a code to the TAs before release: they run the lab end to end, get
+    real submissions out of it, and those submissions must be distinguishable from a student's or
+    they will be marked.
+    """
+    return (activity or {}).get("status") != "released"
+
+
+# --------------------------------------------------------------------------- #
 # vending
 # --------------------------------------------------------------------------- #
-def vending_open(activity: dict, now: float | None = None) -> tuple[bool, str]:
-    """Whether a fresh code may be issued for this activity right now."""
+def vending_open(activity: dict, now: float | None = None, *,
+                 release_code: str = "") -> tuple[bool, str]:
+    """Whether a fresh code may be issued for this activity right now.
+
+    The release code is checked FIRST and its refusal is indistinguishable from "no such activity",
+    so the endpoint cannot be used to discover which labs exist or what state they are in.
+
+    A correct code also opens a DRAFT. That is the feature, not a hole: a teacher hands the link to
+    their TAs, the TAs run the lab for real before anyone else can reach it, and the vending
+    deadline still applies to them. What it buys is that the rehearsal uses exactly the path a
+    student will use — the same vend, the same arm, the same submit — rather than an approximation
+    of it that can be right while the real one is broken.
+    """
     if not activity:
         return False, NO_ACTIVITY
-    if activity.get("status") != "released":
+    if not release_code_ok(activity, release_code):
+        return False, BAD_LINK
+    if activity.get("status") != "released" and not (activity.get("release_code") or ""):
+        # No code to have got here with, so this is the old refusal: an unreleased lab.
         return False, NOT_RELEASED
     vend_until = float(activity.get("vend_until") or 0)
     if vend_until and (now or time.time()) >= vend_until:
@@ -286,6 +355,9 @@ def prepare(payload: dict, code_row: dict, activity: dict,
     return {"code": code_row["code"],
             # Recorded, never a refusal — the teacher weighs it, as with an overrun session.
             "late": 1 if is_late(code_row, now=now) else 0,
+            # Carried from the code, which learned it at vend time. A TA's rehearsal on an
+            # unreleased lab is a real submission and must not look like a student's.
+            "draft": 1 if int(code_row.get("draft") or 0) else 0,
             "receipt": _proof.receipt_code(proof),
             "activity": activity["id"],
             "artifact_hash": artifact_hash(proof),
@@ -385,6 +457,9 @@ def report(row: dict, activity: dict, twins: list, attempts: list | None = None,
         # by hand. A marker must be able to see that the clock was overridden and by whom.
         "accepted_by": payload.get("accepted_by", ""),
         "late": bool(row.get("late")),
+        # A rehearsal run by a TA before the lab was released. Shown so a marker never wonders
+        # which student this was.
+        "draft": bool(row.get("draft")),
         "title": (activity or {}).get("title", ""),
         "verdict": row.get("verdict", ""),
         "started": row.get("started", 0), "finished": row.get("finished", 0),

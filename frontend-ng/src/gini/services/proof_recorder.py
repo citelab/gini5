@@ -78,6 +78,10 @@ class ProofRecorder:
         # the tutor know which of a course's activities the student is actually being marked on.
         self._activity = ""
         self._activity_title = ""
+        # What the lab ASKS FOR, in the teacher's own words. The server has always sent it with
+        # the arm reply and it was dropped on arrival, so the panel could name the lab but never
+        # say what it was for — the one thing a student most wants on screen while working.
+        self._activity_brief = ""
         # The lab's questions, as the arm reply carried them. In memory only — see note_questions.
         self._questions: list = []
         # Not every signal reaches us on the GUI thread. `rider_ran` is emitted from a rider's
@@ -132,6 +136,7 @@ class ProofRecorder:
                 "submitted": bool(self._chain and self._chain.has_submitted()),
                 "activity": self._activity,
                 "activity_title": self._activity_title,
+                "activity_brief": self._activity_brief,
                 "error": self.last_error}
 
     # -- arming ------------------------------------------------------------- #
@@ -175,15 +180,27 @@ class ProofRecorder:
         return True, (f"Recording under {tk.pretty}." if fresh else
                       f"Resumed recording under {tk.pretty} — {n} event(s) already in the chain.")
 
-    def note_activity(self, activity: str, title: str = "") -> None:
+    def note_activity(self, activity: str, title: str = "", brief: str = "") -> None:
         """Remember which lab the armed code belongs to, from the course server's arm reply.
 
         Set from OUTSIDE, because the recorder never talks to the network — a code is
         self-verifying, so a student with no connection still records perfectly well and simply
         has no activity to name.
+
+        `brief` is what the lab asks for. In memory only, like the questions and for the same
+        reason: the chain records what the student DID, and the assignment text is not that.
         """
         self._activity = str(activity or "")
         self._activity_title = str(title or "")
+        self._activity_brief = str(brief or "")
+
+    @property
+    def activity_title(self) -> str:
+        return self._activity_title
+
+    @property
+    def activity_brief(self) -> str:
+        return self._activity_brief
 
     def note_questions(self, questions) -> None:
         """The lab's questions, from the same arm reply. Held in memory, NOT written to the chain.
@@ -233,7 +250,7 @@ class ProofRecorder:
             self._record(ev.stopped(self._topology_dict()))
         self._chain = None
         self._ticket = None
-        self._activity = self._activity_title = ""
+        self._activity = self._activity_title = self._activity_brief = ""
         # Cancel is the whole departure, so the questions go with it. A student who cancels and
         # arms a DIFFERENT code must not be shown the last lab's questions with a fresh chain
         # underneath them.

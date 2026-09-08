@@ -1,4 +1,4 @@
-"""Ask Questions — the lab's own questions, answered where the work is happening.
+"""GINI Labs — the lab, and its questions, answered where the work is happening.
 
 A tab beside Inspector / Ask GINI / GINI Source / Terminal, because that is where a student already
 is. The alternative was a web form on the Teaching Center, which would have meant leaving gBuilder
@@ -179,8 +179,21 @@ class QuestionsPanel(QWidget):
         root.setContentsMargins(_sp(10), _sp(10), _sp(10), _sp(10))
         root.setSpacing(_sp(8))
 
-        self._title = QLabel("Ask Questions")
+        self._title = QLabel("GINI Labs")
         root.addWidget(self._title)
+
+        # THE LAB, in the teacher's own words. Both come from the arm reply, which has always
+        # carried them — the panel could name a lab it could not describe, which is the wrong half
+        # to have. Hidden entirely rather than shown empty: a heading with nothing under it reads
+        # as a lab with no description, not as a lab nobody has armed.
+        self._lab_title = QLabel("")
+        self._lab_title.setWordWrap(True)
+        self._lab_title.hide()
+        root.addWidget(self._lab_title)
+        self._lab_brief = QLabel("")
+        self._lab_brief.setWordWrap(True)
+        self._lab_brief.hide()
+        root.addWidget(self._lab_brief)
 
         self._sub = QLabel("")
         self._sub.setWordWrap(True)                   # the empty states are sentences, not labels
@@ -213,7 +226,7 @@ class QuestionsPanel(QWidget):
 
     # -- the one entry point --------------------------------------------------- #
     def show_state(self, *, armed: bool, submitted: bool, questions, answers,
-                   expects_questions: bool = False) -> None:
+                   expects_questions: bool = False, title: str = "", brief: str = "") -> None:
         """Render everything from the recorder's state in one call.
 
         One entry point rather than a set of setters: every one of these facts changes what the
@@ -223,8 +236,10 @@ class QuestionsPanel(QWidget):
         t = getattr(self.theme, "theme", None)
         muted = getattr(t, "muted", "#6b7280")
         warn = getattr(t, "warning", "#b46b00")
+        text = getattr(t, "text", "#131a23")
         self._sub.setStyleSheet(f"color:{muted};")
         self._fetch.hide()
+        self._set_lab(title if armed else "", brief if armed else "", text, muted)
 
         if not armed:
             self._render([], {})
@@ -264,6 +279,15 @@ class QuestionsPanel(QWidget):
                 "marked automatically — your instructor reads them.")
         self._retitle(done, len(questions))
 
+    def _set_lab(self, title: str, brief: str, text: str, muted: str) -> None:
+        """The lab's own two lines. Each is shown only when there is something in it."""
+        self._lab_title.setText(title or "")
+        self._lab_title.setVisible(bool(title))
+        self._lab_title.setStyleSheet(f"font-weight:700;font-size:13px;color:{text};")
+        self._lab_brief.setText(brief or "")
+        self._lab_brief.setVisible(bool(brief))
+        self._lab_brief.setStyleSheet(f"color:{muted};")
+
     # -- rendering -------------------------------------------------------------- #
     def _render(self, questions, answers) -> None:
         ids = [q.id for q in questions]
@@ -291,7 +315,7 @@ class QuestionsPanel(QWidget):
         t = getattr(self.theme, "theme", None)
         text = getattr(t, "text", "#131a23")
         tail = f"  ·  {done} of {total}" if total else ""
-        self._title.setText(f"Ask Questions{tail}")
+        self._title.setText(f"GINI Labs{tail}")
         self._title.setStyleSheet(f"font-weight:800;font-size:15px;color:{text};")
 
     def refresh_theme(self, *_a) -> None:
@@ -301,14 +325,14 @@ class QuestionsPanel(QWidget):
 
 
 def announce(questions, answers) -> str:
-    """The dock tab's title: "Ask Questions (2)" while any are outstanding.
+    """The dock tab's title: "GINI Labs (2)" while any are outstanding.
 
     A beep is gone in a second. A student who came back to the window twenty minutes later needs
     something still on screen, and the tab is the only part of this panel visible when another tab
     is in front of it.
     """
     left = len(lq.unanswered(questions, answers))
-    return f"Ask Questions ({left})" if left else "Ask Questions"
+    return f"GINI Labs ({left})" if left else "GINI Labs"
 
 
 def beep() -> None:

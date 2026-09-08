@@ -248,12 +248,19 @@ class Handler(BaseHTTPRequestHandler):
             return
 
         act = _STORE.activity(_act.activity_id(self._q("course"), self._q("lab")))
-        ok, why = _act.vending_open(act)
+        ok, why = _act.vending_open(act, release_code=self._q("rc"))
         if not ok:
+            # No title on a bad link either: naming the lab would confirm it exists, which is the
+            # one thing the code is there to withhold.
+            title = "" if why in (_act.BAD_LINK, _act.NO_ACTIVITY) else (act or {}).get("title", "")
             self._send(200, {"ok": False, "reason": why, "error": _act.message(why),
-                             "title": (act or {}).get("title", "")})
+                             "title": title})
             return
         issued = _act.mint_code(act)
+        # A rehearsal on an unreleased lab. Recorded on the CODE, so it survives to the submission
+        # without the submit path needing to re-ask what the activity's status was at the time —
+        # which by then may have changed.
+        issued["draft"] = 1 if _act.is_draft_run(act) else 0
         _STORE.code_put(issued)
         # Chosen HERE, once, and recorded against the code. Re-arming resumes the same chain, so
         # the questions a student sees must be fixed the moment their code exists.
@@ -261,6 +268,7 @@ class Handler(BaseHTTPRequestHandler):
         from gini.domain.ticket import Ticket
         self._send(200, {"ok": True, "activity": act["id"], "title": act["title"],
                          "brief": act.get("brief", ""),
+                         "draft": bool(issued.get("draft")),
                          "code": Ticket(issued["code"]).pretty,
                          "vend_until": act["vend_until"], "valid_until": issued["valid_until"],
                          "session_minutes": act["session_minutes"]})
@@ -539,6 +547,8 @@ class Handler(BaseHTTPRequestHandler):
 
         if p == "/api/activities/save":
             return self._send(200, self._save_activity(course, b))
+        if p == "/api/activities/newlink":
+            return self._send(200, self._new_link(course, b))
         if p == "/api/activities/release":
             return self._send(200, self._set_released(course, b, True))
         if p == "/api/activities/unrelease":
@@ -606,6 +616,10 @@ class Handler(BaseHTTPRequestHandler):
                              f"{len(questions)}."}
         _STORE.activity_put({
             "id": aid, "course": course, "lab": lab, "show_n": show_n,
+            # Minted on first save and kept. An edit must NOT rotate it: the link is already in a
+            # course announcement, and silently invalidating it would look like the server broke.
+            # Rotating is a deliberate act — see /api/activities/newlink.
+            "release_code": prev.get("release_code") or _act.mint_release_code(),
             "title": b.get("title") or prev.get("title") or lab,
             "brief": b.get("brief", prev.get("brief", "")),
             "status": prev.get("status", "draft"),
@@ -614,6 +628,20 @@ class Handler(BaseHTTPRequestHandler):
             "released": prev.get("released", 0)})
         _STORE.questions_put(aid, questions)
         return {"ok": True, "activity": aid, "status": prev.get("status", "draft")}
+
+    def _new_link(self, course: str, b: dict) -> dict:
+        """Rotate one lab's release code. Every link already handed out stops working.
+
+        Separate from Save precisely because Save must NOT do it: a teacher fixing a typo in a
+        brief would otherwise silently break a link that is already in a course announcement. This
+        is the button for "that link leaked" — a deliberate act, with the consequence stated.
+        """
+        aid = _act.activity_id(course, (b.get("lab") or "").strip().lower())
+        if not _STORE.activity(aid):
+            return {"ok": False, "error": "No such lab."}
+        code = _act.mint_release_code()
+        _STORE.activity_set_release_code(aid, code)
+        return {"ok": True, "release_code": code}
 
     def _set_released(self, course: str, b: dict, on: bool) -> dict:
         aid = _act.activity_id(course, (b.get("lab") or "").strip().lower())
@@ -853,9 +881,34 @@ def _tls_context(cert: str, key: str) -> "ssl.SSLContext":
     return ctx
 
 
+def backfill_release_codes() -> list[str]:
+    """Give every pre-existing lab a release code. Returns the ids it touched.
+
+    Release codes are required, and a lab saved before they existed has none — which would leave
+    it either permanently unreachable or permanently unguarded depending on which way the check
+    fell. Backfilling makes the rule true of every row rather than of every row created from now
+    on.
+
+    THE LINKS ALREADY SENT TO STUDENTS STOP WORKING when this runs, and there is no way around
+    that: a code that the old links happen to satisfy is not a code. The teacher re-copies the link
+    from the console, which now shows it in full. Said out loud at startup so it is not discovered
+    from a student's email.
+    """
+    stale = _STORE.activities_missing_release_code()
+    for a in stale:
+        _STORE.activity_set_release_code(a["id"], _act.mint_release_code())
+    return [a["id"] for a in stale]
+
+
 def serve(host: str = "0.0.0.0", port: int = PORT,
           tls_cert: str = "", tls_key: str = "") -> None:
     MATERIALS.mkdir(parents=True, exist_ok=True)
+    touched = backfill_release_codes()
+    if touched:
+        print(f"Gave {len(touched)} existing lab(s) a release code. Their student links have "
+              f"CHANGED — re-copy each one from the console before sharing it:")
+        for aid in touched:
+            print(f"    {aid}")
 
     # TLS is not optional. It used to be, with a printed warning for the reachable case — and a
     # warning is not a control: the server still came up, staff still typed passwords into it, and
