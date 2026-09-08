@@ -153,7 +153,11 @@ register panel. See [os-wire-protocol](os-01-wire-protocol.md).
 - `wait_ticks` is the kernel's own aging counter and doubles as the starvation
   metric (`Xv6Runner.max_wait_slices`).
 - Step uses gdb (`tbreak swtch; continue`) and halts the kernel briefly; on an
-  idle kernel it times out harmlessly.
+  idle kernel it times out harmlessly. **It does not actually freeze what it
+  then shows** — the halt and the read are two gdb sessions and the first
+  detaches before the second attaches, so on a busy kernel the registers and
+  stack describe a later instant than the switch. See
+  [known issues #11](os-15-known-issues.md).
 - Lottery over a short window is indistinguishable from priority — length of
   evidence is part of the lesson (C17 in the course plan).
 - The Gantt's sample rate depends on which windows are open (500 ms with Run,

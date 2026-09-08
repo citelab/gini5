@@ -5,14 +5,15 @@ subsystem: platform
 layer: [kernel-patch, agent, domain]
 kernel_files: [kernel/console.c, kernel/trap.c]
 endpoints: [/control]
-keywords: [bug, known issue, Ctrl-G, policy, unreachable, boardreset, stack-growth, integer wrap, stale comment, GINI_SCHED_HASH]
+keywords: [bug, known issue, Ctrl-G, policy, unreachable, boardreset, stack-growth, integer wrap, stale comment, GINI_SCHED_HASH, step switch, gdb, swtch, detach]
 ---
 
 # Known issues — verified bugs and stale comments
 
 Found during the 2026-08-30 documentation pass, by static reading of the patch
 and parsers. Each item states the evidence; none has yet been confirmed against
-a running kernel unless noted.
+a running kernel unless noted — #11 is the exception, reported from a live lab
+and then traced back to the code.
 
 ## 1. `POST /control?policy=N` is broken for N > 0 — Ctrl-G interception
 
@@ -133,6 +134,68 @@ Visible now that `TR` carries the hart: the same interrupt appears on two cores
 one `seq` apart. Fixing it means either recording after the claim — which loses
 the record for traps `devintr` does not handle — or stamping the claim result,
 which is the better shape and is not yet done.
+
+## 11. Step switch does not freeze the kernel it is meant to freeze
+
+**Reported from a running lab (2026-09-08), then traced in the code.** Unlike
+the entries above, this one started as an observation: on a kernel running only
+`init` and `sh`, Step switch always shows the same stack —
+
+```
+#0 scheduler  kernel/proc.c:468
+#1 main       kernel/main.c:44
+```
+
+— and once a program is launched (`spin`, `walker`, anything) Step stops doing
+anything useful at all.
+
+**The cause is that Step is two gdb sessions, and the first lets go before the
+second starts.** `Xv6Bridge.step()`:
+
+```python
+def step(self):
+    self.agent.post("/step")          # session 1: tbreak swtch; continue
+    return self._detail_snapshot()    # session 2: GET /snapshot -> registers + bt
+```
+
+and `gini_agent.gdb_run` **always appends `detach`**, deliberately — "resume the
+guest before gdb exits", so a client that dies mid-read cannot leave the kernel
+halted. Correct in general, fatal here: session 1 halts at `swtch` and then
+resumes the guest, so by the time session 2 attaches the moment is gone. The
+comment on `step()` says "halted at swtch -> full frozen detail". It is not
+frozen.
+
+**Why the idle case looks like it works.** With `init` and `sh` both asleep,
+`gini_pick()` returns NULL, the harts sit in `wfi`, and `swtch` is never called
+at all. Session 1 waits out `TIMEOUT = 6` and returns `"gdb-timeout"` — nothing
+was halted and nothing resumed. Session 2 then attaches to a genuinely idle
+kernel and truthfully reports where the hart is: in `scheduler()`, called from
+`main()`, which is the per-hart scheduler stack that belongs to no process (see
+[architecture](os-00-architecture.md)). It looks like a successful step. Nothing
+stepped, and it is identical every time because nothing is moving.
+
+**Why the busy case is worse.** With a program running `swtch` IS reached, so
+session 1 halts there, detaches, and the kernel runs on. Session 2 reads an
+arbitrary later instant, so the registers and stack no longer describe the
+context switch that Step exists to show.
+
+**A second, independent squeeze.** `TIMEOUT = 6` seconds has to cover spawning
+`gdb-multiarch`, connecting to the stub, loading kernel symbols, AND waiting for
+the next context switch. At the default quantum that is fine; at the 10-tick
+slice the UI offers (`~5.0 s`) it is marginal, so on a busy kernel Step will
+sometimes time out and halt nothing.
+
+**Not fixed.** The fix is structural rather than a tweak: ONE gdb session must
+do both halves — `tbreak swtch; continue; <read registers, bt, procs>; detach` —
+so the read happens while the kernel is still stopped. That moves the detail
+read into `/step` on the agent side and therefore needs an image rebuild. The
+timeout is a separate, smaller matter: it should scale with the configured
+quantum, and a step that never saw a switch should say so rather than return a
+snapshot that looks like a result.
+
+Until then: Step is trustworthy only as "show me the idle scheduler stack", and
+the `Run`/`Pause` sampling path (see [scheduler](os-02-scheduler.md)) is the
+honest way to watch switching.
 
 ## Cross-references
 
