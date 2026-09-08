@@ -84,6 +84,8 @@ class ProofRecorder:
         self._activity_brief = ""
         # The lab's questions, as the arm reply carried them. In memory only — see note_questions.
         self._questions: list = []
+        # (device, face) already recorded under this code — see note_lab_open.
+        self._faces_seen: set = set()
         # Not every signal reaches us on the GUI thread. `rider_ran` is emitted from a rider's
         # reader thread, and Qt delivers to a plain (non-QObject) slot directly in the emitting
         # thread — so two appends really can race, and an interleaved append would compute `prev`
@@ -161,6 +163,10 @@ class ProofRecorder:
                 gini_version=gini_version())
             self.store.write_chain(tk.code, chain)
         self._chain, self._ticket = chain, tk
+        # A new code is a new lab. Without this, a face opened under the PREVIOUS code would count
+        # as already recorded and the new chain would never mention it — and the commonest path
+        # here is submit-then-arm-the-next-lab, which never goes through cancel().
+        self._faces_seen = set()
         self._snapshot()
         if fresh:
             # Say what the canvas already held, at the moment it was armed. A student who builds
@@ -255,6 +261,7 @@ class ProofRecorder:
         # arms a DIFFERENT code must not be shown the last lab's questions with a fresh chain
         # underneath them.
         self._questions = []
+        self._faces_seen = set()
         self._changed()
 
 
@@ -474,6 +481,44 @@ class ProofRecorder:
 
     def _note_command(self, device: str, cmd: str, out: list) -> None:
         self._record(ev.command(device, cmd, out))
+
+    # -- the OS labs ------------------------------------------------------- #
+    #
+    # Called from the Machine Lab and its faces. Every one of them goes through `_guard`, which
+    # swallows whatever it throws: a Load that stopped working because the proof chain hiccuped
+    # would be a far worse bug than a missing entry, and Load is the most consequential button in
+    # the lab. Same reasoning as terminal_panel._pump.
+
+    def note_lab_open(self, device: str, face: str) -> None:
+        """A face was opened. Recorded ONCE per face per armed session.
+
+        The de-duplication lives here rather than in the widget because a face can be opened from
+        several places — a card, a menu, a keyboard shortcut — and each of them would otherwise
+        have to remember. Cleared on arm and disarm with everything else.
+        """
+        key = (str(device or ""), str(face or ""))
+        if key in self._faces_seen:
+            return
+        self._faces_seen.add(key)
+        self._guard(lambda: self._record(ev.lab_open(key[0], key[1])))
+
+    def note_tune(self, device: str, knob: str, before, after) -> None:
+        """A kernel knob moved on a running machine. No-ops are dropped by `ev.tune`."""
+        self._guard(lambda: self._record(ev.tune(str(device or ""), str(knob or ""),
+                                                 before, after)))
+
+    def note_spawn(self, device: str, what: str, action: str = "launch",
+                   pid: int | None = None) -> None:
+        """A program launched, or a process killed."""
+        self._guard(lambda: self._record(
+            ev.spawn(str(device or ""), str(what or ""), action, pid)))
+
+    def note_build(self, device: str, shadow: str, ok: bool, sha256: str = "",
+                   lines: int = 0, log=None, action: str = "load") -> None:
+        """The student compiled their own kernel code — successes AND failures."""
+        self._guard(lambda: self._record(
+            ev.build(str(device or ""), str(shadow or ""), bool(ok), str(sha256 or ""),
+                     int(lines or 0), list(log or []), action)))
 
     def note_answer(self, question_id: str, prompt: str, text: str) -> bool:
         """Record the student's answer to one of the lab's questions.

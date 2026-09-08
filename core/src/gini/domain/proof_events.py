@@ -36,10 +36,16 @@ COMMAND = "command"
 WITNESS, OBJECTIVE = "witness", "objective"
 ANSWER = "answer"
 LOAD = "load"
+# The OS labs. A networking student's work IS the topology, and the chain has always carried it;
+# an OS student's work happens inside the Machine Lab and used to leave no trace at all, so a
+# submission narrated as "placed a Machine, ran, opened a console, submitted" while the whole
+# assignment went unrecorded. See docs/design/os-lab-provenance.md.
+LAB_OPEN, TUNE, SPAWN, BUILD = "lab_open", "tune", "spawn", "build"
 STOPPED, RESUMED = "stopped", "resumed"
 
 CONSTRUCTION = (PLACE, REMOVE, CONNECT, DISCONNECT, CONFIGURE)
-OPERATION = (RUN, STOP, OPEN_CONSOLE, MEASURE, INVOKE, COMMAND)
+OPERATION = (RUN, STOP, OPEN_CONSOLE, MEASURE, INVOKE, COMMAND,
+             LAB_OPEN, TUNE, SPAWN, BUILD)
 WITNESSED = (WITNESS, OBJECTIVE)
 #: A student's own words, and the weakest tier there is — deliberately NOT folded in with
 #: `witnessed`, because a witness is something GINI measured and an answer is something a person
@@ -179,6 +185,72 @@ def command(device: str, cmd: str, output: list[str] | None = None) -> tuple[str
     """
     lines = [clip(x, 200) for x in (output or [])]
     return COMMAND, {"on": clip(device, 64), "cmd": clip(cmd, 200), "out": lines}
+
+
+# -- the OS labs ------------------------------------------------------------- #
+def lab_open(device: str, face: str) -> tuple[str, dict]:
+    """A student opened one of the Machine Lab's faces.
+
+    ONCE PER FACE per session — the recorder enforces that, not this. Someone flipping between
+    Memory and CPU twenty times is navigating, not working, and twenty entries would bury the four
+    that matter. What this answers is narrow and worth having: did they go and look at the part of
+    the kernel the lab was about?
+    """
+    return LAB_OPEN, {"on": clip(device, 64), "face": clip(face, 40)}
+
+
+def tune(device: str, knob: str, before, after) -> tuple[str, dict] | None:
+    """A kernel knob changed on a RUNNING machine — scheduler policy, quantum, a scheduler control.
+
+    None when nothing moved, exactly as `configure` returns None for an unchanged property: a combo
+    box repopulated from the kernel's own roster must not read as a student's decision.
+
+    Deliberately not folded into `configure`. That kind means a topology element's properties
+    before Run; this is an act on a booted kernel, and conflating them would make the narration say
+    somebody edited a device when they switched a scheduler policy.
+    """
+    b, a = clip(str(before), 80), clip(str(after), 80)
+    if b == a:
+        return None
+    return TUNE, {"on": clip(device, 64), "knob": clip(knob, 40), "from": b, "to": a}
+
+
+def spawn(device: str, what: str, action: str = "launch",
+          pid: int | None = None) -> tuple[str, dict]:
+    """A program started or a process killed on the running kernel.
+
+    `alloc 8 &`, `writer`, `grind`, `forktest` — the workloads the OS labs are watched through.
+    Starting one is how a student makes the phenomenon they are studying happen, so it is the act
+    that gives every measurement after it its meaning.
+    """
+    d = {"on": clip(device, 64), "what": clip(what, 80),
+         "action": "kill" if action == "kill" else "launch"}
+    if pid is not None:
+        d["pid"] = int(pid)
+    return SPAWN, d
+
+
+def build(device: str, shadow: str, ok: bool, sha256: str = "", lines: int = 0,
+          log: list[str] | None = None, action: str = "load") -> tuple[str, dict]:
+    """The student compiled their own kernel code. THE assignment, in one entry.
+
+    FAILURES ARE RECORDED, with the tail of the compiler's output. A student who fought the
+    compiler for an hour did an hour of work, and a chain showing only successes cannot tell
+    "never tried" from "tried nine times" — it would also reward hiding failure, which is the
+    opposite of what a teaching record is for.
+
+    The tail, not the head, because that is where the error is: `command` truncates from the front
+    for the same reason in reverse, since `ping` says what matters first and then repeats itself.
+
+    `sha256` binds this entry to the source that was compiled. The file travels with the
+    submission and the server checks it against this, the way `topology_matches` already checks the
+    topology — so a marker reads provably the code this entry describes. It also means a shadow
+    edited AFTER the last build no longer matches, which the report should say rather than hide.
+    """
+    return BUILD, {"on": clip(device, 64), "shadow": clip(shadow, 40),
+                   "action": "revert" if action == "revert" else "load",
+                   "ok": bool(ok), "sha256": clip(sha256, 64), "lines": int(lines or 0),
+                   "log": [clip(x, 200) for x in (log or [])]}
 
 
 def measure(name: str, result: dict) -> tuple[str, dict]:
