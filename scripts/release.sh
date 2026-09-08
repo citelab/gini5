@@ -135,8 +135,16 @@ MSG
   echo
 fi
 
+# PYTHONPATH rather than relying on an editable install. `gini` is a NAMESPACE package split
+# across core/ and frontend-ng/, and the tests import both halves — so this step used to depend on
+# `pip install -e` having been run, and on it still being there. It stopped being there twice, and
+# each time a release died at this line with `No module named 'gini.ui'`, which reads like a broken
+# tree rather than a missing dev install. A release must not care about the state of somebody's
+# site-packages: CI publishes from the tag and builds from source.
 echo "Running the tests before tagging anything…"
-if ! ( cd frontend-ng && python3 -m pytest tests/ -q -x 2>&1 | tail -5 ); then
+_SRC="$PWD/core/src:$PWD/frontend-ng/src"
+if ! ( cd frontend-ng && PYTHONPATH="$_SRC${PYTHONPATH:+:$PYTHONPATH}" \
+        python3 -m pytest tests/ -q -x 2>&1 | tail -5 ); then
   echo "Tests failed — nothing tagged." >&2
   exit 1
 fi

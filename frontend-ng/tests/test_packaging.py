@@ -419,3 +419,19 @@ def test_the_release_script_checks_the_floor_before_tagging():
     script's half leaves a window exactly one release wide, which is all the last one needed."""
     assert "gini-core>=" in (_ROOT / "scripts" / "release.sh").read_text(encoding="utf-8"), \
         "release.sh no longer verifies the core floor"
+
+
+def test_the_release_script_does_not_depend_on_an_editable_install():
+    """`gini` is a NAMESPACE package split across core/ and frontend-ng/, and the release step
+    runs the suite — which imports both halves. It used to rely on `pip install -e` having been
+    run and still being there. It stopped being there twice, and each time a release died with
+    `No module named 'gini.ui'`, which reads like a broken tree rather than a missing dev install.
+
+    CI publishes from the tag and builds from source, so a release must not care what is in
+    somebody's site-packages.
+    """
+    script = (_ROOT / "scripts" / "release.sh").read_text(encoding="utf-8")
+    tests = script.split("Running the tests before tagging")[1][:400]
+    assert "PYTHONPATH" in tests, "the release's test run depends on the developer's environment"
+    for half in ("core/src", "frontend-ng/src"):
+        assert half in tests, f"{half} is not on the path the release tests with"
