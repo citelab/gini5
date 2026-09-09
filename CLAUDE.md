@@ -332,7 +332,7 @@ The code behind each door still compiles, is still refactored, and is still test
    `release.sh` running the suite on the machine of whoever cut the release; everything merged
    between two releases was covered by whoever remembered, and a tag published to PyPI on the
    strength of that. The new workflow runs the suite on every push and PR, on Python 3.10 (the
-   declared floor) and 3.12, headless.
+   declared floor) and 3.12, headless. **Green on both legs** as of `ca38233`.
 
    Two things about it are load-bearing rather than boilerplate. `fetch-depth: 0` — a shallow
    clone has no tags, setuptools-scm would build `gini-core` as `0.1.dev1`, that fails
@@ -352,6 +352,12 @@ The code behind each door still compiles, is still refactored, and is still test
    **A runner has no Docker, so the expected result there is 2,931 passed / 25 skipped**, not the
    2,934 / 22 you get locally with Docker up. Three tests skip rather than run. Verified by
    re-running the suite with `docker` off `PATH`.
+
+   One more thing the workflow taught, worth keeping because it is not about CI at all:
+   `test_packaging.py` enumerates `.github/workflows/*.yml` and asserts things about publishing.
+   Adding *any* workflow file touches those tests. More generally — **adding a file to this repo
+   can break the suite**, so re-run it after adding one, not only after editing code. Three red
+   runs here came from not doing that.
 
    Deliberately no lint job: `ruff check` currently reports **746 errors** on this tree, so adding
    one would make CI red on its first run. That cleanup is its own task, and a lint job belongs
