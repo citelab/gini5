@@ -1,0 +1,90 @@
+# Runs the test suite on every push and pull request.
+#
+# The fourth workflow, and the first that is not a publish. Until now nothing automated ran the
+# 2,956 tests: `release.sh` runs them locally before it tags, which is a real gate but only for the
+# person cutting the release, and only on their machine. Everything merged between two releases was
+# covered by whoever remembered. A tag then publishes to PyPI on the strength of that.
+#
+# It is deliberately a TEST workflow and nothing else — no lint, no type check. `ruff check` on this
+# tree currently reports 746 errors, so adding it would make the badge red on the first run, and a
+# CI that is always red is a CI nobody reads. Cleaning those up is its own piece of work; when it is
+# done, a lint job belongs here beside this one.
+name: tests
+
+on:
+  push:
+    branches: ["**"]       # every branch: os-improvements and personal branches merge via PR, and
+                           # a failure is cheapest to read on the branch that caused it
+  pull_request:
+  workflow_dispatch:
+
+# A second push to the same branch makes the first run irrelevant. Cancel it rather than queue it.
+concurrency:
+  group: tests-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25          # a full run is ~3 min; this only catches a hang
+    strategy:
+      fail-fast: false           # 3.10 and 3.12 fail for different reasons; show both
+      matrix:
+        python-version: ["3.10", "3.12"]   # the declared floor, and the recommended version
+
+    env:
+      # Most UI tests set this themselves at import, but a few build a QApplication without it
+      # (test_board_dialog, test_flash_dialog, test_pricing). A runner has no display, so it has to
+      # be set for the whole job — the same note `scripts/dev.sh` gives for a headless machine.
+      QT_QPA_PLATFORM: offscreen
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          # NOT optional, and the failure it prevents is silent rather than loud. setuptools-scm
+          # derives the version from the nearest tag; a shallow clone has none, so `gini-core`
+          # would build as 0.1.dev1 — which does not satisfy gini-toolkit's `gini-core>=6.3.2`.
+          # pip would then resolve that floor by downloading the PUBLISHED gini-core over the top
+          # of this checkout, and the suite would test PyPI's domain model instead of the branch's.
+          # That is exactly the trap `scripts/dev.sh` exists to avoid for humans.
+          fetch-depth: 0
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+
+      # PySide6 ships its own Qt, but Qt still dlopens a few system libraries even under the
+      # offscreen platform plugin. Kept to the minimum that makes `import PySide6.QtWidgets` work:
+      # if a run ever fails with "could not load the Qt platform plugin", the fix is more
+      # libxcb-* packages here, not a change to the tests.
+      #
+      # No Chromium dependencies on purpose. The three tests that mention QtWebEngine
+      # (test_webengine_startup, test_terminal_panel, test_quit_guard) are static checks — they
+      # parse import nodes and assert about them, and never construct a QWebEngineView.
+      - name: Qt's system libraries
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            libegl1 libgl1 libxkbcommon0 libdbus-1-3 libxcb-cursor0
+
+      # The script, not a hand-written pip line: `gini` is a namespace package split across
+      # gini-core and gini-toolkit, and dev.sh installs core FIRST for the reason in the comment
+      # above. Using it here also means CI exercises the command the README tells contributors to
+      # run, so it cannot rot without a red run.
+      - name: install (editable, all three packages)
+        run: ./scripts/dev.sh install
+
+      # From the `dev` extra in frontend-ng/pyproject.toml. Without pytest-qt, 86 tests do not fail
+      # — they ERROR with "fixture 'qtbot' not found", which reads like broken tests rather than a
+      # missing package.
+      - name: test dependencies
+        run: python3 -m pip install pytest pytest-qt
+
+      - name: the suite
+        run: ./scripts/dev.sh test
+
+      # A runner has no container runtime, and the suite is written for that: `test_bootstrap`
+      # checks `shutil.which("docker")` first. Three tests skip instead of running, so the expected
+      # result here is 2931 passed / 25 skipped rather than the 2934 / 22 seen on a developer
+      # machine with Docker up. Recorded so a future drop in the count reads as a change, not as
+      # noise.

@@ -327,8 +327,27 @@ The code behind each door still compiles, is still refactored, and is still test
    (Measured with Python 3.13.13 / PySide6 6.11.2 / macOS offscreen. The project targets 3.10–3.12;
    the ownership bug is version-independent, but how loudly it crashes is not.)
 
-4. **No CI runs the tests.** `.github/workflows/` contains three *publish* workflows and nothing
-   else. `release.sh` runs the suite locally before tagging — that is the only gate.
+4. **CI runs the tests — added on this branch** (`.github/workflows/tests.yml`). Until then
+   `.github/workflows/` held three *publish* workflows and nothing else, so the only gate was
+   `release.sh` running the suite on the machine of whoever cut the release; everything merged
+   between two releases was covered by whoever remembered, and a tag published to PyPI on the
+   strength of that. The new workflow runs the suite on every push and PR, on Python 3.10 (the
+   declared floor) and 3.12, headless.
+
+   Two things about it are load-bearing rather than boilerplate. `fetch-depth: 0` — a shallow
+   clone has no tags, setuptools-scm would build `gini-core` as `0.1.dev1`, that fails
+   gini-toolkit's `gini-core>=6.3.2`, and pip would satisfy the floor by pulling the *published*
+   core over the checkout, silently testing PyPI's domain model instead of the branch. And it
+   installs via `./scripts/dev.sh install` rather than a hand-written pip line, so CI exercises the
+   command the README gives contributors.
+
+   **A runner has no Docker, so the expected result there is 2,931 passed / 25 skipped**, not the
+   2,934 / 22 you get locally with Docker up. Three tests skip rather than run. Verified by
+   re-running the suite with `docker` off `PATH`.
+
+   Deliberately no lint job: `ruff check` currently reports **746 errors** on this tree, so adding
+   one would make CI red on its first run. That cleanup is its own task, and a lint job belongs
+   here once it is done.
 
 ### Stale artifacts and doc drift (safe, cheap cleanups)
 
