@@ -434,6 +434,19 @@ def test_have_reflects_what_actually_parsed():
     assert full.phys.total_pages == 32768
 
 
+def test_vr_line_marks_regions_reported_not_derived():
+    # #4 (B3 Option 2): the same dump WITH the kernel's VR line -> the region map rests on the
+    # reported break, so "regions" is in `have` but NOT in `derived` (the panel drops "(derived)").
+    # Without the line (older kernel) the map is worked out from the leaves and stays derived.
+    from gini.runtime.xv6_bridge import _VmReader
+    with_vr = FULL_VM.replace("page table 0x87f6e000\n",
+                              "page table 0x87f6e000\nVR 0x87004000 0x3fffffe000 0x3ffffff000\n")
+    rep = _VmReader(_OneText(with_vr)).snapshot()
+    assert "regions" in rep.have and rep.derived == ()          # reported, not derived
+    der = _VmReader(_OneText(FULL_VM)).snapshot()
+    assert "regions" in der.have and der.derived == ("regions",)  # unchanged: still derived
+
+
 def test_a_kernel_without_the_allocator_line_does_not_claim_one():
     from gini.runtime.xv6_bridge import _VmReader
     no_ka = _VmReader(_OneText("\n".join(FULL_VM.splitlines()[2:]))).snapshot()

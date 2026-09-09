@@ -49,6 +49,22 @@ def test_parse_maps_indices_to_names():
     assert (s.user_kinstr, s.user_entries) == (210000, 1123)
 
 
+def test_counters_past_two_billion_are_not_dropped():
+    # #3: the kernel now prints board/ring counters 64-bit (%lu), so a value above the 2.147e9
+    # signed-int wrap arrives as a positive decimal that the (\d+) parser keeps. Under the old
+    # (int)+%d print it wrapped to negative, (\d+) did not match, and the row silently vanished
+    # from the board. 5e9 is well past the wrap.
+    big = ("BOARDN 14\n"
+           "BSUB 0 user 5000000000\n"
+           "BEDGE 1 2 5000000000\n"
+           "BUSER 5000000000 4000000000\n")
+    s = parse(big)
+    assert s.ok
+    assert s.resid["user"] == 5_000_000_000
+    assert s.edges[("trap", "syscall")] == 5_000_000_000
+    assert s.user_kinstr == 5_000_000_000 and s.user_entries == 4_000_000_000
+
+
 def test_a_kernel_without_the_board_is_not_a_quiet_machine():
     """An older image answers /board with nothing. That must read as "no data", not as a board of
     zeros — which would look like a perfectly idle kernel and send a student hunting a ghost."""

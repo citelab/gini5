@@ -170,6 +170,16 @@ def test_vmf_telemetry_optional():
     assert (older.vmf_handled, older.vmf_fell) == (0, 0)
 
 
+def test_vr_line_reports_the_break_optional():
+    # #4 (B3 Option 2): when the kernel emits the VR line, parse_vmprint captures the reported
+    # break (sz) and marks the map REPORTED. An older kernel sends no VR line -> region_sz 0 and
+    # regions_reported False, so the bridge derives the map from the leaves exactly as before.
+    reported = parse_vmprint("page table 0x1\nVR 0x5000 0x3fffffe000 0x3ffffff000\n")
+    assert reported.region_sz == 0x5000 and reported.regions_reported is True
+    older = parse_vmprint("page table 0x1")
+    assert older.region_sz == 0 and older.regions_reported is False
+
+
 # -- B1/B4: the numbers the kernel already sent -------------------------------- #
 # A full /vm dump: the vm-shadow counters, the page-allocator line, then vmprint's tree. The
 # leaves are one exec'd process after two sbrk pages — note the heap sits ABOVE the stack, which

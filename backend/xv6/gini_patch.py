@@ -226,6 +226,10 @@ gini_pick(void)
 // GINI-xv6: emit the shadow manifest — one line per shadowable function, so the oracle/AI can tell
 // which student shadows are wired and healthy. present = the shadow file differs from the shipped
 // baseline (the Load build stamps GINI_SCHED_HASH); active/faults are runtime.
+// NOTE: no -D is passed at build time (see Dockerfile _rebuild), so GINI_SCHED_HASH is ALWAYS the
+// "baseline" placeholder below and this line reports present=0 hash=baseline. The agent recomputes
+// the real md5 of the shadow source and RE-STAMPS the manifest before the Lab sees it, so the
+// kernel-side hash here is a placeholder, not the source of truth. See _stamp_manifest in the agent.
 void
 gini_shadowdump(void)
 {
@@ -326,7 +330,7 @@ regex_once("kernel/trap.c",
            "GINI-xv6: PER-CPU time-slice counter")
 
 # 2a) trap.c — the LIVE PAGE-FAULT RING. Every user page fault (scause 12 instruction / 13 load /
-#     15 store) is recorded (pid, cause, faulting VA from stval, faulting PC) into a 64-entry ring,
+#     15 store) is recorded (pid, cause, faulting VA from stval, faulting PC) into a 256-entry ring,
 #     so the Memory face can show demand paging, stack growth, and COW copies AS THEY HAPPEN. The
 #     kernel only CAPTURES — GINI classifies (lazy / cow-write / illegal) on its side. The ring
 #     functions are APPENDED (no regex-escape hazard); usertrap() reaches gini_fault_note() through
@@ -363,8 +367,8 @@ gini_faultdump(void)
   uint64 start = total > GINI_RING ? total - GINI_RING : 0;
   for(uint64 k = start; k < total; k++){
     struct gini_flt *e = &gini_flt[k % GINI_RING];
-    PRINTF("FLT %d %d %p %p %d\\n", e->pid, (int)e->scause, (void*)e->va, (void*)e->epc,
-           (int)e->seq);
+    PRINTF("FLT %d %lu %p %p %lu\\n", e->pid, (uint64)e->scause, (void*)e->va, (void*)e->epc,
+           (uint64)e->seq);
   }
 }
 '''
@@ -390,7 +394,7 @@ regex_once("kernel/trap.c",
 
 # 2a2) trap.c — the TRAP-TAXONOMY RING. Where the fault ring above records only page faults, this
 #      records EVERY user trap classified by cause — syscall / page-fault / timer / device /
-#      illegal / other — with per-kind counters (the histogram) and a 64-entry ring (the live
+#      illegal / other — with per-kind counters (the histogram) and a 256-entry ring (the live
 #      feed). Captured at the SAME early anchor as the fault ring (before a fatal exception can
 #      exit()), so a deliberate crash (bad pointer, illegal instruction) is still recorded.
 #      Classification is from scause ALONE (matching devintr()'s own logic), so we never call
@@ -524,7 +528,7 @@ gini_trapdump(void)
          (void*)gini_catch_tf[6],
          gini_catch_qticks, gini_catch_quantum, gini_catch.hart);
   for(int k = 0; k < GT_NKIND; k++)
-    PRINTF("TC %d %s %d\\n", k, kn[k], (int)gini_trapcount[k]);
+    PRINTF("TC %d %s %lu\\n", k, kn[k], (uint64)gini_trapcount[k]);
   uint64 total = gini_traps_i;
   uint64 start = total > GINI_RING ? total - GINI_RING : 0;
   for(uint64 k = start; k < total; k++){
@@ -533,9 +537,9 @@ gini_trapdump(void)
     // — seq then hart — would be told apart only by their order, and a reader or a regex that
     // got that wrong would attribute traps to the wrong core in silence. One character of
     // prefix makes the field self-identifying wherever it turns up.
-    PRINTF("TR %d %d %p %p %p %p %p %p %d h%d\\n", e->pid, e->kind,
+    PRINTF("TR %d %d %p %p %p %p %p %p %lu h%d\\n", e->pid, e->kind,
            (void*)e->cause, (void*)e->epc, (void*)e->tval,
-           (void*)e->sstatus, (void*)e->sie, (void*)e->sip, (int)e->seq, e->hart);
+           (void*)e->sstatus, (void*)e->sie, (void*)e->sip, (uint64)e->seq, e->hart);
   }
 }
 '''
@@ -711,12 +715,12 @@ gsh_bget_valid(void *arg, void *ans)
 void
 gini_bcdump(void)
 {
-  %(P)s("BC hits %%d misses %%d evicts %%d nbuf %%d\\n",
-        (int)gini_bc_hits, (int)gini_bc_misses, (int)gini_bc_evicts, NBUF);
+  %(P)s("BC hits %%lu misses %%lu evicts %%lu nbuf %%d\\n",
+        (uint64)gini_bc_hits, (uint64)gini_bc_misses, (uint64)gini_bc_evicts, NBUF);
   for(int i = 0; i < NBUF; i++){
     struct buf *b = &bcache.buf[i];
-    %(P)s("BUF %%d %%d %%d %%d %%d\\n", i, (int)b->blockno, (int)b->refcnt,
-          b->valid, (int)b->lastuse);
+    %(P)s("BUF %%d %%d %%d %%d %%lu\\n", i, (int)b->blockno, (int)b->refcnt,
+          b->valid, (uint64)b->lastuse);
   }
 }
 """ % {"P": PRINT}, "GINI-xv6: bcache telemetry + eviction shadow")
@@ -807,8 +811,8 @@ void
 gini_bmapdump(void)
 {
   int nbytes = (sb.size + 7) / 8;
-  %(P)s("BA allocs %%d meangap %%d last %%d nblocks %%d\\n",
-        (int)gini_ba_allocs,
+  %(P)s("BA allocs %%lu meangap %%d last %%d nblocks %%d\\n",
+        (uint64)gini_ba_allocs,
         (int)(gini_ba_allocs > 1 ? gini_ba_gapsum / (gini_ba_allocs - 1) : 0),
         (int)gini_ba_last, (int)sb.size);
   %(P)s("BMAP ");
@@ -1028,8 +1032,8 @@ gini_lockdump(void)
   for(int i = 0; i < GINI_NLOCK; i++){
     if(gini_locks[i].name == 0)
       continue;
-    %(P)s("LOCK %%s %%d %%d\\n", gini_locks[i].name,
-          (int)gini_locks[i].acquires, (int)gini_locks[i].spins);
+    %(P)s("LOCK %%s %%lu %%lu\\n", gini_locks[i].name,
+          (uint64)gini_locks[i].acquires, (uint64)gini_locks[i].spins);
   }
 }
 """ % {"P": PRINT}, "GINI-xv6: lock contention telemetry")
@@ -1099,6 +1103,9 @@ extern int      gini_catch_quantum;
 # 4a2) defs.h — the SHADOW types + prototypes (used by proc.c/console.c; declared before use).
 append_once("kernel/defs.h", """
 // GINI-xv6 SHADOW additions
+// GINI_SCHED_HASH is a PLACEHOLDER: no -D overrides it at build (Dockerfile _rebuild passes none),
+// so the kernel always emits hash=baseline. The agent re-stamps the manifest with the real md5
+// (_stamp_manifest), which is what the Lab reads — do not treat this kernel-side value as truth.
 #ifndef GINI_SCHED_HASH
 #define GINI_SCHED_HASH "baseline"
 #endif
@@ -1468,7 +1475,7 @@ gini_dump(void)
   // trap cause). SIE reads 0 here (we're inside a handler) — the UI leans on `sie` (the enabled
   // sources) for the honest interrupt state, not the momentary global bit.
   { extern uint64 gini_ut, gini_kt, gini_it;
-    PRINTF("MODETIME user %d kernel %d idle %d\\n", (int)gini_ut, (int)gini_kt, (int)gini_it); }
+    PRINTF("MODETIME user %lu kernel %lu idle %lu\\n", (uint64)gini_ut, (uint64)gini_kt, (uint64)gini_it); }
   // WHOSE CSRs these are. The dump runs inside consoleintr, on whichever hart won
   // plic_claim() for GINI's own poll — so it is hart 0 on one poll and hart 1 on the next,
   // and the panel could not say which. Naming it turns "(this hart)" from an unanswerable
@@ -1513,10 +1520,14 @@ gini_vmdump(void)
 {
   struct proc *p;
   // vm-shadow telemetry: page faults the student's handler took vs. ones that fell through
-  %(P)s("VMF handled %%d fellthrough %%d\\n", (int)gini_vmf_ok, (int)gini_vmf_fail);
+  %(P)s("VMF handled %%lu fellthrough %%lu\\n", (uint64)gini_vmf_ok, (uint64)gini_vmf_fail);
   gini_kadump();          // GINI-xv6: page-allocator free/fragmentation counters
   for(p = proc; p < &proc[NPROC]; p++){
     if(p->state == RUNNING){
+      // GINI-xv6 (#4, B3 Option 2): report the address-space anchors instead of leaving the
+      // frontend to INFER them from leaf PTEs. p->sz is the program break; TRAPFRAME/TRAMPOLINE
+      // are compile-time constants (memlayout.h). regions_from_leaves(leaves, sz) runs on these.
+      %(P)s("VR %%p %%p %%p\\n", (void*)p->sz, (void*)TRAPFRAME, (void*)TRAMPOLINE);
       vmprint(p->pagetable);
       return;
     }
@@ -1691,8 +1702,11 @@ regex_once("kernel/console.c",
            r"  case C('C'): gini_break(); break;  // GINI: break a hung foreground (no SIGINT in xv6)\n"
            r"  case C(']'): if(sched_quantum < 100) sched_quantum++; break; // GINI: quantum up\n"
            r"  case C('\\\\'): sched_quantum = 1; break;  // GINI: quantum reset to 1\n"
-           r"  case C('G'): if(sched_policy < 2) sched_policy++; break; // GINI: scheduler policy up\n"
-           r"  case C('B'): sched_policy = 0; break;  // GINI: scheduler policy reset (round-robin)\n"
+           # NOTE: no `case C('G')` / `case C('B')` for policy — policy is now a terminated
+           # digit-entry (Ctrl-B <digits> \n, §4f6), because Ctrl-G is the shadow-index prefix
+           # (§4f4) and the old N×Ctrl-G scheme silently toggled a shadow instead of switching
+           # policy (known issue #1). Ctrl-B early-returns before this switch, so a `case` here
+           # would be dead.
            r"  case C('K'): gini_shadow[sched_policy].enabled = !gini_shadow[sched_policy].enabled; break;  // GINI: toggle the current policy's shadow\n"
            r"  case C('X'): gini_shadow_reset(); break;  // GINI: clear reject/call counters\n"
            f"  case C('L'): gini_obs_begin(); gini_lockdump(); gini_obs_end(); break;  "
@@ -1759,6 +1773,24 @@ regex_once("kernel/console.c",
            r"  \1",
            "GINI: shadow toggle by index")
 
+# 4f4b) console.c — scheduler POLICY by index: Ctrl-B <digits> <terminator>. The old scheme drove
+# policy with Ctrl-B then N×Ctrl-G, but Ctrl-G is the shadow-index PREFIX (4f4) and returns early,
+# so N×Ctrl-G armed a shadow-index entry the next byte then TERMINATED — silently toggling shadow 0
+# instead of switching policy (known issue #1). Give policy its own terminated digit-entry, exactly
+# like the shadow-index one, so the two machines cannot collide. GINI_NPOLICY bounds it, so a new
+# policy added to the roster works with no further edit here.
+regex_once("kernel/console.c",
+           r"(switch\s*\(c\)\s*\{)",
+           "static int gini_polidx = -1;  // GINI: scheduler-policy index entry (-1 = idle)\n"
+           "  if(gini_polidx >= 0){\n"
+           "    if(c >= '0' && c <= '9') gini_polidx = gini_polidx * 10 + (c - '0');\n"
+           "    else { if(gini_polidx < GINI_NPOLICY) sched_policy = gini_polidx; gini_polidx = -1; }\n"
+           "    release(&cons.lock); return;\n"
+           "  }\n"
+           "  if(c == C('B')){ gini_polidx = 0; release(&cons.lock); return; }\n"
+           r"  \1",
+           "GINI: scheduler policy by index")
+
 # 4f5) console.c — TWO-BYTE COMMAND MULTIPLEXER. The control-byte space is exhausted, so a fresh
 # command space is multiplexed behind ONE prefix: Ctrl-W. `PREFIX <letter>` is a command, so every
 # future console command needs no new byte. `backend/xv6/console_mux.py` is the PROVEN executable
@@ -1813,13 +1845,13 @@ gini_scdump(void)
 {
   for(int i = 0; i < 64; i++)
     if(gini_sccount[i])
-      PRINTF("SC %d %d\\n", i, (int)gini_sccount[i]);
+      PRINTF("SC %d %lu\\n", i, (uint64)gini_sccount[i]);
   uint64 total = gini_ring_i;
   uint64 start = total > GINI_RING ? total - GINI_RING : 0;
   for(uint64 k = start; k < total; k++){
     struct gini_sc *e = &gini_ring[k % GINI_RING];
-    PRINTF("TRACE %d %d %p %p %d\\n", e->pid, e->num, (void*)e->a0,
-           (void*)e->ret, (int)e->seq);
+    PRINTF("TRACE %d %d %p %p %lu\\n", e->pid, e->num, (void*)e->a0,
+           (void*)e->ret, (uint64)e->seq);
   }
 }
 '''
@@ -2205,18 +2237,18 @@ gini_boarddump(void)
 {
   %(P)s("BOARDN %%d\\n", GINI_NSUB);
   for(int i = 0; i < GINI_NSUB; i++)
-    %(P)s("BSUB %%d %%s %%d\\n", i, gini_subname[i], (int)gini_resid[i]);
+    %(P)s("BSUB %%d %%s %%lu\\n", i, gini_subname[i], (uint64)gini_resid[i]);
   for(int i = 0; i < GINI_NSUB; i++)
     for(int j = 0; j < GINI_NSUB; j++){
       if(gini_edge[i][j])
-        %(P)s("BEDGE %%d %%d %%d\\n", i, j, (int)gini_edge[i][j]);
+        %(P)s("BEDGE %%d %%d %%lu\\n", i, j, (uint64)gini_edge[i][j]);
       if(gini_edge_obs[i][j])
-        %(P)s("BEOBS %%d %%d %%d\\n", i, j, (int)gini_edge_obs[i][j]);
+        %(P)s("BEOBS %%d %%d %%lu\\n", i, j, (uint64)gini_edge_obs[i][j]);
     }
-  %(P)s("BDOOR %%d %%d %%d\\n", (int)gini_door[0], (int)gini_door[1], (int)gini_door[2]);
+  %(P)s("BDOOR %%lu %%lu %%lu\\n", (uint64)gini_door[0], (uint64)gini_door[1], (uint64)gini_door[2]);
   // How many residency samples the numbers above rest on. At a ~0.5s tick this is small, and
   // the board says so rather than shading a rectangle as if it knew.
-  %(P)s("BSAMP %%d\\n", (int)gini_resid_n);
+  %(P)s("BSAMP %%lu\\n", (uint64)gini_resid_n);
   // The last GINI_TRAIL real positions, oldest first — every one an actual observation.
   {
     uint64 n = gini_trail_i < GINI_TRAIL ? gini_trail_i : GINI_TRAIL;
@@ -2231,12 +2263,12 @@ gini_boarddump(void)
     uint64 n = gini_path_i < GINI_PATH ? gini_path_i : GINI_PATH;
     for(uint64 k = gini_path_i - n; k < gini_path_i; k++){
       struct gini_hop *hp = &gini_path[k %% GINI_PATH];
-      %(P)s("BPATH %%d %%d %%d %%d\\n", (int)hp->seq, (int)hp->from, (int)hp->to, (int)hp->pid);
+      %(P)s("BPATH %%lu %%d %%d %%d\\n", (uint64)hp->seq, (int)hp->from, (int)hp->to, (int)hp->pid);
     }
   }
   // Printed as two numbers rather than a ratio: the frontend differences them, and a ratio
   // cannot be differenced.
-  %(P)s("BUSER %%d %%d\\n", (int)(gini_uinstr / 1000), (int)gini_uentry);
+  %(P)s("BUSER %%lu %%lu\\n", (uint64)(gini_uinstr / 1000), (uint64)gini_uentry);
 }
 """ % {"P": PRINT}, "GINI-xv6 KERNEL BOARD core")
 

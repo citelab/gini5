@@ -77,7 +77,7 @@ def test_patcher_applies_and_is_idempotent(tmp_path):
     assert "gini_ut++;" in trap                              # user-mode timer tick
     assert "if (myproc() == 0) gini_it++; else gini_kt++;" in trap   # idle vs kernel tick
     # gini_dump emits the counters + this hart's control CSRs (trap vector, interrupt config, cause)
-    assert "MODETIME user %d kernel %d idle %d" in proc
+    assert "MODETIME user %lu kernel %lu idle %lu" in proc   # #3: 64-bit, no (int)-wrap drop
     assert "CSR sstatus %p sie %p sip %p stvec %p scause %p sepc %p" in proc
     assert "extern uint64 gini_ut, gini_kt, gini_it;" in proc
     assert "w_stimecmp(r_time() + 5000000);" in trap    # ~0.5s tick, semicolon intact
@@ -180,6 +180,31 @@ def test_patcher_applies_and_is_idempotent(tmp_path):
     assert "gini_alarm_on" in proch
     assert "p->gini_alarm_handler = 0;" in proc                 # zeroed in allocproc
     assert "ALARM %d %d %d %p %d" in proc                       # the dump line the strip reads
+
+    # #1 — scheduler POLICY is a terminated digit-entry (Ctrl-B <digits> \n), NOT the old
+    # N×Ctrl-G, which collided with the shadow-index prefix and silently toggled a shadow
+    # (known issue #1). The two dead switch cases are gone; the shadow-index (Ctrl-G) machine
+    # is untouched so shadows still work.
+    assert "static int gini_polidx = -1;" in con
+    assert "if(c == C('B')){ gini_polidx = 0;" in con
+    assert "if(gini_polidx < GINI_NPOLICY) sched_policy = gini_polidx;" in con
+    assert "case C('G'): if(sched_policy" not in con, "the dead policy-up case must be gone"
+    assert "case C('B'): sched_policy = 0" not in con, "the dead policy-reset case must be gone"
+    assert "if(c == C('G')){ gini_shidx = 0;" in con, "shadow-index (Ctrl-G) must be untouched"
+
+    # §4 (B3 Option 2) — gini_vmdump reports the break + the fixed VAs (the VR line) so the region
+    # map rests on reported truth rather than an inference from the last mapped page.
+    assert "VR %p %p %p" in proc and "(void*)p->sz" in proc
+
+    # #3 — every counter/seq that can exceed 2^31 prints 64-bit (%lu + (uint64)); no surviving
+    # (int) cast on such a field, so the board/ring parsers (which read (\d+)) no longer drop the
+    # row once the value wraps past two billion.
+    assert "FLT %d %lu %p %p %lu" in trap                        # fault ring: scause + seq widened
+    assert "MODETIME user %lu kernel %lu idle %lu" in proc       # mode-time counters widened
+    assert "TC %d %s %lu" in trap                                # trap histogram
+    assert "BSUB %d %s %lu" in trap and "(uint64)gini_resid[i]" in trap
+    assert "(int)gini_resid" not in trap and "(int)gini_trapcount" not in trap
+    assert "(int)e->seq" not in trap                             # TR seq widened
 
     # spin/busy take an optional seconds argument (launch via the Keyboard, e.g. `spin 10 &`)
     spin = (tmp_path / "user" / "spin.c").read_text()

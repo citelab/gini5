@@ -17,6 +17,14 @@ and then traced back to the code.
 
 ## 1. `POST /control?policy=N` is broken for N > 0 — Ctrl-G interception
 
+**Fixed in source; ships on the next image rebuild (2026-09-09).** Policy now
+has its own terminated digit-entry — Ctrl-B `<digits>` newline — in a new
+`gini_polidx` machine (console.c §4f4b), mirroring the Ctrl-G shadow-index one,
+so the two cannot collide. The two dead switch cases were removed and the
+Ctrl-G machine is untouched, so shadows keep working. The agent's policy route
+now writes one atomic `\x02<digits>\n` and clamps to `GINI_NPOLICY-1`, leaving
+no pending state a following `/procs` poll could terminate. The original bug:
+
 The Ctrl-G shadow-index state machine (§4f4, patch ~1662–1672) is inserted
 *before* `switch(c)` in `consoleintr` and swallows `C('G')` unconditionally, so
 the switch's `case C('G'): sched_policy++` (~1606) is **unreachable**. The
@@ -48,11 +56,20 @@ current stack leaf" in the classifier.
 
 ## 3. Board counters wrap through `(int)` casts
 
+**Fixed in source; ships on the next image rebuild (2026-09-09).** Every
+`uint64` counter and ring `seq` printed via `(int)`+`%d` now prints
+`(uint64)`+`%lu`, verified against the pinned `kernel/printk.c` (`%lu` →
+`printint(uint64, 10, 0)`). The fix went beyond the board dumps to every
+subsystem with the same latent wrap — FLT/TC/TR/SC/TRACE, the board matrix
+(BSUB/BEDGE/BEOBS/BDOOR/BSAMP/BPATH/BUSER), MODETIME, VMF, BC, BUF lastuse, BA
+allocs, LOCK acquires/spins — since a board-only fix would still drop rows
+elsewhere. Byte-identical below the wrap, so no parser changed and only rows
+past 2.1e9 (previously dropped as negative) are now kept. The original bug:
+
 `BSUB/BEDGE/BUSER` (and SC/TC/FLT seq) print via `(int)`; past ~2.1e9 they go
 negative and the `(\d+)` parser regexes silently drop the line. Ring *indices*
 were widened to `uint64` for exactly this hazard (comments at ~338–340); the
-printed values were not. Long-running machines will quietly lose rows. Fix:
-print `%lu`-style via the 64-bit path or emit high/low words.
+printed values were not. Long-running machines will quietly lose rows.
 
 ## 4. `gini_boardreset()` is dead code
 
@@ -62,18 +79,21 @@ or delete it.
 
 ## 5. `GINI_SCHED_HASH` is never defined at build time
 
+**Documented in source (2026-09-09).** Took the zero-risk option: a comment at
+the `#define` and at the `gini_shadowdump` emit site now says the kernel-side
+hash is a `baseline` placeholder the agent re-stamps (`_stamp_manifest`), not
+the source of truth. Behaviour is unchanged and correct as designed; the raw
+dump is no longer misleading to a reader. The original note:
+
 No `-D` in the Dockerfile or `_rebuild()`, so the kernel always emits
 `present=0 hash=baseline`; the agent's md5 re-stamping is what makes the
-manifest honest. Working as designed *today*, but the kernel-side fields are
-misleading to anyone reading the raw dump — worth a comment in the stub or
-removal.
+manifest honest.
 
 ## 6. Stale comments
 
-- §2a header (~329) and §2a2 (~394) still say "64-entry ring"; `GINI_RING` is
-  **256** (defs ~970).
-- `machine_lab.py` documents the shared-serial dump-corruption hazard
-  (~41–45) — still true; kept here so it isn't re-discovered.
+**Fixed in source (2026-09-09).** The two "64-entry ring" comments now say
+"256-entry ring" (`GINI_RING` is 256). The `machine_lab.py` shared-serial
+hazard comment is left in place — it is still true and doing its job.
 
 > **Proposed fix for #7 and the related delivery/TX leaks:**
 > `docs/design/observer-attribution.md` — presume UART interrupts are

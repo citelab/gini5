@@ -132,3 +132,35 @@ def test_step_default_quantum_keeps_the_current_timeout(ga, monkeypatch):
     h.path = "/step"
     h.do_POST()
     assert seen["t"] == ga.TIMEOUT
+
+
+# -- /control?policy=N: ONE terminated entry, not the shadow-colliding N×Ctrl-G (known issue #1) -- #
+def test_control_policy_writes_one_terminated_entry(ga, monkeypatch):
+    writes = []
+
+    class FakeSerial:
+        def write(self, s):
+            writes.append(s)
+            return True
+
+    monkeypatch.setattr(ga, "_SERIAL", FakeSerial())
+    h, _out = _step_handler(ga)
+    h.path = "/control?policy=2"
+    h.do_POST()
+    # Ctrl-B, the digit(s), newline — atomic; no pending state a later /procs poll could terminate.
+    assert writes == ["\x022\n"]
+
+
+def test_control_policy_clamps_to_npolicy(ga, monkeypatch):
+    writes = []
+
+    class FakeSerial:
+        def write(self, s):
+            writes.append(s)
+            return True
+
+    monkeypatch.setattr(ga, "_SERIAL", FakeSerial())
+    h, _out = _step_handler(ga)
+    h.path = "/control?policy=9"
+    h.do_POST()
+    assert writes == ["\x02" + str(ga.GINI_NPOLICY - 1) + "\n"]   # clamped, never a bad index

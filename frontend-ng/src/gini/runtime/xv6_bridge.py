@@ -100,14 +100,19 @@ class _VmReader:
                     have += ["phys", "frag"]
                 if vm.vmf_handled or vm.vmf_fell:
                     have.append("vmfault")
-                regions = regions_from_leaves(vm.leaves)
+                # #4 (B3 Option 2): if the kernel reported the break (the VR line), the heap
+                # extent rests on p->sz rather than the last mapped page — so the map is REPORTED,
+                # not derived, and the panel drops the "(derived)" tag. Older kernels send no VR
+                # line: region_sz is 0, the map is worked out from the leaves, and it stays derived.
+                regions = regions_from_leaves(vm.leaves, vm.region_sz)
                 if regions:
-                    # Worked out from the leaves, not dumped by the kernel — so it is declared in
-                    # BOTH tuples and the panel says "(derived)". Hiding the distinction would be
-                    # a poor trade for one word of chrome in a course about address spaces.
                     vm.regions = regions
                     have.append("regions")
-                    derived.append("regions")
+                    if not vm.regions_reported:
+                        # Worked out from the leaves, not dumped by the kernel — declared in BOTH
+                        # tuples so the panel says "(derived)". Hiding the distinction would be a
+                        # poor trade for one word of chrome in a course about address spaces.
+                        derived.append("regions")
                 vm.source, vm.ok = "real", True
                 vm.have, vm.derived = tuple(have), tuple(derived)
                 return vm

@@ -179,6 +179,12 @@ class VmSnapshot:
     free_pages: int = 0
     total_pages: int = 0
     max_free_run: int = 0
+    # #4 (B3 Option 2): the kernel's `VR` line reports the process break (sz) plus the fixed
+    # TRAPFRAME/TRAMPOLINE VAs, so the region map can rest on reported truth rather than an
+    # inference from the last mapped page. Absent on older kernels -> regions_reported stays
+    # False and the map is DERIVED from the leaves exactly as before.
+    region_sz: int = 0
+    regions_reported: bool = False
 
 
 # -- parser: xv6 vmprint() -------------------------------------------------- #
@@ -219,9 +225,17 @@ def parse_vmprint(text: str) -> VmSnapshot:
     # exactly the thing a sharp student notices and an instructor cannot explain on the spot.
     phys = PhysMem(total_pages=counts.get("total_pages", 0),
                    free_pages=counts.get("free_pages", 0))
-    return VmSnapshot(satp=satp, leaves=leaves, phys=phys, **counts)
+    # #4 (B3 Option 2): the kernel reports the running proc's break (sz) via the `VR` line. When
+    # present, the region map rests on it; when absent (older kernel), region_sz stays 0 and the
+    # bridge derives the map from the leaves exactly as before.
+    vr = _VR_RE.search(text or "")
+    region_sz = int(vr.group(1), 16) if vr else 0
+    return VmSnapshot(satp=satp, leaves=leaves, phys=phys,
+                      region_sz=region_sz, regions_reported=bool(vr), **counts)
 
 
+# `VR <sz_hex> <trapframe_hex> <trampoline_hex>` — the running proc's break and the two fixed VAs.
+_VR_RE = re.compile(r"^VR\s+(0x[0-9a-fA-F]+)\s+(0x[0-9a-fA-F]+)\s+(0x[0-9a-fA-F]+)", re.M)
 _VMF_RE = re.compile(r"VMF handled (\d+) fellthrough (\d+)")
 _KA_RE = re.compile(r"KA free (\d+) total (\d+) maxrun (\d+) shadow (\d+)")
 

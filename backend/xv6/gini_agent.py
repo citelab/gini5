@@ -62,6 +62,8 @@ KERNEL = "/opt/xv6-riscv/kernel/kernel"
 STUB = "localhost:1234"
 SERIAL = ("127.0.0.1", 4444)
 TIMEOUT = 6          # keep gdb calls short so a stuck read can't wedge the stub/UI
+GINI_NPOLICY = 3     # scheduler policies 0..2 (RR/priority/lottery); mirrors defs.h GINI_NPOLICY.
+#                      Bounds ?policy=N so a bad value clamps instead of arming a partial entry.
 _LOCK = threading.Lock()   # one gdb at a time (defensive; also serialises stub access)
 
 # long-running programs the Machine Lab offers to launch (gini_patch.py adds spin/alloc/writer;
@@ -769,15 +771,17 @@ class Handler(BaseHTTPRequestHandler):
                     _SERIAL.write("\x1d")             # Ctrl-]  -> sched_quantum++
                 out = f"quantum={n}"
             if "policy" in q:
-                # set sched_policy over the serial: Ctrl-B resets to 0 (round-robin), then Ctrl-G
-                # bumps up to the target (0=RR 1=priority 2=lottery). Same pattern as the quantum.
+                # set sched_policy over the serial: Ctrl-B then the digits then newline — ONE
+                # terminated entry the kernel's gini_polidx machine consumes atomically (0=RR
+                # 1=priority 2=lottery). The old scheme (Ctrl-B then N×Ctrl-G) drove policy up
+                # with Ctrl-G, but Ctrl-G is the shadow-index prefix, so every policy above 0
+                # silently toggled a shadow instead of switching policy (known issue #1). No
+                # pending state is left on the wire, so a following /procs poll cannot finish it.
                 try:
-                    pv = max(0, min(2, int(q["policy"][0])))
+                    pv = max(0, min(GINI_NPOLICY - 1, int(q["policy"][0])))
                 except ValueError:
                     pv = 0
-                _SERIAL.write("\x02")                 # Ctrl-B  -> sched_policy = 0
-                for _ in range(pv):
-                    _SERIAL.write("\x07")             # Ctrl-G  -> sched_policy++
+                _SERIAL.write("\x02" + str(pv) + "\n")   # Ctrl-B <digits> newline
                 out = (out + f" policy={pv}").strip()
             self._send({"ok": True, "out": out})
         elif u.path == "/run":                       # launch a program in the background

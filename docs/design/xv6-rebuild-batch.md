@@ -251,6 +251,15 @@ flag there and clear it on the next Run poll. Keep this UI-side; do not add kern
 
 ## 2. Policy switch is dead for N > 0 (#1)
 
+> **IMPLEMENTED 2026-09-09.** Shipped as designed. Kernel: a new `gini_polidx` digit-entry
+> machine (console.c §4f4b, mirroring the Ctrl-G shadow-index one), keyed on Ctrl-B and
+> terminated by a non-digit, bounded by `GINI_NPOLICY`; the two dead switch cases (`case C('G')`
+> policy-up, `case C('B')` reset) are removed; the Ctrl-G shadow-index machine is untouched.
+> Agent: `/control?policy=N` now writes one terminated entry `b"\x02" + str(pv) + b"\n"` and
+> clamps to `GINI_NPOLICY-1` (a Python constant near the top of the agent). Tests:
+> `test_xv6_patch.py` (polidx present, dead cases gone, shadow-index intact) and
+> `test_control_policy_writes_one_terminated_entry` / `_clamps_to_npolicy` in `test_xv6_agent.py`.
+
 ### The bug
 
 `kernel/console.c` patch (`gini_patch.py:1678`) inserts a Ctrl-G shadow-index state machine
@@ -349,6 +358,28 @@ starts switching policy correctly with no frontend change — the frontend was n
 
 ## 3. Board counters wrap through `(int)` casts (#3)
 
+> **IMPLEMENTED 2026-09-09, with the scope widened past the original board-only list.** The fix
+> is `%d`+`(int)x` → `%lu`+`(uint64)x`, verified safe against the pinned `kernel/printk.c`
+> (`%lu` → `printint(va_arg(ap, uint64), 10, 0)`, lines 96-97). Byte-identical below the wrap, so
+> every `(\d+)` parser is unchanged and only rows past 2.147e9 (previously dropped as negative)
+> are now kept.
+>
+> The original enumeration here (FLT/TC/SC/BSUB/BEDGE/BEOBS/BTRAIL/BUSER/TR) turned out to be a
+> PARTIAL list: it widened FLT's scause (a small exception code) but not the ring `seq` fields,
+> and it never covered the identical `uint64`-counter wrap in the other dumps. Since a half-fix
+> leaves the same dropped-row bug in place, every `uint64` counter and ring `seq` printed via
+> `(int)` was widened, and only genuinely-bounded fields (pid, kind, hart, loop indices, hop
+> from/to/pid, trail positions, BTRAIL's `n`) were left as `%d`. Fields widened:
+> - **FLT** (trap.c): scause, seq · **TC** (trap.c): count · **TR** (trap.c): seq ·
+>   **SC** (log.c/scdump): count · **TRACE**: seq
+> - **Board** (trap.c): BSUB resid, BEDGE/BEOBS values, BDOOR ×3, BSAMP, BPATH seq, BUSER ×2
+> - **MODETIME** (proc.c): ut/kt/it · **VMF**: ok/fail · **BC** (bio.c): hits/misses/evicts ·
+>   **BUF**: lastuse · **BA** (fs.c): allocs · **LOCK** (spinlock.c): acquires, spins
+>
+> All confirmed `uint64` (or the `uint` tick stamp for `lastuse`), so every `(uint64)` cast is a
+> clean no-op widening. Tests: `test_xv6_patch.py` static checks + `test_kernel_board.py`
+> `test_counters_past_two_billion_are_not_dropped` (a 5e9 value parses instead of vanishing).
+
 ### The bug
 
 Every board/ring value prints via `%d` + `(int)` (`gini_patch.py`):
@@ -396,6 +427,15 @@ pointer fields alone.
 
 ## 4. B3 Option 2 — regions reported, not inferred
 
+> **IMPLEMENTED 2026-09-09.** Kernel: one line in `gini_vmdump`'s RUNNING block —
+> `VR %p %p %p` of `p->sz`, `TRAPFRAME`, `TRAMPOLINE` (proc.c, before `vmprint`). Parser:
+> `parse_vmprint` reads the `VR` line into `region_sz` + `regions_reported` (both additive
+> `VmSnapshot` fields; absent → 0/False, exactly today's leaves-only derivation). Bridge
+> (`_VmReader.snapshot`): passes `region_sz` into `regions_from_leaves(leaves, sz)` and adds
+> "regions" to `derived` ONLY when not reported, so a reported map drops the "(derived)" tag.
+> Tests: `test_xv6_vm.py` `test_vr_line_reports_the_break_optional` and `test_xv6_bridge.py`
+> `test_vr_line_marks_regions_reported_not_derived`.
+
 ### Context
 
 Stage B3 of the Machine Lab work (`os-lab-provenance` predecessor;
@@ -433,6 +473,13 @@ Pure parser test: `parse_vmprint` on text with a `VR` line yields regions marked
 ---
 
 ## 5 & 6. Comment-only fixes
+
+> **IMPLEMENTED 2026-09-09.** #6: the two "64-entry ring" comments now say "256-entry ring"
+> (`GINI_RING` is 256). #5 (the zero-risk option): added a comment at both the `GINI_SCHED_HASH`
+> `#define` and the `gini_shadowdump` emit site noting the kernel-side hash is a `baseline`
+> placeholder the agent re-stamps (`_stamp_manifest`), not the source of truth. Comment-only, so
+> byte-identical on the wire and skew-irrelevant.
+
 
 - **#5** `GINI_SCHED_HASH`: `gini_patch.py:1030` `#ifndef GINI_SCHED_HASH / #define ... "baseline"`.
   No `-D` is passed at build (`Dockerfile:27`, `_rebuild()`), so the kernel always emits
