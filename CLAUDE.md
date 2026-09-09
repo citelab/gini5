@@ -341,6 +341,12 @@ The code behind each door still compiles, is still refactored, and is still test
    installs via `./scripts/dev.sh install` rather than a hand-written pip line, so CI exercises the
    command the README gives contributors.
 
+   The Qt system-library step installs packages **one at a time, best-effort**, and a separate
+   "Qt starts headless" step is the real gate. That is deliberate and should not be tidied back
+   into a single `apt-get install` line: those package names drift between Ubuntu releases and
+   `ubuntu-latest` moves without notice, so one stale name makes apt exit 100 and fails the build
+   before anything is learned — which is exactly how the first run of this workflow died.
+
    **A runner has no Docker, so the expected result there is 2,931 passed / 25 skipped**, not the
    2,934 / 22 you get locally with Docker up. Three tests skip rather than run. Verified by
    re-running the suite with `docker` off `PATH`.

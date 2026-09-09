@@ -54,18 +54,30 @@ jobs:
           python-version: ${{ matrix.python-version }}
 
       # PySide6 ships its own Qt, but Qt still dlopens a few system libraries even under the
-      # offscreen platform plugin. Kept to the minimum that makes `import PySide6.QtWidgets` work:
-      # if a run ever fails with "could not load the Qt platform plugin", the fix is more
-      # libxcb-* packages here, not a change to the tests.
+      # offscreen platform plugin.
+      #
+      # Installed one at a time, best-effort, ON PURPOSE. These names drift between Ubuntu releases
+      # — the t64 transition renamed a batch of them in 24.04 — and `ubuntu-latest` moves underneath
+      # this file without notice. A single name that no longer exists makes apt exit 100 and fails
+      # the build before anything useful has been learned, which is exactly what the first version
+      # of this step did. So try each, say which ones are not there, and let the check AFTER the
+      # install be the real gate: it tests the thing actually at stake (does Qt start?) rather than
+      # a list of package names nobody can verify without pushing.
       #
       # No Chromium dependencies on purpose. The three tests that mention QtWebEngine
       # (test_webengine_startup, test_terminal_panel, test_quit_guard) are static checks — they
       # parse import nodes and assert about them, and never construct a QWebEngineView.
-      - name: Qt's system libraries
+      - name: Qt's system libraries (best-effort)
         run: |
+          . /etc/os-release && echo "runner image: $PRETTY_NAME"
           sudo apt-get update
-          sudo apt-get install -y --no-install-recommends \
-            libegl1 libgl1 libxkbcommon0 libdbus-1-3 libxcb-cursor0
+          for pkg in libegl1 libgl1 libxkbcommon0 libdbus-1-3 libxcb-cursor0; do
+            if sudo apt-get install -y --no-install-recommends "$pkg" >/dev/null 2>&1; then
+              echo "  ok       $pkg"
+            else
+              echo "  MISSING  $pkg  — not on this image; the Qt check below decides if it mattered"
+            fi
+          done
 
       # The script, not a hand-written pip line: `gini` is a namespace package split across
       # gini-core and gini-toolkit, and dev.sh installs core FIRST for the reason in the comment
@@ -79,6 +91,18 @@ jobs:
       # missing package.
       - name: test dependencies
         run: python3 -m pip install pytest pytest-qt
+
+      # The real gate for the apt step above, and the reason it is allowed to be best-effort. If a
+      # Qt library is genuinely absent this fails naming the missing .so — which is what you need
+      # in order to fix it — rather than apt failing on a package name that was merely renamed.
+      - name: Qt starts headless
+        run: |
+          python3 - <<'PY'
+          from PySide6.QtWidgets import QApplication
+          app = QApplication([])
+          print("Qt platform plugin:", app.platformName())
+          assert app.platformName() == "offscreen", app.platformName()
+          PY
 
       - name: the suite
         run: ./scripts/dev.sh test
