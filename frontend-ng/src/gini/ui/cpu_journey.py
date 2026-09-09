@@ -23,7 +23,10 @@ class CpuJourney(QDialog):
         self.device = device
         self.cpu = cpu                      # a CpuState (real regs) to seed the syscall path
         self.frame = frame                  # a TrapFrame from /trapcatch (a real frozen trap)
-        self._mode = "syscall"
+        # Derive the journey from what was CAUGHT, not a hardcoded "syscall". A timer opens the
+        # preemption walkthrough, not a system-call one — the old default narrated every captured
+        # trap as `ecall → syscall() → sret`, which is what "does not make sense" meant.
+        self._mode = self._mode_for(frame)
         self._i = 0
 
         t = theme.theme
@@ -51,6 +54,13 @@ class CpuJourney(QDialog):
                 msg += f" · stval {frame.stval}"
             if frame.pid is not None and frame.pid >= 0:
                 msg += f" · pid {frame.pid}"
+            if not getattr(frame, "from_user", True):
+                msg += "  ·  from KERNEL mode (no trapframe written)"
+            if getattr(frame, "kind", 0) not in self._KIND_JOURNEY:
+                # We caught it and the banner is true, but there is no step-by-step for this kind
+                # yet (pagefault/device/illegal walkthroughs are still to come). Say so rather than
+                # narrate the syscall reference as if it were this trap.
+                msg += "  —  no step-by-step for this kind yet; the values above are the real trap"
             self._live.setText(msg)
         elif frame is not None:
             self._live.setStyleSheet(f"color:{t.faint};font-size:12px;")
@@ -63,7 +73,7 @@ class CpuJourney(QDialog):
         self._mode_btns = {}
         for key in ("syscall", "context", "preempt"):
             b = QPushButton(JOURNEY_TITLES[key])
-            b.setCheckable(True); b.setChecked(key == "syscall")
+            b.setCheckable(True); b.setChecked(key == self._mode)
             b.setStyleSheet(self._btn_css())
             b.clicked.connect(lambda _c=False, k=key: self._set_mode(k))
             self._mode_group.addButton(b); self._mode_btns[key] = b
@@ -101,7 +111,7 @@ class CpuJourney(QDialog):
         nav.addWidget(self._prev); nav.addWidget(self._next)
         root.addLayout(nav)
 
-        self._set_mode("syscall")
+        self._set_mode(self._mode)          # the mode DERIVED from the caught trap, not a default
 
     def _btn_css(self) -> str:
         t = self.theme.theme
@@ -148,6 +158,17 @@ class CpuJourney(QDialog):
         self._i = max(0, min(len(stages) - 1, self._i + d))
         self._render()
 
+    #: Kinds with a dedicated walkthrough today. Others fall back to the reference and say so
+    #: in the banner (the pagefault/device/illegal/ktrap journeys are the next piece — §11.5 B3/B4).
+    _KIND_JOURNEY = {0: "syscall", 2: "preempt"}
+
+    def _mode_for(self, frame) -> str:
+        """Which journey to open for a caught trap. Falls back to the syscall reference for a
+        timed-out catch or a kind that has no walkthrough yet (flagged in the banner)."""
+        if frame is None or not getattr(frame, "ok", False):
+            return "syscall"
+        return self._KIND_JOURNEY.get(getattr(frame, "kind", 0), "syscall")
+
     def _live_note(self, title) -> str:
         """The real-values line appended to a trap-entry stage caption. Prefers a frozen trap
         (TrapFrame) — its actual saved registers and scause — else falls back to the running
@@ -155,6 +176,20 @@ class CpuJourney(QDialog):
         fr = self.frame
         if fr is not None and getattr(fr, "ok", False):
             r = fr.regs
+            if self._mode == "preempt":
+                if title == "timer trap":
+                    return (f"this tick interrupted user pc sepc={fr.sepc}"
+                            f"   ·   scause={fr.scause} → {fr.kind_name}")
+                if title == "yield()":
+                    n, q = int(getattr(fr, "qticks", 0)) + 1, int(getattr(fr, "quantum", 0) or 0)
+                    if not q:
+                        return ""
+                    if n >= q:
+                        return (f"quantum reached ({n} of {q}) → this tick DID preempt: "
+                                f"yield() → sched() → swtch")
+                    return (f"quantum NOT reached ({n} of {q}) → returned to the SAME process; "
+                            f"no swtch this tick")
+                return ""
             if title == "uservec":
                 parts = [f"{k}={r[k]}" for k in ("ra", "sp", "a0", "a7") if k in r]
                 return ("this trap's user registers, saved into the trapframe:  " + "  ".join(parts)
@@ -193,7 +228,7 @@ class CpuJourney(QDialog):
                               if self._mode != 'context' else "   · never leaves S"))
         # seed the trap-entry captions with real values — from a frozen trap if we have one,
         # else the running proc's registers (the old behaviour), else nothing.
-        note = self._live_note(s.title) if self._mode == "syscall" else ""
+        note = self._live_note(s.title)
         self._caption.setText(s.caption + (f"\n\n{note}" if note else ""))
         # highlight the active save-area
         for card, kind in ((self._tf, "trapframe"), (self._ctx, "context")):
