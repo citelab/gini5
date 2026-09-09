@@ -2,8 +2,9 @@
 
 Pick a mode, then Step through the stages. At each stage the view shows the privilege band
 (user/kernel) and process lane the CPU is in, and highlights which save-area is touched — the
-TRAPFRAME (all user registers, on a trap) or the CONTEXT (14 callee-saved, on a swtch). Real
-register values from the running process seed the syscall path.
+TRAPFRAME (31 user registers + the user pc, on a trap FROM USER MODE) or the CONTEXT (ra, sp,
+s0–s11 — 14 registers, on a swtch). Real register values from the frozen trap, or the running
+process, seed the captions — and with a real capture the lanes show the actual pid, not "process A".
 """
 from __future__ import annotations
 
@@ -12,17 +13,29 @@ from PySide6.QtWidgets import (
     QButtonGroup, QDialog, QFrame, QHBoxLayout, QLabel, QPushButton, QVBoxLayout, QWidget,
 )
 
-from ..domain.cpu_journey import JOURNEY_TITLES, JOURNEYS
+from ..domain.cpu_journey import JOURNEY_TITLES, JOURNEYS, preempt_stages
 from .theme import ThemeManager, icons
 
 
 class CpuJourney(QDialog):
-    def __init__(self, parent, theme: ThemeManager, device=None, cpu=None, frame=None) -> None:
+    def __init__(self, parent, theme: ThemeManager, device=None, cpu=None, frame=None,
+                 procs=None) -> None:
         super().__init__(parent)
         self.theme = theme
         self.device = device
         self.cpu = cpu                      # a CpuState (real regs) to seed the syscall path
         self.frame = frame                  # a TrapFrame from /trapcatch (a real frozen trap)
+        # pid -> name, so a captured lane can say "pid 7 (spin)" instead of "process A". From the
+        # live process table the Lab already holds; empty in reference mode (falls back to "process
+        # A"). Accepts a {pid: name} dict or a list of Proc(.pid/.name).
+        self._names = {}
+        if isinstance(procs, dict):
+            self._names = {int(k): v for k, v in procs.items()}
+        else:
+            for p in (procs or []):
+                pid = getattr(p, "pid", None)
+                if pid is not None:
+                    self._names[int(pid)] = getattr(p, "name", "")
         # Derive the journey from what was CAUGHT, not a hardcoded "syscall". A timer opens the
         # preemption walkthrough, not a system-call one — the old default narrated every captured
         # trap as `ecall → syscall() → sret`, which is what "does not make sense" meant.
@@ -96,8 +109,9 @@ class CpuJourney(QDialog):
         root.addWidget(self._caption, 1)
 
         save = QHBoxLayout()
-        self._tf = self._save_card("trapframe", "34 user registers · saved on every TRAP")
-        self._ctx = self._save_card("context", "14 callee-saved · saved on every swtch")
+        self._tf = self._save_card("trapframe",
+                                   "31 user registers + the user pc · saved on every trap from user mode")
+        self._ctx = self._save_card("context", "ra, sp, s0–s11 — 14 registers · saved on every swtch")
         save.addWidget(self._tf); save.addWidget(self._ctx)
         root.addLayout(save)
 
@@ -131,9 +145,39 @@ class CpuJourney(QDialog):
         f._title, f._sub = title, sublbl
         return f
 
+    def _resolve_stages(self, mode):
+        """The stage list to show for a mode. Preempt has two paths: the full trap+switch, and the
+        short 'quantum not reached -> same process returns' path, chosen from the captured counters.
+        Reference mode (no capture) always shows the full canonical path."""
+        if mode == "preempt":
+            fr = self.frame
+            if fr is not None and getattr(fr, "ok", False):
+                return preempt_stages(getattr(fr, "qticks", 0), getattr(fr, "quantum", 0))
+        return JOURNEYS[mode]
+
+    def _lane_label(self, slot: str) -> str:
+        """A process lane -> display text. With a real capture, lane A is the captured pid; lane B
+        is never known at capture time (the switch target is picked afterwards). Reference mode
+        (no capture) falls back to the generic 'process A'."""
+        if slot == "sched":
+            return "the scheduler"
+        if slot == "B":
+            return "the next runnable process"
+        fr = self.frame                                  # slot "A" — the process the story is about
+        if fr is None or not getattr(fr, "ok", False):
+            return "process A"
+        pid = getattr(fr, "pid", None)
+        if pid is None or pid < 0:
+            return "process A"
+        if pid == 0:
+            return "the kernel (no process on this core)"
+        name = self._names.get(pid)
+        return f"pid {pid}" + (f" ({name})" if name else "")
+
     def _set_mode(self, key) -> None:
         self._mode = key
         self._i = 0
+        self._stages = self._resolve_stages(key)
         for k, b in self._mode_btns.items():
             b.setChecked(k == key)
         # rebuild the stage chips
@@ -143,7 +187,7 @@ class CpuJourney(QDialog):
                 w.deleteLater()
         self._chips = []
         t = self.theme.theme
-        for s in JOURNEYS[key]:
+        for s in self._stages:
             c = QLabel(s.title)
             c.setAlignment(Qt.AlignCenter)
             c.setStyleSheet(
@@ -154,7 +198,7 @@ class CpuJourney(QDialog):
         self._render()
 
     def _step(self, d) -> None:
-        stages = JOURNEYS[self._mode]
+        stages = self._stages
         self._i = max(0, min(len(stages) - 1, self._i + d))
         self._render()
 
@@ -211,7 +255,7 @@ class CpuJourney(QDialog):
 
     def _render(self) -> None:
         t = self.theme.theme
-        stages = JOURNEYS[self._mode]
+        stages = self._stages
         s = stages[self._i]
         for idx, c in enumerate(self._chips):
             active = idx == self._i
@@ -222,17 +266,32 @@ class CpuJourney(QDialog):
                 f"color:{col};background:{t.panel2};border:1px solid {border};"
                 f"border-radius:6px;padding:4px 6px;font-size:11px;"
                 f"{'font-weight:600;' if active else ''}")
-        lane = {"A": "process A", "sched": "scheduler", "B": "process B"}.get(s.lane, s.lane)
-        self._band.setText(f"CPU is in: {s.band.upper()} mode · {lane}"
-                           + (f"   · privilege {'change' if s.band == 'user' else 'stays S'}"
-                              if self._mode != 'context' else "   · never leaves S"))
+        lane_a, lane_b = self._lane_label("A"), self._lane_label("B")
+        lane = {"A": lane_a, "sched": "the scheduler", "B": lane_b}.get(s.lane, s.lane)
+        # Band: a context switch never leaves S; a trap CAPTURED in kernel mode never entered user
+        # (so it shows KERNEL throughout, not a user->kernel crossing — §1.6); a from-user trap
+        # crosses U<->S per the stage.
+        fr = self.frame
+        kmode = fr is not None and getattr(fr, "ok", False) and not getattr(fr, "from_user", True)
+        band_disp = "KERNEL" if kmode else s.band.upper()
+        if self._mode == "context":
+            # A context switch is NOT a trap, so gini_traprec() never sees one and no capture can
+            # drive this — badge it so the empty live values read as intent, not a bug (§1.2 C6).
+            suffix = "   · never leaves S  ·  reference walkthrough (a context switch is not a trap)"
+        elif kmode:
+            suffix = "   · kernel-mode trap · no user/kernel crossing"
+        else:
+            suffix = f"   · privilege {'change' if s.band == 'user' else 'stays S'}"
+        self._band.setText(f"CPU is in: {band_disp} mode · {lane}{suffix}")
         # seed the trap-entry captions with real values — from a frozen trap if we have one,
-        # else the running proc's registers (the old behaviour), else nothing.
+        # else the running proc's registers (the old behaviour), else nothing. Captions are {a}/{b}
+        # templates; format BEFORE appending the live note (which may itself contain no braces).
         note = self._live_note(s.title)
-        self._caption.setText(s.caption + (f"\n\n{note}" if note else ""))
-        # highlight the active save-area
+        self._caption.setText(s.caption.format(a=lane_a, b=lane_b) + (f"\n\n{note}" if note else ""))
+        # highlight the active save-area — but a trap CAPTURED in kernel mode writes no trapframe,
+        # so both cards stay unlit for it (§1.5/§1.6; the banner already says "no trapframe written").
         for card, kind in ((self._tf, "trapframe"), (self._ctx, "context")):
-            on = s.save == kind
+            on = (s.save == kind) and not kmode
             accent = t.accent_for("green" if kind == "trapframe" else "amber")
             card.setStyleSheet(
                 f"QFrame#{kind}{{background:{t.panel2};border:1px solid "

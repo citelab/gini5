@@ -38,6 +38,19 @@ import pytest
 QtWidgets = pytest.importorskip("PySide6.QtWidgets")
 
 
+@pytest.fixture(autouse=True)
+def _flush_qt():
+    # Offscreen Qt segfaults at process teardown when enough parent=None dialogs are only closed,
+    # not deleted (their queued deleteLater never runs without an event loop). Flush after each
+    # test so nothing accumulates across the module boundary.
+    yield
+    app = QtWidgets.QApplication.instance()
+    if app is not None:
+        for w in list(app.topLevelWidgets()):
+            w.close(); w.deleteLater()
+        app.processEvents()
+
+
 @pytest.fixture(scope="module")
 def app():
     return QtWidgets.QApplication.instance() or QtWidgets.QApplication([])
@@ -104,4 +117,97 @@ def test_a_caught_pagefault_says_no_walkthrough_yet_rather_than_lying(app):
     j = CpuJourney(None, _theme(app), frame=_frame(kind=1, scause="0xf",
                                                    kind_name="store page fault"))
     assert "no step-by-step for this kind yet" in j._live.text()
+    j.close()
+
+
+# -- Part 4 acceptance tests (CPU_JOURNEY_CORRECTIONS.md) ---------------------------------------- #
+from gini.domain.cpu_journey import PREEMPT, PREEMPT_NOSWITCH, SYSCALL, preempt_stages
+
+
+def test_no_caption_claims_a_syscall_is_uninterruptible():
+    # The single worst error: "No other process ran" taught a false invariant. Regression guard.
+    every = " ".join(s.caption for st in JOURNEYS.values() for s in st)
+    every += " ".join(s.caption for s in PREEMPT_NOSWITCH)
+    assert "No other process ran" not in every
+
+
+def test_userret_switches_the_page_table_before_restoring_registers():
+    # It is switched FIRST (verified against trampoline.S). Stating it the other way removes the
+    # reason the trampoline design works.
+    cap = next(s for s in SYSCALL if s.title == "userret").caption
+    assert cap.index("page table") < cap.index("registers")
+
+
+def test_prepare_return_is_a_stage_between_syscall_and_userret():
+    titles = [s.title for s in SYSCALL]
+    assert "prepare_return" in titles
+    assert titles.index("syscall()") < titles.index("prepare_return") < titles.index("userret")
+
+
+def test_every_caption_is_a_clean_ab_template():
+    # A stray brace in a future caption would raise at render time; catch it here instead.
+    for st in list(JOURNEYS.values()) + [PREEMPT_NOSWITCH]:
+        for s in st:
+            s.caption.format(a="X", b="Y")           # must not raise
+
+
+def test_context_caption_names_the_callee_saved_registers():
+    c2 = next(s for s in JOURNEYS["context"] if s.title == "swtch → sched").caption
+    assert "s0–s11" in c2 and "14 registers" in c2
+
+
+def test_preempt_stages_picks_switch_vs_no_switch():
+    assert preempt_stages(0, 1) is PREEMPT              # quantum reached -> full trap+switch
+    assert preempt_stages(0, 10) is PREEMPT_NOSWITCH    # not reached -> same process returns
+    assert PREEMPT_NOSWITCH[-1].title == "return"
+    assert preempt_stages(0, 0) is PREEMPT              # unknown quantum -> full reference path
+
+
+# -- Part 4, Qt: real pids, reference fallback, kernel-mode ------------------------------------- #
+class _Proc:
+    def __init__(self, pid, name):
+        self.pid, self.name = pid, name
+
+
+def test_card_labels_have_the_right_register_counts(app):
+    from gini.ui.cpu_journey import CpuJourney
+    j = CpuJourney(None, _theme(app), frame=None)
+    tf, ctx = j._tf._sub.text(), j._ctx._sub.text()
+    assert "31" in tf and "34" not in tf
+    assert "s0–s11" in ctx
+    j.close()
+
+
+def test_reference_mode_does_not_invent_a_pid(app):
+    from gini.ui.cpu_journey import CpuJourney
+    j = CpuJourney(None, _theme(app), frame=None)          # no capture
+    for mode in ("syscall", "context", "preempt"):
+        j._set_mode(mode)
+        for _ in range(len(j._stages)):
+            j._render()
+            assert "pid " not in j._band.text()
+            assert "pid " not in j._caption.text()
+            j._step(1)
+    j.close()
+
+
+def test_captured_mode_shows_the_real_pid(app):
+    from gini.ui.cpu_journey import CpuJourney
+    j = CpuJourney(None, _theme(app), frame=_frame(kind=0, pid=7, from_user=True,
+                                                   scause="0x8", kind_name="env call from U-mode"),
+                   procs=[_Proc(7, "spin")])
+    j._set_mode("syscall"); j._render()                    # stage 1 (ecall) is lane A
+    assert "pid 7 (spin)" in j._band.text()
+    j.close()
+
+
+def test_kernel_mode_capture_lights_no_save_card(app):
+    from gini.ui.cpu_journey import CpuJourney
+    j = CpuJourney(None, _theme(app), frame=_frame(kind=2, from_user=False, pid=0))
+    for _ in range(len(j._stages)):
+        j._render()
+        assert "(writing)" not in j._tf._title.text()      # trapframe card dark
+        assert "(writing)" not in j._ctx._title.text()      # context card dark
+        assert "KERNEL" in j._band.text()
+        j._step(1)
     j.close()

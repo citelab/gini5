@@ -626,9 +626,12 @@ class MachineLab(QDialog):
         # one; otherwise fall back to the running proc's registers at the dispatch stage.
         from .cpu_journey import CpuJourney
         cpu = self.state.latest.cpu if (self.state.latest and self.state.latest.cpu) else None
+        # the live process table, so a captured lane shows the real pid+name (e.g. "pid 7 (spin)")
+        procs = self.state.latest.procs if self.state.latest else None
         self._retire("_journey")
         self._rec("note_lab_open", self._dev_name(), "CPU Journey")
-        self._journey = CpuJourney(self, self.theme, device=self.device, cpu=cpu, frame=frame)
+        self._journey = CpuJourney(self, self.theme, device=self.device, cpu=cpu, frame=frame,
+                                   procs=procs)
         self._journey.show(); self._journey.raise_()
 
     def _open_games(self) -> None:
