@@ -413,6 +413,21 @@ struct gini_trap gini_traps[GINI_RING];
 // out-of-bounds kernel write. Unsigned wrap is well-defined and, at 64 bits, unreachable.
 uint64 gini_traps_i;
 
+// GINI: one-shot trap capture (Traps & Interrupts face). The face ARMS a kind; the next trap of
+// that kind is copied here and the arm clears itself. This replaces a gdb conditional breakpoint
+// at usertrap that could only ever see user-mode traps and — worse — changed the answer: halting
+// the guest to evaluate the condition let the timer deadline expire with interrupts off, so the
+// tick was then taken in kerneltrap (uncatchable) instead of usertrap. Capturing here sees both
+// modes, costs one compare per trap when disarmed, and does not perturb what it measures.
+// GINI_CATCH_ANY and the externs live in defs.h.
+int    gini_catch_kind    = -1;   // -1 disarmed | GINI_CATCH_ANY | GT_*
+int    gini_catch_ready   = 0;    // 1 = gini_catch holds a captured trap (cleared on next arm)
+struct gini_trap gini_catch;
+int    gini_catch_user    = 0;    // 1 = taken from user mode (sstatus.SPP == 0)
+uint64 gini_catch_tf[7];          // epc ra sp a0 a1 a2 a7 — valid only when gini_catch_user
+int    gini_catch_qticks  = 0;    // this hart's quantum counter AT TRAP TIME
+int    gini_catch_quantum = 0;    // sched_quantum at trap time (did this tick preempt?)
+
 static int
 gini_kind(uint64 c)
 {
@@ -452,14 +467,62 @@ gini_traprec(void)
   e->sstatus = r_sstatus();
   e->sie = r_sie();
   e->sip = r_sip();
-  e->seq = gini_stamp();       // GINI: event clock
+  uint64 gseq = gini_stamp();  // GINI: event clock (kept in a local so the capture below matches)
+  e->seq = gseq;
   gini_traps_i++;
+
+  // -- one-shot capture (see gini_catch_* above) --------------------------------------------------
+  // Sourced from LOCALS + the trap CSRs (which are unchanged since trap entry), NOT from *e: the
+  // shared ring slot can tear when two harts land on the same gini_traps_i (accepted ring race,
+  // known issue #9), and a torn capture would render as a nonsense frame — the exact thing the
+  // Traps face must never show. The CAS makes exactly ONE hart write gini_catch, so co-firing harts
+  // cannot splice it either. Lock-free; when disarmed this is one relaxed load and a branch.
+  int want = gini_catch_kind;
+  if(want != -1 && (want == GINI_CATCH_ANY || want == kind) &&
+     __sync_bool_compare_and_swap(&gini_catch_kind, want, -1)){
+    gini_catch.hart    = cpuid();
+    gini_catch.pid     = p ? p->pid : 0;
+    gini_catch.kind    = kind;
+    gini_catch.cause   = c;
+    gini_catch.epc     = r_sepc();
+    gini_catch.tval    = r_stval();
+    gini_catch.sstatus = r_sstatus();
+    gini_catch.sie     = r_sie();
+    gini_catch.sip     = r_sip();
+    gini_catch.seq     = gseq;
+    // SPP tells us the privilege we interrupted. A kernel-mode trap did NOT go through uservec and
+    // wrote NO trapframe — presenting p->trapframe for it shows the process's last USER trap and
+    // quietly lies, so the user-register array is zeroed and filled only when we came from user.
+    gini_catch_user = ((gini_catch.sstatus & SSTATUS_SPP) == 0);
+    for(int i = 0; i < 7; i++) gini_catch_tf[i] = 0;
+    if(gini_catch_user && p && p->trapframe){
+      gini_catch_tf[0] = p->trapframe->epc;  gini_catch_tf[1] = p->trapframe->ra;
+      gini_catch_tf[2] = p->trapframe->sp;   gini_catch_tf[3] = p->trapframe->a0;
+      gini_catch_tf[4] = p->trapframe->a1;   gini_catch_tf[5] = p->trapframe->a2;
+      gini_catch_tf[6] = p->trapframe->a7;
+    }
+    gini_catch_qticks  = gini_qticks[gini_catch.hart];
+    gini_catch_quantum = sched_quantum;
+    __sync_synchronize();        // publish the whole frame BEFORE ready is seen
+    gini_catch_ready = 1;
+  }
 }
 
 void
 gini_trapdump(void)
 {
   static char *kn[GT_NKIND] = {"syscall","pagefault","timer","device","illegal","other"};
+  // The captured trap, if any. Non-destructive read: ready is NOT cleared here, only on the next
+  // arm, so a slow poller cannot lose a capture. Fields are all small + bounded (no cumulative
+  // counter here, so no (int)-wrap risk — cf. known issue #3), and h%d is labelled like TR's.
+  PRINTF("CATCH %d %d %d %p %p %p %d %p %p %p %p %p %p %p %d %d h%d\\n",
+         gini_catch_ready, gini_catch.kind, gini_catch_user,
+         (void*)gini_catch.cause, (void*)gini_catch.epc, (void*)gini_catch.tval,
+         gini_catch.pid,
+         (void*)gini_catch_tf[0], (void*)gini_catch_tf[1], (void*)gini_catch_tf[2],
+         (void*)gini_catch_tf[3], (void*)gini_catch_tf[4], (void*)gini_catch_tf[5],
+         (void*)gini_catch_tf[6],
+         gini_catch_qticks, gini_catch_quantum, gini_catch.hart);
   for(int k = 0; k < GT_NKIND; k++)
     PRINTF("TC %d %s %d\\n", k, kn[k], (int)gini_trapcount[k]);
   uint64 total = gini_traps_i;
@@ -1022,6 +1085,15 @@ extern uint64   gini_vmf_ok, gini_vmf_fail;   // vm shadow: handled vs. fell-thr
 extern uint64   gini_trapcount[6];
 extern struct gini_trap gini_traps[GINI_RING];
 extern uint64   gini_traps_i;
+// GINI: one-shot trap capture (see gini_traprec). Armed by the console, read by the trapdump.
+#define GINI_CATCH_ANY (-2)
+extern int      gini_catch_kind;
+extern int      gini_catch_ready;
+extern struct gini_trap gini_catch;
+extern int      gini_catch_user;
+extern uint64   gini_catch_tf[7];
+extern int      gini_catch_qticks;
+extern int      gini_catch_quantum;
 """, "GINI-xv6 trap-taxonomy additions")
 
 # 4a2) defs.h — the SHADOW types + prototypes (used by proc.c/console.c; declared before use).

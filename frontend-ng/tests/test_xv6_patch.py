@@ -149,6 +149,19 @@ def test_patcher_applies_and_is_idempotent(tmp_path):
     assert "extern uint64   gini_trapcount[6];" in defs
     assert "struct gini_trap { int pid; int kind;" in defs
 
+    # one-shot trap capture (xv6-rebuild-batch §11.2): the slot, the CAS-claimed single-writer
+    # capture (NOT a naive `= *e`, which the ring race #9 could tear), the release fence before
+    # ready, the CATCH dump line, and the defs.h externs.
+    assert "gini_catch_kind" in trap and "struct gini_trap gini_catch;" in trap
+    assert "__sync_bool_compare_and_swap(&gini_catch_kind," in trap   # single-writer claim
+    assert "__sync_synchronize();" in trap                            # publish frame before ready
+    assert '("CATCH %d %d %d' in trap                                 # the dump line (PRINTF->printk)
+    assert "gini_catch_user = ((gini_catch.sstatus & SSTATUS_SPP) == 0);" in trap  # user vs kernel
+    # the capture reads LOCALS/CSRs, not the shared ring slot, so it survives the ring race
+    assert "gini_catch = *e" not in trap, "capture must not copy the tearable ring slot"
+    assert "#define GINI_CATCH_ANY (-2)" in defs
+    assert "extern int      gini_catch_kind;" in defs
+
     # Phase 4: kerneltrap also records (device interrupts), anchored on kerneltrap's `scause`; the
     # REGS dump gains s0 (the frame pointer, for the backtrace lab).
     assert "gini_traprec(); // GINI-xv6: record kernel-mode traps" in trap
