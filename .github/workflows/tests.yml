@@ -69,8 +69,13 @@ jobs:
       # parse import nodes and assert about them, and never construct a QWebEngineView.
       - name: Qt's system libraries (best-effort)
         run: |
+          set +e                    # NOTHING in this step may fail the job — see the note above.
           . /etc/os-release && echo "runner image: $PRETTY_NAME"
-          sudo apt-get update
+          # `apt-get update` exits 100 when it merely cannot reach one repository, and a runner
+          # with a stale or 404ing mirror is common. That — not a renamed package — is what killed
+          # the first two runs of this workflow: the loop below was already guarded, the update
+          # above it was not, and both failures look identical from the outside (exit 100).
+          sudo apt-get update || echo "  note: apt-get update did not finish cleanly; continuing"
           for pkg in libegl1 libgl1 libxkbcommon0 libdbus-1-3 libxcb-cursor0; do
             if sudo apt-get install -y --no-install-recommends "$pkg" >/dev/null 2>&1; then
               echo "  ok       $pkg"
@@ -78,6 +83,7 @@ jobs:
               echo "  MISSING  $pkg  — not on this image; the Qt check below decides if it mattered"
             fi
           done
+          exit 0                    # explicit, so a future edit has to mean it to break this
 
       # The script, not a hand-written pip line: `gini` is a namespace package split across
       # gini-core and gini-toolkit, and dev.sh installs core FIRST for the reason in the comment

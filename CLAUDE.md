@@ -341,11 +341,13 @@ The code behind each door still compiles, is still refactored, and is still test
    installs via `./scripts/dev.sh install` rather than a hand-written pip line, so CI exercises the
    command the README gives contributors.
 
-   The Qt system-library step installs packages **one at a time, best-effort**, and a separate
-   "Qt starts headless" step is the real gate. That is deliberate and should not be tidied back
-   into a single `apt-get install` line: those package names drift between Ubuntu releases and
-   `ubuntu-latest` moves without notice, so one stale name makes apt exit 100 and fails the build
-   before anything is learned — which is exactly how the first run of this workflow died.
+   The Qt system-library step **cannot fail the job** (`set +e` … `exit 0`, every apt call
+   guarded), and a separate "Qt starts headless" step is the real gate. Do not tidy that back into
+   a plain `apt-get update && apt-get install` — it is what killed this workflow's first two runs.
+   Note *both* apt commands exit **100**: `install` when a package name has drifted (they do drift
+   between Ubuntu releases), and `update` when it merely cannot reach one repository mirror, which
+   is the common case on a runner and was the actual cause here. The two are indistinguishable
+   from outside, which is why the answer is to stop letting apt decide and ask Qt instead.
 
    **A runner has no Docker, so the expected result there is 2,931 passed / 25 skipped**, not the
    2,934 / 22 you get locally with Docker up. Three tests skip rather than run. Verified by
