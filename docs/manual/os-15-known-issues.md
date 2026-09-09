@@ -230,6 +230,161 @@ is trustworthy only as "show me the idle scheduler stack", and the `Run`/`Pause`
 sampling path (see [scheduler](os-02-scheduler.md)) is the honest way to watch
 switching.
 
+## 12. The agent is single-threaded, so a trap catch stalls every other reading
+
+`gini_agent` runs on `http.server.HTTPServer`, which handles one request at a
+time. `POST /trapcatch` holds that one request for its whole poll window (10 s by
+default, 30 s at most), so for the duration of a catch every other reading queues
+behind it: the Scheduler face's `/procs` (Gantt, HUD) and the Traps face's own
+`/traps` histogram. The Traps face's `_busy` guard stays set while its blocked
+read waits, so its live feed visibly freezes until the catch resolves. Nothing is
+lost or wrong; it is a stall, and it ends when the catch does.
+
+**Known; elected to skip (2026-09-09).** The fix is `ThreadingHTTPServer`, but
+the serial stream is shared: two concurrent dumps would interleave inside one
+0x1e/0x1f frame, so threading needs a serial lock on top of the existing gdb
+`_LOCK`. Worth doing, not urgent.
+
+## 13. The catch probe is itself a device interrupt — "any" and "device" usually catch GINI's own poll
+
+The agent arms the capture over the serial line and then polls it with Ctrl-R
+over the same line. Every byte that arrives is a UART receive interrupt, which
+the PLIC raises as a supervisor external interrupt (scause 9), and `gini_kind`
+classifies every external interrupt — UART and virtio-disk alike — as
+`GT_DEVICE`. The capture hook (`gini_traprec`) runs at trap entry, before
+`devintr` has claimed the interrupt and learned which device it was, and it does
+not consult the observer flag. So the first trap after arming is, on an idle
+machine, almost always the poll's own Ctrl-R interrupt. A student who picks
+"device" catches it every time; "any" catches it whenever no workload trap beats
+the probe to it.
+
+**Known; elected to skip (2026-09-09).** This is inaccurate ATTRIBUTION, not a
+false trap. The probe genuinely is a device interrupt: the kernel really took an
+external trap with the scause, sepc and hart the frame shows, and a student
+dissecting it sees exactly what a device interrupt looks like. What the frame
+cannot say is that the device was GINI asking the kernel a question rather than
+the workload's disk. The kernel cannot tell at capture time (the device identity
+appears later, in `devintr`), so the principled fix — defer the capture decision
+for external interrupts until the device is known and skip UART — is a real
+design change, not a tweak. The cheap alternative would drop "any" from the combo
+and relabel "device". Neither is being done now. Taught explicitly, "the trap you
+just caught is the observer observing" is itself a sound lesson.
+
+## 14. Each catch poll dumps the whole 256-entry trap ring
+
+A catch polls Ctrl-R every 250 ms, and `gini_trapdump` prints the CATCH line,
+six TC lines and up to `GINI_RING` (256) TR lines each time — roughly 260 lines,
+40 times over a default catch, about ten thousand lines of serial output, every
+byte a guest UART interrupt. It makes the catch slower than it needs to be and it
+is self-perturbing: the observation manufactures the very device interrupts that
+#13 then attributes.
+
+**Known; elected to skip (2026-09-09).** The fix is a dedicated one-line
+CATCH-only dump on a free console-mux selector, so a poll costs one line instead
+of 260. Would ride a kernel rebuild alongside #13.
+
+## 15. Three memory-ordering nits in the capture, all moot on QEMU
+
+Found by reading the capture against RISC-V's weak memory model (RVWMO). None is
+reachable on QEMU, whose TCG is effectively sequentially consistent, and the third
+is tiny even on hardware. Recorded so the next reader does not re-derive them.
+
+- **Arm order.** The console-mux arm writes `gini_catch_kind` and then
+  `gini_catch_ready = 0`. RVWMO does not order two stores to different addresses
+  without a fence, so another hart could observe the new kind, win the CAS,
+  publish a frame and set `ready = 1` before the arm's clear lands and erases it:
+  a completed capture reported as a timeout. Correct-by-model fix: clear `ready`
+  first, `__sync_synchronize()`, then publish `kind`.
+- **No acquire on the reader.** `gini_trapdump` reads `ready` and then the frame
+  fields with no fence; the writer's fence is a release with no matching acquire,
+  so in principle a reader could see `ready = 1` beside stale fields. Unreachable
+  in practice: the poll runs milliseconds after a microsecond-scale write.
+- **Same-kind re-arm.** The agent's kind-match closes the re-arm race only across
+  DIFFERENT kinds. If a hart is mid-capture when the SAME kind is re-armed, the
+  earlier frame can be returned as the new catch's result. The window is a few
+  dozen instructions and the frame is still a genuine trap of the requested kind;
+  the harm is a violated "next trap after arming" contract. A per-arm sequence
+  number would close it.
+
+**Known; elected to skip (2026-09-09).** All three would ride the same rebuild
+as #13/#14 if that is ever taken up.
+
+## 16. Kernel-mode timers and device pids are narrated from the user-mode, owner point of view
+
+Two attribution gaps in the CPU journey, both parked under the deferred C-11
+journeys (see `CPU_JOURNEY_CORRECTIONS.md`):
+
+- A timer taken in **kernel mode** opens the preemption walkthrough, whose
+  captions describe `uservec` saving a trapframe. The banner ("from KERNEL mode,
+  no trapframe written"), the KERNEL band and the unlit save cards tell the
+  truth, so the student gets a mixed signal rather than a clean error. The proper
+  fix is the KTRAP journey.
+- For a **device** interrupt the captured pid is whoever was on the core, not the
+  event's owner (the kernel records this deliberately; `wakeup()` resolves the
+  real owner later). The lab shows "pid 4 (sh)" for a disk interrupt with no
+  bystander caveat. The DEVICE journey carries it. Today this interacts with #13,
+  since the "device" a student catches is usually the probe.
+
+**Known; deferred with C-11 (2026-09-09).** Frontend-only; no rebuild.
+
+## 17. Fire-and-forget worker threads that emit into a dialog — a class of bug, not one lab
+
+**Read this before adding a background read to any face.**
+
+**The pattern, and why it kills.** A face reads off the GUI thread by spawning a raw
+`threading.Thread`, and the worker hands the result back with `signal.emit()`, guarded only by
+`if not self._closed`. Nothing joins the worker on close. That guard is check-then-act: a worker
+already past the check can emit into a dialog that is being destroyed. It dies two ways —
+(a) `_retire()` or a `deleteLater()` destroys the dialog under the in-flight emit; (b) the
+worker's closure over `self` is the *last* Python reference, so the QObject is destroyed **on the
+worker thread** when the closure dies. Both are undefined in Qt; both are a SIGSEGV. It is
+nondeterministic (thread timing), which is exactly why it hid.
+
+**The three ingredients.** It crashes only when all three coincide: (1) a worker that emits back
+to the dialog; (2) the dialog destroyable while the worker is in flight — `parent=None` and
+dropped, or a `deleteLater()` path such as `MachineLab._retire()`; (3) no join. In this codebase
+(1) and (3) are the norm; (2) is what varies. Most production dialogs are Qt-parented and held by
+attribute, which is why this was never a visible epidemic. The tests construct `parent=None` and
+close at once, which is why they exposed it.
+
+**The safe idiom is already in the tree: `LivePollMixin` (`ui/live_poll.py`).** `_closed` is set
+*first*, then the worker is **joined** in `stop_polling()`, which `closeEvent` calls — and which
+`MachineLab._retire()` looks up and calls before its `deleteLater()`. Once the flag is set no emit
+can happen, and the join only waits for the read itself to return. A one-shot worker that may
+block too long for a full join (the Traps catch, up to the agent's ~10 s) holds a **weak**
+reference to the dialog plus a bounded join, so a straggler can neither emit into a dead dialog
+nor become its last owner. The mixin's docstring is the specification; `TrapLab` is the worked
+example of adopting it after the fact.
+
+**Proof this is the mechanism, from the TrapLab case (fixed 2026-09-09).** Making every worker
+synchronous — no production change — took the crash from 1–2 per 20 two-module runs to 0/20.
+The fatal trace put the main thread in the Qt event flush with a worker mid-`emit()`. TrapLab had
+no `stop_polling()`, so `_retire()` silently skipped the join; re-opening the Traps card or
+closing the Machine Lab with a catch in flight was a gBuilder segfault path. After the fix:
+0/40 crashes, and `_retire()` mid-catch is observed to block for the catch's duration — it joins.
+
+**Census (2026-09-09) — a screen, not a verdict per file.** On the mixin, safe by construction:
+`memory_lab`, `storage_lab`, `trap_lab`. Spawning a raw `threading.Thread` *and* emitting a
+signal somewhere in the same file (18): `assistant`, `cpu_lab`, `fingerprint_lab`, `first_run`,
+`flow_hud`, `fragment_manager`, `inspector`, `lock_lab`, `machine_lab`, `main_window`,
+`mark_dialog`, `mcast_hud`, `peripherals`, `proof_strip`, `router_lab`, `routing_hud`,
+`source_browser`, `syscall_lab`. Spawning without an emit: `hud`. The grep is a proxy only: a
+`.join(` count includes string joins, and an `.emit(` in a file need not come from the worker.
+Each entry needs one look — does its worker emit back, and can the dialog be destroyed mid-flight?
+`machine_lab` is the one examined so far: fire-and-forget `_fetch`/`_bg`, not joined, mitigated
+by disconnecting `snap_ready` on close and by Qt parenting. A disconnect is a mitigation, not the
+fix — a worker can still be mid-emit when it lands.
+
+**The rule for any new or touched face.** A read off the GUI thread uses `LivePollMixin`, or
+tracks its thread and joins it in a `stop_polling()` that `closeEvent` calls. Never
+`threading.Thread(...).start()`-and-forget inside a QDialog. A worker that must outlive close
+holds a `weakref` to the dialog, never `self`.
+
+**Known; documented and set aside (2026-09-09).** The confirmed crash (TrapLab) is fixed. The
+rest is a face-by-face sweep against the census above, deliberately *not* bundled into one
+change. A cheap guard when someone takes it up: a test that fails on any new raw
+`threading.Thread(` under `ui/` in a file that is not a mixin adopter.
+
 ## Cross-references
 
 [os-wire-protocol](os-01-wire-protocol.md) · [os-kernel-board](os-08-kernel-board.md) ·

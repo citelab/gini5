@@ -43,11 +43,20 @@ def _flush_qt():
     # Offscreen Qt segfaults at process teardown when enough parent=None dialogs are only closed,
     # not deleted (their queued deleteLater never runs without an event loop). Flush after each
     # test so nothing accumulates across the module boundary.
+    #
+    # Snapshot FIRST and flush only what THIS test created. The first version swept every
+    # top-level widget, which also grabbed dialogs left behind by OTHER test modules — some with a
+    # live worker thread still referencing them — and deleting those from under the thread
+    # segfaulted offscreen Qt at teardown, depending on module order. Confining the flush to our
+    # own widgets is what makes it safe in any order.
+    app = QtWidgets.QApplication.instance()
+    before = {id(w) for w in app.topLevelWidgets()} if app is not None else set()
     yield
     app = QtWidgets.QApplication.instance()
     if app is not None:
         for w in list(app.topLevelWidgets()):
-            w.close(); w.deleteLater()
+            if id(w) not in before:
+                w.close(); w.deleteLater()
         app.processEvents()
 
 

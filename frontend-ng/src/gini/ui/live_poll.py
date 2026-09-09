@@ -24,6 +24,14 @@ the flag is set no emit can happen, and the join only waits for the read itself 
 
 The host class must declare `snap_ready = Signal(object)` and implement `_read()` (off the GUI
 thread; return None to mean "this round failed") and `_render_live(payload, fresh)`.
+
+**Use this rather than rolling your own worker.** Fire-and-forget `threading.Thread` in a QDialog,
+guarded only by an `if not self._closed` before the emit, is a CLASS of crash in this codebase and
+not a hypothetical: it took the Traps face down nondeterministically (SIGSEGV) until it was moved
+onto this mixin. `docs/manual/os-15-known-issues.md` §17 has the mechanism, the proof, and a census
+of the faces that still carry the pattern. A one-shot worker that may outlive a bounded join holds
+a `weakref` to the dialog, never `self` — see `TrapLab._step`, the worked example of adopting this
+after the fact.
 """
 from __future__ import annotations
 

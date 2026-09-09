@@ -180,3 +180,29 @@ def test_a_failed_catch_shows_the_reason_and_opens_no_journey(app):
     assert got == [], "a failed catch opened the journey anyway"
     assert "no timer in 10s" in lab._catch_msg.text()
     lab.close()
+
+
+def test_closing_mid_catch_joins_the_worker_and_leaves_no_thread(app):
+    """Regression for the mid-test SIGSEGV: the catch worker was fire-and-forget, closing over
+    `self`, so dropping the dialog while a catch was in flight destroyed the QObject from under the
+    worker's emit (or ON the worker thread when the closure died). TrapLab now adopts LivePollMixin
+    and stop_polling() joins the catch worker; the worker holds only a weak ref. The suite-wide
+    _no_leaked_threads fixture fails this test if any thread survives close(); the crash itself was
+    a process-level segfault in ~1 of 20 two-module runs and is verified by re-running that pair."""
+    import threading
+    import time
+    from gini.ui.trap_lab import TrapLab
+    started = threading.Event()
+
+    def slow_catch(kind):
+        started.set()
+        time.sleep(0.3)                          # a catch still in flight when we close
+        return None
+
+    lab = TrapLab(None, _theme(app), _Dev(), traps_source=lambda: "",
+                  catch_source=slow_catch, on_step=lambda fr: None)
+    lab._step()
+    assert started.wait(1.0)                     # the worker is really running
+    lab.close()                                  # must JOIN it before returning
+    assert lab._catch_thread is None             # stop_polling took the thread and joined it
+    assert lab._closed
