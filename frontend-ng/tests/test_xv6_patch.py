@@ -175,3 +175,30 @@ def test_patcher_applies_and_is_idempotent(tmp_path):
     assert trap2.count("record the trap into the taxonomy ring") == 1      # usertrap hook once
     assert trap2.count("record kernel-mode traps") == 1                    # kerneltrap hook once
     assert (k / "proc.h").read_text().count("gini_alarm_handler;") == 1    # alarm fields once
+
+
+# -- the upstream kernel is PINNED ------------------------------------------- #
+#
+# gini_patch.py anchors on specific xv6 source text and, by design, SILENTLY SKIPS a moved anchor
+# (it never fails the build). So the one thing that keeps the patch honest is that the tree it
+# patches never moves underneath it. The Dockerfile clones mit-pdos/xv6-riscv, an ACTIVE branch —
+# a floating clone would let upstream drift break the patch invisibly, and would let a two-machine
+# build stamp two arches of one release with different kernels. This test fails if the pin is ever
+# removed or reverted to a floating clone.
+DOCKERFILE = Path(__file__).resolve().parents[2] / "backend" / "xv6" / "Dockerfile"
+
+
+@pytest.mark.skipif(not DOCKERFILE.exists(), reason="backend/xv6 not checked out")
+def test_the_xv6_checkout_is_pinned_to_a_commit():
+    import re
+    text = DOCKERFILE.read_text(encoding="utf-8")
+    assert "mit-pdos/xv6-riscv" in text, "the xv6 clone line moved or vanished"
+    # A full 40-hex commit must be checked out. A tag or branch name is NOT a pin — those move.
+    assert re.search(r"git checkout[^\n]*\b[0-9a-f]{40}\b", text) \
+        or re.search(r"XV6_COMMIT=[0-9a-f]{40}\b", text), \
+        "xv6 is not pinned to a 40-hex commit — a floating clone can ship a broken kernel"
+    # `--depth 1` cannot check out an arbitrary commit, so a shallow clone here means the pin is a
+    # lie: git would clone HEAD and the checkout would fail or be ignored.
+    clone = next(l for l in text.splitlines() if "git clone" in l and "xv6-riscv" in l)
+    assert "--depth 1" not in clone, \
+        "a shallow clone cannot check out the pinned commit — drop --depth 1"

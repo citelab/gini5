@@ -16,8 +16,18 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 
 WORKDIR /opt
 
-# xv6-riscv (MIT 6.1810). Pin a commit for reproducibility in a real deployment.
-RUN git clone --depth 1 https://github.com/mit-pdos/xv6-riscv.git
+# xv6-riscv (MIT 6.1810) — PINNED to a tested commit. Upstream is an ACTIVE branch, and a floating
+# clone was a real hazard on three counts: (1) every build could grab a different kernel; (2) the
+# patcher (gini_patch.py) anchors on source text and SILENTLY SKIPS a moved anchor — it never fails
+# the build — so a drifted upstream ships GINI features missing; (3) the two-machine images.sh build
+# clones independently on each machine, so a mid-day upstream push could stamp arm64 and amd64 of
+# ONE release tag with different kernels. This SHA is what every shipped image and all testing is
+# against. Bump it deliberately, and only after re-running the patcher tests + a boot check against
+# the new tree (--depth 1 removed: a shallow clone cannot check out an arbitrary commit).
+ARG XV6_COMMIT=35b088427ef37611c38afdeed5a52a278cae38f9
+RUN git clone https://github.com/mit-pdos/xv6-riscv.git \
+ && cd xv6-riscv && git checkout "$XV6_COMMIT" \
+ && test "$(git rev-parse HEAD)" = "$XV6_COMMIT"   # fail LOUDLY if the pin ever fails to resolve
 
 # The GINI kernel changes (settable time-slice quantum, scheduler-policy hook, vmprint for the
 # Memory face) via an anchored patcher that always leaves a buildable kernel — see gini_patch.py.

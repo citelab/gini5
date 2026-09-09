@@ -1,16 +1,74 @@
-# The xv6 rebuild batch — six fixes that share one image build
+# The xv6 rebuild batch — the fixes that share one image build
 
-**Status: design (Mahesh + Claude, 2026-09-09). No code changed. Written to be implemented
-line-for-line without re-deriving anything.**
+**Status: design (Mahesh + Claude, 2026-09-09). PIN LANDED (Dockerfile + guard test); the rest is
+spec, no code changed. Written to be implemented line-for-line without re-deriving anything.**
 
 A kernel change means a two-machine image build (`scripts/images.sh build`), so kernel-side fixes
 are expensive to ship one at a time. This batch collects every deferred item that needs that
 rebuild and can be made **skew-safe** — correct whether a student's gBuilder is ahead of or behind
-the image. The primary target is #11 (Step switch does not freeze what it shows); the rest ride
-along because they touch the same files and the same build.
+the image. The primary targets are **#11** (Step switch does not freeze what it shows) and the
+**Traps & Interrupts capture** (§11 below — the lab we want to issue), which cannot be caught
+reliably today. The rest ride along because they touch the same files and the same build.
 
 Everything here was read out of the tree and the running `gini-xv6:latest` image on 2026-09-09.
 Line numbers are pointers, not contracts — anchor on the quoted text.
+
+---
+
+## 0. PREREQUISITE — the xv6 checkout is now pinned (do this before any batch build)
+
+**This is done in the tree** (`backend/xv6/Dockerfile`, `frontend-ng/tests/test_xv6_patch.py`) and
+is written here because **the whole batch depends on it**. It must be true before the batch is
+built, and it is why the batch is safe to build at all.
+
+### The hazard
+
+The Dockerfile cloned upstream floating:
+
+```dockerfile
+RUN git clone --depth 1 https://github.com/mit-pdos/xv6-riscv.git   # OLD — HEAD of an active branch
+```
+
+`mit-pdos/xv6-riscv` is an **active branch**. Three ways this bit:
+
+1. **Every build could grab a different kernel.** Upstream HEAD on 2026-09-09 was `9e3161a9`; the
+   shipping image was built from `35b08842` (Aug 23). Already diverged.
+2. **The patcher SKIPS a moved anchor silently.** `gini_patch.py` ends
+   `# Never fail the build for a skipped invasive edit` and always exits 0. If upstream moves a
+   line `regex_once` anchors on, the patch does not apply, the build still succeeds, and the kernel
+   ships with that GINI feature **missing** — a green build that produces a broken lab.
+3. **Cross-arch skew.** `images.sh build` runs `docker build` natively on each machine, each doing
+   its own clone (and Docker layer-caching whichever commit it first fetched). A mid-day upstream
+   push stamps **arm64 and amd64 of one release tag with different kernels**, invisibly.
+
+**The batch makes #2 acute**: it adds *new* anchored regexes to `gini_patch.py`. Built against a
+drifted tree, the batch's own patches could silently skip. So the pin is not optional housekeeping —
+it is what makes the batch build trustworthy.
+
+### The fix (landed)
+
+Pin to `35b088427ef37611c38afdeed5a52a278cae38f9` — the commit in every shipped image and behind all
+testing. Pinning to it is a **zero-behaviour-change** edit: future builds reproduce what ships now.
+`--depth 1` is removed (a shallow clone cannot check out an arbitrary commit); a `test "$(git
+rev-parse HEAD)" = "$XV6_COMMIT"` line fails the build loudly if the pin ever fails to resolve.
+`test_xv6_patch.py::test_the_xv6_checkout_is_pinned_to_a_commit` fails if anyone reverts to a
+floating or shallow clone (mutation-checked).
+
+### Second layer — deferred, recommended (make the patcher fail on a skipped MANDATORY edit)
+
+The pin removes the drift; this catches a *future* bad bump. Today `gini_patch.py` cannot tell a
+mandatory invasive edit (the `gini_pick` wiring, the `gini_traprec` hooks, the console keys) from
+an optional one (a user program), and skips both silently. Proposed: mark the invasive
+`regex_once`/`append_once` calls `mandatory=True`, collect skipped mandatory edits separately, and
+`sys.exit(1)` if any. Then bumping the pin to a commit where an anchor moved fails **at build
+time** instead of shipping a broken kernel. Contained to `gini_patch.py`; testable in the
+synthetic-tree patcher test. **Do this when the pin is next bumped**, not as part of the current
+build (it changes nothing while the pin is unchanged, and adds risk to a build we want boring).
+
+### Bumping the pin, later
+
+When xv6 upstream has something worth taking: bump `XV6_COMMIT`, run the patcher tests against the
+new tree, boot it in the sandbox (§7), and only then rebuild images. Never let it float again.
 
 ## The rule that governs the whole batch: version skew
 
@@ -395,6 +453,145 @@ Write the step-4 results into the release notes — they are the evidence the ne
 
 ---
 
+## 11. Traps & Interrupts capture (the lab we want to issue)
+
+Full analysis is in `~/Documents/Claude/Projects/GINI Project/TRAP_CAPTURE_ACTION_PLAN.md` (read at
+HEAD 2026-09-09; §1 mechanism re-verified against the running image on 2026-09-09 — the catcher
+sets one breakpoint at `usertrap` only, `gini_traprec` is hooked in both `usertrap` and
+`kerneltrap`, and `intr_on()` sits inside the `scause()==8` branch of `usertrap`). This section is
+the reconciliation of that plan with this batch, and it resolves the one open design question the
+plan left — the arm mechanism — in a way that **removes the plan's single riskiest edit**.
+
+### 11.0 The two defects
+
+- **D1 — capture is unreliable in exactly one regime.** The catcher is a gdb conditional breakpoint
+  at `usertrap`. It cannot see kernel-mode traps (invisible to it), and worse, halting the guest to
+  evaluate the condition lets the timer deadline expire with interrupts off — so the tick is then
+  taken in `kerneltrap` (uncatchable) instead of `usertrap`. **The harder it works, the fewer
+  catchable timers exist.** A mixed `grind`+`spin` workload never catches a timer. This needs the
+  kernel — it is in the batch.
+- **D2 — a captured trap is narrated as a system call regardless of what it was.** `cpu_journey.py`
+  hardcodes `self._mode = "syscall"` (`:26`) and gates every live value behind `if self._mode ==
+  "syscall"` (`:196`). So "Preemption" shows the right steps with every real value blanked and the
+  wrong story. **This is frontend-only and ships INDEPENDENTLY of the batch** — see §11.5.
+
+### 11.1 The design decision, and the reconciliation
+
+Replace the gdb *conditional-breakpoint catch* with a **one-shot, kernel-side armed capture**.
+`gini_traprec()` already runs on every trap in both modes and already reads the CSR triple, so
+everything the journey shows is available there at trap time, at the cost of one `int` compare per
+trap when disarmed.
+
+**The open question in the plan was the arm mechanism**, and its answer (§A3: a new `Ctrl-N` console
+digit-entry state machine) is wrong twice over:
+
+- **Ctrl-N is already taken** — it is the tickets-entry key (`gini_agent.py:170`,
+  `if(c == C('N')){ gini_ctl_op = 2; ... }`). The plan's "verified free" list is stale.
+- **Every usable console control byte is taken.** A-Z minus I/J/M (tab/LF/CR) minus `[`/`^`/`_`
+  (ESC and the 0x1e/0x1f dump delimiters) are all bound (full inventory: A B C D E F G K L N O P Q
+  R S T V W X Y Z plus `]` `\`, plus stock P U H). This is the same wall as boardreset (§8).
+
+**The resolution: arm over gdb, not over a console byte.** The agent sets the global directly:
+
+```python
+gdb_run(["set var gini_catch_kind = <digit>", "set var gini_catch_ready = 0", "detach"])
+```
+
+This is a **one-shot memory write, not a conditional breakpoint** — it does not halt-and-wait and
+does not perturb the guest (D1's whole problem was *re-evaluating a condition while the guest was
+stopped*, which this never does). It is fully consistent with "retire the gdb *catch*". And it
+**eliminates the plan's §A3 `consoleintr` arm state machine entirely** — the edit the plan itself
+warns "do not repeat the Ctrl-G bug" about. The readback stays on the existing non-perturbing
+`Ctrl-R` trapdump. Net: the trap work touches `consoleintr` **not at all**, so the only
+`consoleintr` edit in the whole batch is #1 (policy), and the two no longer collide.
+
+| | gdb conditional catch (today) | kernel capture, gdb-set arm (proposed) |
+|---|---|---|
+| sees kernel-mode traps | no | **yes** |
+| perturbs the guest | yes (§D1) | **no** (one write, immediate detach) |
+| new console byte needed | — | **none** (arms via gdb `set`) |
+| `consoleintr` edit | — | **none** |
+| catches a timer under load | **never** | **the next timer, always** |
+
+### 11.2 Kernel — the capture slot and hook (in `gini_patch.py`, the `_GINI_TRAP` block)
+
+Per the action plan §A1/A2, unchanged, with two batch-specific notes:
+
+- The `CATCH` dump line (added to `gini_trapdump`) **prints counters via `%lu`/`(uint64)`**, not
+  `%d`/`(int)` — it is born correct under batch item #3, so it never wraps.
+- Zero `gini_catch_tf[]` when `!gini_catch_user` (the trap was kernel-mode; no trapframe was
+  written). Presenting `p->trapframe` for a kernel-mode trap shows the process's *last user* trap
+  and quietly lies. This is the load-bearing correctness point of the whole capture.
+
+Slot: `gini_catch_kind` (-1 disarmed | -2 any | GT_*), `gini_catch_ready`, `struct gini_trap
+gini_catch`, `gini_catch_user`, `gini_catch_tf[7]`, `gini_catch_qticks`, `gini_catch_quantum` —
+all `extern` in the defs.h append. Hook at the end of `gini_traprec()` (after `e->seq =
+gini_stamp();`): if armed and matching and not already ready, copy `*e`, read
+`SSTATUS_SPP` for `gini_catch_user`, fill `gini_catch_tf[]` only when user, snapshot
+`gini_qticks[cpuid()]` and `sched_quantum`, set ready, disarm. Reading is **non-destructive** —
+clear `ready` only on the next arm (the gdb-set already does this), so a slow poller cannot lose it.
+
+### 11.3 Agent — `/trapcatch` rewritten (no gdb conditional breakpoint)
+
+`POST /trapcatch?kind=<any|syscall|pagefault|timer|device|illegal>[&wait=<s>]`:
+
+1. Map the name to the wire digit (`syscall 0, pagefault 1, timer 2, device 3, illegal 4, other 5,
+   any -2`). Reject unknown names with a JSON error naming the valid set.
+2. **Arm via gdb set** (above). One fast session, immediate detach.
+3. Poll `_SERIAL.dump(b"\x12")` (Ctrl-R trapdump — the existing, non-perturbing key) every ~250 ms
+   until the `CATCH 1 …` line appears or `wait` elapses (default 10, clamp `[1,30]`).
+4. On success, translate the `CATCH` fields into the `===TRAP===` text shape `parse_trapframe`
+   already accepts (adding `from_user`, `hart`, `qticks`, `quantum`), so the parser is untouched.
+5. On timeout, `{"ok": false, "error": "<true reason>"}` — e.g. "armed for timer; no timer trap in
+   10 s — the machine may be idle, or ticks are landing on another hart". Never the current
+   "kernel idle" wording.
+6. Retire `_TRAP_COND` / `_trap_catch_cmds` / `_TRAP_CATCH_TAIL` / `_TF`, or move them behind an
+   explicit `?engine=gdb` fallback. Do not leave two live paths silently.
+
+### 11.4 Frontend — carry the reason and the new fields (ships WITH the paired gBuilder)
+
+- `xv6_bridge.py::catch_trap`: read `ok`/`error`, record `last_catch_error` (same pattern as
+  `run()`), pass `wait` through.
+- `xv6.py::parse_trapframe` + `TrapFrame`: add `from_user: bool`, `hart: int`, `qticks: int`,
+  `quantum: int`, `error: str`. The parse loop already skips unknown keys → **additive and
+  skew-safe** (an old gBuilder ignores the new keys; a new gBuilder tolerates their absence).
+- `trap_lab.py::_on_caught`: on `not ok`, show the agent's reason in a status label, do not silently
+  open an authored journey.
+
+### 11.5 Frontend narration (D2) — OUT of the batch, ship it now
+
+`cpu_journey.py` B1+B2: derive `_mode` from the captured frame's kind/`from_user` instead of the
+hardcoded `"syscall"`, and remove the `_mode == "syscall"` gate on live values. This is the fix for
+**"what we are showing doesn't make sense"** and needs **no image rebuild** — it can ship in the
+next gBuilder release ahead of everything else here. The richer journeys (B3 PAGEFAULT/DEVICE/FATAL,
+B4 KTRAP) and copy polish (B5/B6) follow the action plan and are also frontend-only; sequence them
+after B1+B2 per that plan's §8. **Only D1 (§11.2–11.4) needs the rebuild.**
+
+### 11.6 Skew, both directions
+
+| | new gBuilder + old image | old gBuilder + new image (new agent) |
+|---|---|---|
+| capture | agent's `gdb set gini_catch_kind` fails (no symbol) → `ok:false`, honest "rebuild" reason | agent arms + polls, returns `===TRAP===` text → **old parser reads it; old gBuilder now catches timers under load with no change** |
+| narration (D2) | fixed in gBuilder regardless of image | unchanged until gBuilder updates |
+
+Nothing breaks either way, and — as with #1 — an un-upgraded gBuilder's capture *improves* the
+moment the image lands, because the agent ships inside it.
+
+### 11.7 Test gate (adds to §7)
+
+- **Kernel/console (sandbox, no Docker)**: arm timer via gdb-set, run `spin`, confirm `CATCH 1` with
+  `from_user=1`; arm syscall under `spin` → no capture, then under a syscall-heavy load → capture;
+  arm `any` → first trap of any kind; re-arm clears `ready`; `Ctrl-R` read does NOT clear it.
+- **The acceptance case that fails today**: `grind` + `spin` together, catch `timer` → **captures
+  within the wait**. If it still fails, the capture is not being reached — check the image was
+  rebuilt against the pinned tree.
+- **Frontend (no Qt)**: kind→journey mapping; `parse_trapframe` reads the new keys and is unchanged
+  on old text. **Qt**: `TrapFrame(kind=2, from_user=1)` opens the journey in `preempt` mode with the
+  live note on `yield()` — mutation-checked (force `_mode="syscall"`, the test must fail);
+  `from_user=0` leaves both save-area cards unlit through every stage.
+
+---
+
 ## 8. Explicitly deferred, with the reason
 
 - **#10 (a losing hart records a trap)** — the fix ADDS a field to the `TR` line. `os_events.py`'s
@@ -422,23 +619,42 @@ Write the step-4 results into the release notes — they are the evidence the ne
 
 ## 9. Order of work
 
+**Prerequisite (done):** §0 pin. Everything below is built against the pinned tree.
+
+**Ships independently, no rebuild — do first, it is what unblocks issuing the lab:**
+
+- **§11.5 trap narration (D2, B1+B2)** — derive the journey mode from the frame, ungate live values.
+  Frontend-only. Fixes "what we're showing doesn't make sense" in the next gBuilder release.
+
+**The rebuild batch, in build order (separate commits so a bisect isolates a compile break):**
+
 1. #5, #6 (comments) — trivial, land first so the diff's risky part stands alone.
 2. #3 (counter widths) — mechanical, parser test proves it, no behaviour change below 2e9.
 3. #4 (VR line + parser) — additive, pure parser test.
 4. #1 (policy entry machine) — the shadow-index precedent makes it low-risk; patcher + agent tests.
-5. #11 (Step) — the target; agent + bridge + face, then the live gate.
+5. **§11.2–11.4 trap capture (D1)** — kernel slot + hook + `CATCH` line (using #3's `%lu`), agent
+   `/trapcatch` rewrite (gdb-set arm, Ctrl-R poll), bridge/parser fields. **No `consoleintr` edit.**
+   Stop after this and confirm acceptance case 3 (`grind`+`spin`, catch timer) before any more UI.
+6. #11 (Step) — agent + bridge + face, then the live gate.
 
-Each is independently revertable in the patch. Do them as separate commits so a bisect can isolate
-a compile break to one change.
+Then §11.5's richer journeys (B3/B4) and polish (B5/B6) — frontend, any time after the capture and
+the paired parser fields ship.
+
+Note the two `consoleintr` edits that *looked* like they collided — #1's policy entry and the trap
+arm — do not: the trap arm is over gdb (§11.1), so only #1 touches `consoleintr`.
 
 ## 10. Definition of done
 
+- **The xv6 checkout is pinned** and the guard test is green; no build clones a floating HEAD.
+- **Traps & Interrupts:** `grind`+`spin` together, catch `timer` → captures within the wait (the
+  case that fails today). A kernel-mode `device` catch leaves both save-area cards unlit. A captured
+  timer narrates as a preemption with real values, not as a system call.
 - Step switch, with `spin` running, shows a backtrace captured AT the switch — not a later instant,
   and not the idle scheduler stack. Idle Step says so in words.
 - Switching to priority or lottery from the Scheduler face actually changes `sched_policy`, and no
   shadow toggles as a side effect.
 - A board counter past 2.1e9 still parses (proven by the parser test; unreachable live).
 - The Memory face's regions are marked "reported" when the kernel sends `VR`, "derived" otherwise.
-- Old gBuilder + new image, and new gBuilder + old image, both behave per the §1 table — checked by
-  hand on the live gate for at least Step and policy.
+- Old gBuilder + new image, and new gBuilder + old image, both behave per the skew tables (§ skew
+  rule, §11.6) — checked by hand on the live gate for Step, policy, and trap capture.
 - Full suite green; the live gate results recorded in the release notes.
