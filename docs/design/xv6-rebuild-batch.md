@@ -115,6 +115,26 @@ Two consequences:
 
 ## 1. Step switch does not freeze the kernel it is meant to freeze (#11 — the target)
 
+> **IMPLEMENTED 2026-09-09.** Shipped as designed below, with these naming/plumbing
+> refinements (the reasoning is unchanged):
+> - The honesty flag is **`switched`** (a new additive field on the `Snapshot` dataclass),
+>   not `stepped` on the provider. `None` = not a Step read, `True`/`False` = the outcome.
+> - The query param is **`?quantum=`** (the bridge already tracks `self.timeslice` and
+>   `self.kernel_quantum`; it sends whichever it has), not `?q=`.
+> - The bridge reuses the existing **`post()` + `json.loads`** — no new `post_json` helper.
+> - The idle-step note is carried by **`MachineState.last_step_note`** (set in `step()` from
+>   `switched=False`, cleared by the next Run poll in `refresh()`) and shown in the stack panel.
+>   This replaces the provider `_stepped` one-shot + UI guard the draft proposed — cleaner, and
+>   it lives in the shared state every reader already sees.
+> - Timeout is **`min(20, TIMEOUT + 0.6*(quantum-1))`**, floored at the current `TIMEOUT` so the
+>   default slice is byte-for-byte unchanged and only long slices stretch.
+> - Skew-safe: a new gBuilder against an OLD image sees no `switched`/`registers` keys and falls
+>   back to the two-session `_detail_snapshot()` read (old behaviour, not broken).
+>
+> Tests: `test_step_takes_full_detail_after_swtch` (now asserts `switched is True`),
+> `test_step_reports_no_switch_when_kernel_idle`, `test_step_passes_quantum_hint_and_scales`,
+> `test_step_falls_back_for_old_image` in `test_xv6_bridge.py`. Rides the trap-capture rebuild.
+
 ### The bug, restated from the code
 
 `Xv6Bridge.step()` (`frontend-ng/src/gini/runtime/xv6_bridge.py:220`) is **two gdb sessions**:

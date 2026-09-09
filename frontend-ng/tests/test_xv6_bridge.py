@@ -55,6 +55,10 @@ class FakeAgent:
             return json.dumps({"out": (
                 "===TRAP===\nscause 0x000000000000000f\nsepc 0x1080\nstval 0x4000\n"
                 "pid 5\na7 0x000000000000000f\n")})
+        if "/step" in url:
+            # A current agent freezes at swtch and returns the detail in ONE round trip.
+            return json.dumps({"switched": True, "registers": REGS, "bt": BT,
+                               "procs": PROCS, "ticks": "42"})
         return "{}"
 
 
@@ -150,8 +154,49 @@ def test_step_takes_full_detail_after_swtch():
     br.snapshot()
     fa.posts.clear()
     snap = br.step()
-    assert any(u.endswith("/step") for u in fa.posts)  # halted at a context switch
+    assert any("/step" in u for u in fa.posts)         # halted at a context switch
     assert snap.cpu.key("pc") == "0x80001d4a"          # fresh gdb detail at the switch
+    assert snap.switched is True                        # the read was frozen AT the swtch
+
+
+def test_step_reports_no_switch_when_kernel_idle():
+    # A current agent that caught no switch returns switched=False with no detail. The bridge
+    # keeps the last known registers/stack but flags the miss, so the UI can be honest (#11).
+    class Idle(FakeAgent):
+        def post(self, url):
+            self.posts.append(url)
+            if "/step" in url:
+                return json.dumps({"switched": False})
+            return "{}"
+    fa = Idle()
+    br = Xv6Bridge(AgentClient("http://x:5000", get=fa.get, post=fa.post), quantum=1)
+    br.snapshot()                                       # seed last registers
+    prev = br._last_cpu
+    snap = br.step()
+    assert snap.switched is False
+    assert snap.procs == []                             # empty -> MachineState keeps last frame
+    assert br._last_cpu is prev                         # registers not clobbered by the miss
+
+
+def test_step_passes_quantum_hint_and_scales():
+    br, fa = _bridge()
+    br.set_timeslice(10)
+    fa.posts.clear()
+    br.step()
+    assert any("/step?quantum=10" in u for u in fa.posts)   # the agent sizes its timeout to it
+
+
+def test_step_falls_back_for_old_image():
+    # Skew-safety: an OLD image's /step returns {"out": ...} with no snapshot fields. The bridge
+    # must still produce a frame (via the legacy /snapshot read) rather than blank the panel.
+    class Old(FakeAgent):
+        def post(self, url):
+            self.posts.append(url)
+            return json.dumps({"out": "tbreak swtch\n"})   # legacy shape, no detail
+    fa = Old()
+    br = Xv6Bridge(AgentClient("http://x:5000", get=fa.get, post=fa.post), quantum=1)
+    snap = br.step()
+    assert snap.cpu.key("pc") == "0x80001d4a"           # detail came from the fallback /snapshot
 
 
 def test_controls_post_to_agent():
@@ -159,7 +204,7 @@ def test_controls_post_to_agent():
     br.set_timeslice(10)
     br.step()
     assert any("/control?quantum=10" in u for u in fa.posts)
-    assert any(u.endswith("/step") for u in fa.posts)
+    assert any("/step" in u for u in fa.posts)
 
 
 def test_kernel_quantum_read_from_sched_line():

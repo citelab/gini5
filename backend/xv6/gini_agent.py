@@ -10,7 +10,8 @@ Endpoints (GET unless noted):
   /faults    -> live page-fault ring (`FLT pid scause va epc`)
   /traps     -> trap-taxonomy counters + ring (`TC kind name count` + `TR pid kind cause epc tval`)
   /fs        -> {"sb": <text>, "log": <text>}
-  /step      (POST) -> break swtch; continue; delete   (advance one context switch)
+  /step      (POST) -> break swtch; continue; read regs+bt+procs WHILE HALTED; detach
+  #                    -> {"switched": bool, "registers","bt","procs","ticks"} (frozen at swtch)
   /trapcatch (POST) -> freeze the next user trap: CSRs (scause/sepc/stval) + saved user registers
   /control   (POST ?quantum=N | ?policy=N) -> write the kernel knob over gdb
 
@@ -688,9 +689,39 @@ class Handler(BaseHTTPRequestHandler):
         u = urlparse(self.path)
         q = parse_qs(u.query)
         if u.path == "/step":
-            # temporary breakpoint auto-deletes on hit; if the kernel is idle (no context
-            # switch) this times out harmlessly and the next read resumes the guest.
-            self._send({"out": gdb_run(["tbreak swtch", "continue"])})
+            # ONE gdb session does BOTH halves: halt at swtch, then read registers + kernel
+            # backtrace + the proc walk WHILE STILL HALTED, then detach. The old code ran two
+            # sessions — `tbreak swtch; continue` here and a separate `/snapshot` afterwards —
+            # but gdb_run always appends `detach`, so the first session resumed the guest before
+            # the second could read, and the read landed on an arbitrary later instant instead
+            # of the switch. This is known issue #11: "Step does not freeze what it shows." A
+            # single session keeps the kernel stopped across the read, so the detail is frozen at
+            # the switch. The temporary breakpoint auto-deletes on hit.
+            #
+            # Timeout scales with the quantum: at the default slice TIMEOUT is fine, but the UI
+            # offers a 10-tick slice where gdb spawn + symbol load + waiting a whole slice for the
+            # next switch can exceed 6 s (the "second squeeze" in the writeup). Floor at TIMEOUT so
+            # the common case is unchanged; a truly idle kernel (no swtch at all) still times out.
+            try:
+                qt = int(q.get("quantum", ["1"])[0] or "1")
+            except ValueError:
+                qt = 1
+            step_timeout = min(20.0, TIMEOUT + 0.6 * max(0, qt - 1))
+            out = gdb_run(["tbreak swtch", "continue",
+                           "info registers", "echo ===BT===\\n", "bt",
+                           "echo ===PROCS===\\n", _PROC_WALK,
+                           "echo ===TICKS===\\n", "printf \"%d\\n\", ticks"],
+                          timeout=step_timeout)
+            # A switch was actually caught iff the read ran — a timeout returns the bare
+            # "gdb-timeout" string with none of the section markers. Reporting switched=False
+            # (rather than a snapshot that looks like a result) lets the UI say "no switch
+            # happened" instead of presenting the idle scheduler stack as a captured switch.
+            switched = "===BT===" in out
+            regs, _, rest = out.partition("===BT===")
+            bt, _, rest = rest.partition("===PROCS===")
+            procs, _, ticks = rest.partition("===TICKS===")
+            self._send({"switched": switched, "registers": regs, "bt": bt,
+                        "procs": procs, "ticks": ticks.strip()})
         elif u.path == "/trapcatch":
             # Arm the kernel-side capture for ?kind= (default any), then poll the trapdump until a
             # matching trap is caught or ?wait= seconds elapse. No gdb: instant arm, no guest stall.

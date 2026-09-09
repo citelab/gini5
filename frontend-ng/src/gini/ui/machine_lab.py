@@ -1569,7 +1569,12 @@ class MachineLab(QDialog):
         # scheduling panel: ready queue + CPU share (share from the aggregate timeline)
         self._sched_panel.update_view(snap.procs, self.state.timeline.shares())
         # kernel stack (from gdb on Step; user procs are in user mode during Run)
-        if snap.stack:
+        step_note = getattr(self.state, "last_step_note", "") if self.live else ""
+        if step_note:
+            # The last Step caught no context switch — say so instead of showing the idle
+            # scheduler stack as if it were a captured switch (known issue #11).
+            self._stack_lbl.setText(f"<span style='color:{t.faint}'>{step_note}</span>")
+        elif snap.stack:
             rows = "<br>".join(
                 f"<span style='color:{t.muted}'>#{i}</span> {f.fn}"
                 + (f" <span style='color:{t.faint}'>{f.loc}</span>" if f.loc else "")

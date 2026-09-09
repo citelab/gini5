@@ -213,6 +213,10 @@ class MachineState:
     mode: str = "real"                            # "real" (live kernel) | "demo" (stand-in). A
     #                                               USER choice — never auto-switched (see set_mode)
     latest: Snapshot | None = None
+    # An honest one-line note from the last Step switch: set when a step caught no context
+    # switch (idle kernel), cleared by the next Run poll. The Lab shows it in the stack panel
+    # instead of presenting the idle scheduler stack as if it were a captured switch (issue #11).
+    last_step_note: str = ""
     # The last GOOD reading of each face, cached here rather than in the widgets so every reader
     # — the Memory face, the File System face, the OS HUD, the Ask GINI card — sees one value.
     latest_vm: object = None
@@ -356,6 +360,7 @@ class MachineState:
         return int(getattr(self.provider, "timeslice", 1) or 1)
 
     def refresh(self) -> Snapshot | None:
+        self.last_step_note = ""                   # a Run poll supersedes the last Step's note
         if self.provider is None:                 # Real mode with no running kernel -> no data
             return None
         with self._lock:                          # see _lock: readers must not overlap
@@ -409,7 +414,14 @@ class MachineState:
         if self.provider is None:
             return None
         with self._lock:
-            self._ingest(self.provider.step())
+            snap = self.provider.step()
+            # A step that caught no switch reports switched=False (see Xv6Bridge.step). Say so
+            # honestly rather than let _ingest silently keep the last frame on the empty read.
+            self.last_step_note = ("" if getattr(snap, "switched", None) is not False else
+                                   "No context switch happened while Step was waiting — the "
+                                   "kernel was idle (init and sh asleep). Launch a program "
+                                   "(spin, walker) to make the scheduler switch.")
+            self._ingest(snap)
             return self.latest
 
     def _ingest(self, snap: Snapshot | None) -> None:

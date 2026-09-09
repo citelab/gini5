@@ -185,17 +185,30 @@ the next context switch. At the default quantum that is fine; at the 10-tick
 slice the UI offers (`~5.0 s`) it is marginal, so on a busy kernel Step will
 sometimes time out and halt nothing.
 
-**Not fixed.** The fix is structural rather than a tweak: ONE gdb session must
-do both halves — `tbreak swtch; continue; <read registers, bt, procs>; detach` —
-so the read happens while the kernel is still stopped. That moves the detail
-read into `/step` on the agent side and therefore needs an image rebuild. The
-timeout is a separate, smaller matter: it should scale with the configured
-quantum, and a step that never saw a switch should say so rather than return a
-snapshot that looks like a result.
+**Fixed in source; ships on the next image rebuild (2026-09-09).** The fix is
+structural, exactly as diagnosed: ONE gdb session now does both halves —
+`tbreak swtch; continue; <read registers, bt, procs>; detach` — so the read
+happens while the kernel is still stopped and the detail is frozen AT the
+switch. `POST /step` now returns `{"switched", "registers", "bt", "procs",
+"ticks"}` in one round trip, and `Xv6Bridge.step()` parses that instead of
+making a second `/snapshot` call. Because the agent ships inside the image, the
+fix is live only once the image is rebuilt (it rides the same rebuild as the
+trap-capture work). A new gBuilder against an OLD image detects the missing
+fields and falls back to the legacy two-session read, so it degrades to the old
+behaviour rather than breaking.
 
-Until then: Step is trustworthy only as "show me the idle scheduler stack", and
-the `Run`/`Pause` sampling path (see [scheduler](os-02-scheduler.md)) is the
-honest way to watch switching.
+The two smaller matters named above are handled too. The timeout now scales with
+the quantum — floored at the old `TIMEOUT` so the default slice is unchanged,
+and stretched for the 10-tick slice that used to time out. And a step that never
+saw a switch now returns `switched=false`: the bridge keeps the last known
+registers/stack but flags the miss, and the Lab shows "No context switch
+happened while Step was waiting — the kernel was idle" in the stack panel instead
+of presenting the idle scheduler stack as a captured switch.
+
+Before the rebuild lands, the old caveat still holds on the running image: Step
+is trustworthy only as "show me the idle scheduler stack", and the `Run`/`Pause`
+sampling path (see [scheduler](os-02-scheduler.md)) is the honest way to watch
+switching.
 
 ## Cross-references
 

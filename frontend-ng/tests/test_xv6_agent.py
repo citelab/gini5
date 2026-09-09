@@ -77,3 +77,58 @@ def test_clear_console_moves_baseline(ga, _close_links):
     sl.clear_console()
     sl._ingest(b"after\n")
     assert sl.tail() == "after\n"                    # only bytes since Clear
+
+
+# -- /step: one gdb session halts at swtch AND reads the frozen detail (known issue #11) -------- #
+def _step_handler(ga):
+    """A Handler wired for a bodyless GET-style call: no socket, `_send` captured into a dict."""
+    h = ga.Handler.__new__(ga.Handler)               # skip __init__ (it would want a real request)
+    out = {}
+    h._send = lambda obj, ctype="application/json": out.update(obj if isinstance(obj, dict) else {})
+    return h, out
+
+
+def test_step_merges_halt_and_read_in_one_session(ga, monkeypatch):
+    seen = {}
+
+    def fake_gdb(cmds, timeout=None):
+        seen["cmds"], seen["timeout"] = cmds, timeout
+        return ("pc 0x80001d4a\n===BT===\n#0 swtch\n#1 sched\n"
+                "===PROCS===\n1 sleeping init\n3 running spin\n===TICKS===\n42\n")
+
+    monkeypatch.setattr(ga, "gdb_run", fake_gdb)
+    h, out = _step_handler(ga)
+    h.path = "/step?quantum=10"
+    h.do_POST()
+    assert out["switched"] is True
+    assert "0x80001d4a" in out["registers"] and "swtch" in out["bt"]
+    assert "1 sleeping init" in out["procs"] and out["ticks"] == "42"
+    # the halt is prepended to the SAME command list -> the read runs while still stopped
+    assert seen["cmds"][:2] == ["tbreak swtch", "continue"]
+    assert "bt" in seen["cmds"] and any("registers" in c for c in seen["cmds"])
+    assert seen["timeout"] > ga.TIMEOUT              # quantum 10 stretched the budget past default
+
+
+def test_step_timeout_reports_no_switch(ga, monkeypatch):
+    # An idle kernel never reaches swtch: gdb_run times out and returns the bare marker. The reply
+    # must say switched=False (not present a snapshot that looks like a captured switch).
+    monkeypatch.setattr(ga, "gdb_run", lambda cmds, timeout=None: "gdb-timeout")
+    h, out = _step_handler(ga)
+    h.path = "/step?quantum=1"
+    h.do_POST()
+    assert out["switched"] is False and out["bt"] == "" and out["procs"] == ""
+
+
+def test_step_default_quantum_keeps_the_current_timeout(ga, monkeypatch):
+    # No quantum, or quantum 1, must not regress the default-slice budget below today's TIMEOUT.
+    seen = {}
+
+    def fake_gdb(cmds, timeout=None):
+        seen["t"] = timeout
+        return "===BT===\n"
+
+    monkeypatch.setattr(ga, "gdb_run", fake_gdb)
+    h, out = _step_handler(ga)
+    h.path = "/step"
+    h.do_POST()
+    assert seen["t"] == ga.TIMEOUT

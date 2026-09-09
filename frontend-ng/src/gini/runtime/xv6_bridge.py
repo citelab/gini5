@@ -218,9 +218,34 @@ class Xv6Bridge:
                         cpu=self._last_cpu, stack=self._last_stack)
 
     def step(self) -> Snapshot:
-        self.agent.post("/step")
+        # One round trip: the agent halts at swtch, reads the detail while still halted, and
+        # returns it (see known issue #11). The quantum hint lets the agent size its timeout to
+        # the slice the student chose. `self.timeslice` is the SET quantum; `kernel_quantum` is
+        # what the kernel actually reported — prefer the latter when we have it.
+        qt = self.kernel_quantum or self.timeslice or 1
+        raw = self.agent.post(f"/step?quantum={int(qt)}")
         self._seq += 1
-        return self._detail_snapshot()              # halted at swtch -> full frozen detail
+        try:
+            d = json.loads(raw) if isinstance(raw, str) else (raw or {})
+        except (ValueError, TypeError):
+            d = {}
+        # Skew-safety: an OLDER image's /step returns {"out": ...} with no snapshot fields. Fall
+        # back to the two-session read so a new gBuilder still works (buggy as before, not broken)
+        # against an old image. A current image sends "switched" + the detail.
+        if "switched" not in d and "registers" not in d:
+            return self._detail_snapshot()          # old agent -> old behaviour
+        if not d.get("switched", True):
+            # No context switch happened in the window (idle kernel, or the slice was too long
+            # to catch one). Keep the last known registers/stack and flag it, so the UI reports
+            # the truth instead of showing the idle scheduler stack as a captured switch.
+            return Snapshot(procs=[], ticks=self._seq, cpu=self._last_cpu,
+                            stack=self._last_stack, source="real", switched=False)
+        self._last_cpu = parse_registers(d.get("registers", ""))
+        self._last_stack = parse_backtrace(d.get("bt", ""))
+        procs = parse_procdump(d.get("procs", ""))
+        return Snapshot(procs=procs, running_pid=running_pid(procs), ticks=self._seq,
+                        cpu=self._last_cpu, stack=self._last_stack, source="real",
+                        switched=True)             # halted at swtch -> full frozen detail
 
     def set_timeslice(self, ticks: int) -> None:
         self.timeslice = int(ticks)

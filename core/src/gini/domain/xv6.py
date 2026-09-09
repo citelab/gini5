@@ -68,6 +68,11 @@ class Snapshot:
     modetime: dict = field(default_factory=dict)  # {"user","kernel","idle"} cumulative timer ticks
     csr: dict = field(default_factory=dict)       # dumping hart's control CSRs {name: int}
     source: str = "real"                        # "real" (live kernel) or "demo" (DemoScheduler)
+    switched: bool | None = None                # Step-switch outcome: True = a swtch was caught
+    #                                             and this frame is frozen at it; False = none
+    #                                             happened in the window (idle kernel); None =
+    #                                             not a Step read. Additive, so older callers and
+    #                                             the demo path leave it None. (see known issue #11)
 
 
 # -- parsers ---------------------------------------------------------------- #
