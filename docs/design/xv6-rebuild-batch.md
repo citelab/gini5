@@ -491,26 +491,51 @@ digit-entry state machine) is wrong twice over:
   (ESC and the 0x1e/0x1f dump delimiters) are all bound (full inventory: A B C D E F G K L N O P Q
   R S T V W X Y Z plus `]` `\`, plus stock P U H). This is the same wall as boardreset (§8).
 
-**The resolution: arm over gdb, not over a console byte.** The agent sets the global directly:
+Two ways out were considered:
 
-```python
-gdb_run(["set var gini_catch_kind = <digit>", "set var gini_catch_ready = 0", "detach"])
-```
+**(a) gdb-set arm** — `gdb_run(["set var gini_catch_kind=N", "set var gini_catch_ready=0",
+"detach"])`. A one-shot memory write, not a conditional breakpoint, so it does not perturb the guest
+and needs no console byte. **Rejected as the primary path** because the agent is single-threaded (§
+top): every gdb session blocks the `/procs` polls that feed the Gantt and HUD for its ~1–2 s, so
+each arm gives a visible stall and the readback polling makes the HUD choppy for the catch window.
 
-This is a **one-shot memory write, not a conditional breakpoint** — it does not halt-and-wait and
-does not perturb the guest (D1's whole problem was *re-evaluating a condition while the guest was
-stopped*, which this never does). It is fully consistent with "retire the gdb *catch*". And it
-**eliminates the plan's §A3 `consoleintr` arm state machine entirely** — the edit the plan itself
-warns "do not repeat the Ctrl-G bug" about. The readback stays on the existing non-perturbing
-`Ctrl-R` trapdump. Net: the trap work touches `consoleintr` **not at all**, so the only
-`consoleintr` edit in the whole batch is #1 (policy), and the two no longer collide.
+**(b) two-byte console multiplexer (chosen).** Reserve ONE prefix control byte; `PREFIX <letter>`
+is a command, and every *future* homeless command (arm-trap, boardreset, …) gets a home behind it
+with no new byte. Arming is then a 2–4 byte serial write — instant, no gdb, no stall.
 
-| | gdb conditional catch (today) | kernel capture, gdb-set arm (proposed) |
+The multiplexer's protocol was **built and proven as a standalone bridge before any kernel edit**
+(`console_mux.py` + `test_console_mux.py`, 15 tests incl. 44k prefix-free fuzz and 20k
+interleave-anywhere fuzz, zero failures — currently in the session scratchpad; lands at
+`backend/xv6/console_mux.py` with its test as **step 1 of integration**, inert until the agent and
+kernel are wired to it). Two safety locks make it robust against a human typing into the same
+stream:
+
+- **prefix is a CONTROL byte; the sub-command selector is a PRINTABLE letter** — so a selector
+  separated from its prefix by an interleaved keystroke can never fire a single-byte command (a bare
+  `t` is just text);
+- **abort-and-reprocess** — `PREFIX` + anything unrecognized drops the orphaned prefix and handles
+  that byte normally, so an interleave costs one abandoned arm (the agent retries), never a wrong
+  command.
+
+`Decoder` in that module is the **executable spec** for the C `consoleintr` state machine (same
+shape as the existing `gini_ctl_op`/`gini_shidx` digit machines, all of which already run under
+`cons.lock`); `encode()` is the agent side and can ship as the agent module verbatim.
+
+**Prefix byte: TBD, lean `Ctrl-W`** (0x17, shadowdump — rare, low-risk to demote; folds to
+`PREFIX w`). NOT Enter/Tab/LF/ESC or the dump delimiters. The harness parameterizes it, so the final
+byte is a one-line choice at integration.
+
+This DOES add a `consoleintr` edit, so it coexists with #1's policy entry — both are pre-`switch`
+state machines of the same proven shape, and they do not collide (the interleave/abort discipline is
+exactly what #1 also needs and the Ctrl-G bug lacked). A later cleanup could route #1's policy and
+the shadow-index entry through the mux too; not in this batch.
+
+| | gdb conditional catch (today) | kernel capture, **mux arm** (chosen) |
 |---|---|---|
 | sees kernel-mode traps | no | **yes** |
-| perturbs the guest | yes (§D1) | **no** (one write, immediate detach) |
-| new console byte needed | — | **none** (arms via gdb `set`) |
-| `consoleintr` edit | — | **none** |
+| perturbs the guest | yes (§D1) | **no** |
+| agent stall per arm | — (n/a) | **none** (serial write; gdb-set's ~1–2 s stall is why it lost) |
+| new console byte needed | — | **one prefix** (unlocks all future commands) |
 | catches a timer under load | **never** | **the next timer, always** |
 
 ### 11.2 Kernel — the capture slot and hook (in `gini_patch.py`, the `_GINI_TRAP` block)
@@ -525,21 +550,80 @@ Per the action plan §A1/A2, unchanged, with two batch-specific notes:
 
 Slot: `gini_catch_kind` (-1 disarmed | -2 any | GT_*), `gini_catch_ready`, `struct gini_trap
 gini_catch`, `gini_catch_user`, `gini_catch_tf[7]`, `gini_catch_qticks`, `gini_catch_quantum` —
-all `extern` in the defs.h append. Hook at the end of `gini_traprec()` (after `e->seq =
-gini_stamp();`): if armed and matching and not already ready, copy `*e`, read
-`SSTATUS_SPP` for `gini_catch_user`, fill `gini_catch_tf[]` only when user, snapshot
-`gini_qticks[cpuid()]` and `sched_quantum`, set ready, disarm. Reading is **non-destructive** —
-clear `ready` only on the next arm (the gdb-set already does this), so a slow poller cannot lose it.
+all `extern` in the defs.h append. Reading (`Ctrl-R` dump) is **non-destructive**; `ready` clears
+only on the next arm, so a slow poller cannot lose a capture.
+
+#### The capture is a multi-hart race — the plan's "benign" claim is WRONG (correction)
+
+Action plan §6 says the capture is "benign under a race (worst case two harts capture and **one
+wins**)." It is not. `gini_traprec()` holds **no lock** (verified: it does only `gini_stamp()` —
+itself atomic — and a plain `gini_traps_i++`) and runs on **every hart on every trap**. The naive
+capture the plan writes —
+
+```c
+if (gini_catch_kind != -1 && !gini_catch_ready && matches) {   // (1) guard
+    gini_catch = *e;                                            // (2) MANY stores, not atomic
+    ... gini_catch_ready = 1; gini_catch_kind = -1;             // (3) publish
+}
+```
+
+— has a check-then-act hole. Per-hart timers share the quantum interval, so two harts take a timer
+within the same window routinely. Both pass guard (1) because neither has reached (3); both run the
+**non-atomic struct copy** (2) interleaved. The result is not "A's frame or B's frame" — it is a
+**field-level splice**: e.g. `epc` from hart B (pid 7's PC) beside `pid` from hart A. A frame that
+says "pid 4 interrupted at pid 7's PC" renders as **nonsense in the journey — the exact symptom this
+lab work exists to remove**, re-entering through the back door. And even with a single capturer,
+RISC-V relaxed ordering lets `ready=1` become visible before the frame stores, so the reader sees a
+half-written frame.
+
+**Fix — claim with a compare-and-swap, then fence (lock-free, only on the armed path):**
+
+```c
+int k = gini_catch_kind;                                    // relaxed load; -1 when disarmed
+if (k != -1 && (k == GINI_CATCH_ANY || k == kind) &&
+    __sync_bool_compare_and_swap(&gini_catch_kind, k, -1))  // EXACTLY ONE hart wins the claim
+{
+    gini_catch = *e;                                        // sole writer -> no tear
+    gini_catch_user = ((r_sstatus() & SSTATUS_SPP) == 0);
+    for (int i = 0; i < 7; i++) gini_catch_tf[i] = 0;
+    if (gini_catch_user && p && p->trapframe) { /* fill tf[] */ }
+    gini_catch_qticks = gini_qticks[cpuid()];
+    gini_catch_quantum = sched_quantum;
+    __sync_synchronize();                                   // publish frame BEFORE ready
+    gini_catch_ready = 1;
+}
+```
+
+- **Torn frame → gone:** the CAS atomically checks `kind==k` and sets `-1`, so exactly one hart
+  proceeds; losers see `-1` and skip. Single writer by construction.
+- **Visibility → gone:** the fence orders the frame stores before `ready=1`; the dump reads `ready`
+  then the frame, so `ready==1` implies a complete frame.
+- **Hot-path cost:** when disarmed it is one relaxed load + a branch — no CAS, no fence. The CAS
+  fires only on a matching armed trap. `__sync` is already used in this kernel (`gini_stamp`), so
+  the "no lock on the hot path" rule (plan §6) is honoured.
+- The hook still sits *after* `p->trapframe->epc = r_sepc();` in `usertrap`, so a user-mode trap's
+  trapframe is current. Do not move it.
+
+**Third, mild race (agent-side guard, no kernel counter):** re-arming in the microsecond a *previous*
+capture is in flight could publish a coherent-but-wrong-kind frame. Arms are human-paced and
+captures are microseconds, so this is astronomically unlikely — but to be correct, the agent checks
+the captured trap's kind matches what it armed and keeps polling otherwise (§11.3). Belt and
+suspenders, one comparison.
 
 ### 11.3 Agent — `/trapcatch` rewritten (no gdb conditional breakpoint)
 
 `POST /trapcatch?kind=<any|syscall|pagefault|timer|device|illegal>[&wait=<s>]`:
 
 1. Map the name to the wire digit (`syscall 0, pagefault 1, timer 2, device 3, illegal 4, other 5,
-   any -2`). Reject unknown names with a JSON error naming the valid set.
-2. **Arm via gdb set** (above). One fast session, immediate detach.
-3. Poll `_SERIAL.dump(b"\x12")` (Ctrl-R trapdump — the existing, non-perturbing key) every ~250 ms
-   until the `CATCH 1 …` line appears or `wait` elapses (default 10, clamp `[1,30]`).
+   any -2` → encoded as `9` on the wire so no negative digit is sent). Reject unknown names with a
+   JSON error naming the valid set.
+2. **Arm via the console mux** (§11.1) — `_SERIAL.write(encode("arm_trap", digit))`, e.g. `PREFIX a
+   2 \n`. A serial write, no gdb, no stall. (`encode` is the proven `console_mux` module, shipped
+   agent-side at integration.)
+3. Poll `_SERIAL.dump(b"\x12")` (Ctrl-R trapdump — existing, non-perturbing) every ~250 ms until a
+   `CATCH 1 …` line **whose kind matches what was armed** appears, or `wait` elapses (default 10,
+   clamp `[1,30]`). The kind-match is the §11.2 "third race" guard: a stale capture of a different
+   kind is ignored, not returned.
 4. On success, translate the `CATCH` fields into the `===TRAP===` text shape `parse_trapframe`
    already accepts (adding `from_user`, `hart`, `qticks`, `quantum`), so the parser is untouched.
 5. On timeout, `{"ok": false, "error": "<true reason>"}` — e.g. "armed for timer; no timer trap in
@@ -579,9 +663,20 @@ moment the image lands, because the agent ships inside it.
 
 ### 11.7 Test gate (adds to §7)
 
-- **Kernel/console (sandbox, no Docker)**: arm timer via gdb-set, run `spin`, confirm `CATCH 1` with
-  `from_user=1`; arm syscall under `spin` → no capture, then under a syscall-heavy load → capture;
-  arm `any` → first trap of any kind; re-arm clears `ready`; `Ctrl-R` read does NOT clear it.
+- **Console mux (pure Python, already green)**: the `console_mux` harness — round-trip, passthrough,
+  self-escape, interleave-abort, 44k prefix-free fuzz, 20k interleave-anywhere fuzz. This lands in
+  the tree with the agent module and is the executable spec the C `consoleintr` state machine is
+  checked against.
+- **Kernel/console (sandbox, no Docker)**: arm timer via the mux (`PREFIX a 2 \n`), run `spin`,
+  confirm `CATCH 1` with `from_user=1`; arm syscall under `spin` → no capture, then under a
+  syscall-heavy load → capture; arm `any` → first trap of any kind; re-arm clears `ready`; `Ctrl-R`
+  read does NOT clear it.
+- **The concurrency case (2+ harts, the §11.2 race)**: on a Size L/XL machine, arm `timer` under a
+  load that keeps both harts trapping, catch repeatedly, and confirm **no frame is ever internally
+  inconsistent** — `pid` owns the `epc` (the captured PC lies within that pid's mapped range). A
+  torn frame is the failure this asserts against. Hard to force deterministically, so run it many
+  times; the CAS makes it impossible by construction, and this is the check that the CAS is actually
+  present (a build with the naive copy will, eventually, produce a splice).
 - **The acceptance case that fails today**: `grind` + `spin` together, catch `timer` → **captures
   within the wait**. If it still fails, the capture is not being reached — check the image was
   rebuilt against the pinned tree.
