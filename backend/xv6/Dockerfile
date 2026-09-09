@@ -43,6 +43,7 @@ RUN cp /opt/xv6-riscv/kernel/shadows/gini_sched.c /opt/gini_sched_ref.c \
  && cp /opt/xv6-riscv/kernel/shadows/gini_fs.c    /opt/gini_fs_ref.c
 
 COPY gini_agent.py /opt/gini_agent.py
+COPY console_mux.py /opt/console_mux.py
 COPY boot.sh /opt/boot.sh
 # strip CR (a Windows/CRLF checkout makes the `#!` line unrunnable: "no such file or directory")
 RUN sed -i 's/\r$//' /opt/boot.sh && chmod +x /opt/boot.sh

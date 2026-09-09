@@ -26,9 +26,16 @@ import shutil
 import socket
 import subprocess
 import threading
+import sys
 import time
 from http.server import BaseHTTPRequestHandler, HTTPServer
 from urllib.parse import parse_qs, urlparse
+
+# console_mux ships beside this file (in the container both are /opt/*). Add our own directory so
+# `import console_mux` resolves in the container AND when a test loads gini_agent.py by path — the
+# arm bytes must come from the ONE proven encoder, never a second inline copy that could drift.
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+import console_mux                                                              # noqa: E402
 
 XV6_DIR = "/opt/xv6-riscv"
 SHADOW_FILE = XV6_DIR + "/kernel/shadows/gini_sched.c"
@@ -563,42 +570,33 @@ def gdb_run(commands, timeout=TIMEOUT):
             return f"gdb-error: {e}"
 
 
-# Freeze the NEXT user trap: break at usertrap entry, then read the trap CSRs (scause/sepc/stval —
-# the trap facts, live at entry) plus the user registers uservec saved into the trapframe. The
-# current proc is cpus[$tp].proc ($tp = hartid in xv6). On an idle kernel with no user proc this
-# times out and the frontend falls back to the authored journey. gdb_run appends `detach`.
-_TF = "cpus[$tp].proc->trapframe"
-# gdb breakpoint predicates to catch a trap of a SPECIFIC kind (Phase 4). "any" = no condition.
-_TRAP_COND = {
-    "syscall": "$scause==8",
-    "pagefault": "($scause==12 || $scause==13 || $scause==15)",
-    "illegal": "$scause==2",
-    "timer": "$scause==0x8000000000000005",
-    "device": "($scause==0x8000000000000009)",
-}
+# One-shot trap capture, kernel-side (see gini_traprec + the CATCH dump line). The Traps face ARMS
+# a kind through the console mux; the kernel copies the next matching trap into gini_catch; we poll
+# the trapdump (Ctrl-R, non-perturbing) until CATCH is ready and its kind matches. This replaced a
+# gdb conditional breakpoint at usertrap that could only see USER-mode traps and, by halting the
+# guest to test its condition, drove the very timer it hunted into kernel mode (uncatchable). The
+# capture sees both modes and does not perturb what it measures. See docs/design/xv6-rebuild-batch
+# §11.
+_CATCH_KIND = {"syscall": 0, "pagefault": 1, "timer": 2, "device": 3,
+               "illegal": 4, "other": 5, "any": 9}     # 9 = "any" on the wire (kernel -> ANY)
+
+_CATCH_RE = re.compile(
+    r"^CATCH (\d+) (\d+) (\d+) "                                             # ready kind from_user
+    r"(0x[0-9a-fA-F]+) (0x[0-9a-fA-F]+) (0x[0-9a-fA-F]+) (-?\d+) "           # cause epc tval pid
+    r"(0x[0-9a-fA-F]+) (0x[0-9a-fA-F]+) (0x[0-9a-fA-F]+) (0x[0-9a-fA-F]+) "  # tf: epc ra sp a0
+    r"(0x[0-9a-fA-F]+) (0x[0-9a-fA-F]+) (0x[0-9a-fA-F]+) "                   # tf: a1 a2 a7
+    r"(-?\d+) (-?\d+) h(\d+)", re.M)                                         # qticks quantum hart
 
 
-def _trap_catch_cmds(kind="any"):
-    cond = _TRAP_COND.get(kind)
-    brk = f"tbreak usertrap if {cond}" if cond else "tbreak usertrap"
-    return [brk] + _TRAP_CATCH_TAIL
-
-
-_TRAP_CATCH_TAIL = [
-    "continue",
-    "echo ===TRAP===\\n",
-    "printf \"scause %p\\n\", $scause",
-    "printf \"sepc %p\\n\", $sepc",
-    "printf \"stval %p\\n\", $stval",
-    "printf \"pid %d\\n\", (cpus[$tp].proc ? cpus[$tp].proc->pid : -1)",
-    f"printf \"epc %p\\n\", {_TF}->epc",
-    f"printf \"ra %p\\n\", {_TF}->ra",
-    f"printf \"sp %p\\n\", {_TF}->sp",
-    f"printf \"a0 %p\\n\", {_TF}->a0",
-    f"printf \"a1 %p\\n\", {_TF}->a1",
-    f"printf \"a2 %p\\n\", {_TF}->a2",
-    f"printf \"a7 %p\\n\", {_TF}->a7",
-]
+def _catch_to_trapframe(m):
+    """A matched CATCH line -> the ===TRAP=== text `parse_trapframe` already accepts, plus the new
+    keys (from_user/hart/qticks/quantum). Keeps the frontend parser untouched and skew-safe."""
+    g = m.groups()
+    return ("===TRAP===\n"
+            f"scause {g[3]}\nsepc {g[4]}\nstval {g[5]}\npid {g[6]}\n"
+            f"from_user {g[2]}\nhart {g[16]}\nqticks {g[14]}\nquantum {g[15]}\n"
+            f"epc {g[7]}\nra {g[8]}\nsp {g[9]}\n"
+            f"a0 {g[10]}\na1 {g[11]}\na2 {g[12]}\na7 {g[13]}\n")
 
 
 class Handler(BaseHTTPRequestHandler):
@@ -694,11 +692,38 @@ class Handler(BaseHTTPRequestHandler):
             # switch) this times out harmlessly and the next read resumes the guest.
             self._send({"out": gdb_run(["tbreak swtch", "continue"])})
         elif u.path == "/trapcatch":
-            # freeze the next live user trap and read its CSRs + saved user registers. An optional
-            # ?kind= (pagefault/syscall/timer/illegal/device) conditions the breakpoint (Phase 4);
-            # default "any" catches the next trap of any kind (Phase 2).
-            kind = (q.get("kind", ["any"])[0] or "any").strip()
-            self._send({"out": gdb_run(_trap_catch_cmds(kind))})
+            # Arm the kernel-side capture for ?kind= (default any), then poll the trapdump until a
+            # matching trap is caught or ?wait= seconds elapse. No gdb: instant arm, no guest stall.
+            name = (q.get("kind", ["any"])[0] or "any").strip().lower()
+            if name not in _CATCH_KIND:
+                self._send({"ok": False, "error": "unknown kind %r; use one of %s"
+                            % (name, ", ".join(sorted(_CATCH_KIND)))})
+                return
+            want = _CATCH_KIND[name]
+            try:
+                wait = max(1.0, min(30.0, float(q.get("wait", ["10"])[0])))
+            except ValueError:
+                wait = 10.0
+            # ARM via the ONE proven encoder (console_mux). bytes are <0x80, so latin-1 round-trips
+            # through SerialLink.write's .encode().
+            _SERIAL.write(console_mux.encode("arm_trap", want).decode("latin-1"))
+            print(f"[trapcatch] armed {name} (wire {want}), wait {wait:.0f}s", flush=True)
+            deadline = time.time() + wait
+            while time.time() < deadline:
+                # Ctrl-R -> gini_trapdump: non-perturbing, and non-destructive (ready stays set).
+                m = _CATCH_RE.search(_SERIAL.dump(b"\x12") or "")
+                # ready AND the captured kind matches what we armed — the kind-match closes the mild
+                # re-arm race (a stale capture of another kind is ignored, not returned).
+                if m and m.group(1) == "1" and (want == 9 or int(m.group(2)) == want):
+                    print("[trapcatch] caught kind %s pid %s h%s"
+                          % (m.group(2), m.group(7), m.group(17)), flush=True)
+                    self._send({"ok": True, "out": _catch_to_trapframe(m)})
+                    return
+                time.sleep(0.25)
+            reason = (f"armed for {name}; no matching trap in {wait:.0f}s — the machine may be idle, "
+                      f"or the ticks are landing on another hart")
+            print(f"[trapcatch] timeout: {reason}", flush=True)
+            self._send({"ok": False, "error": reason})
         elif u.path == "/control":
             # set the time-slice quantum over the SERIAL (no gdb): Ctrl-\ resets it to 1, then
             # Ctrl-] bumps it up to the target. Reliable console input, unlike the gdb write.
