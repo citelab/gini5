@@ -400,3 +400,22 @@ def test_a_read_that_yields_nothing_claims_nothing():
     from gini.runtime.xv6_bridge import _VmReader
     dead = _VmReader(_OneText("")).snapshot()
     assert dead.ok is False and dead.have == () and dead.source == "real"
+
+
+def test_catch_trap_carries_the_reason_on_a_failed_catch():
+    """The agent returns {ok:false, error} on a timeout. The reason is kept on the frame AND on
+    last_catch_error (like last_run_error), so the lab can say WHY nothing was caught instead of
+    silently opening an authored journey."""
+    from gini.runtime.xv6_bridge import AgentClient, Xv6Bridge
+    reason = "armed for timer; no matching trap in 10s — the machine may be idle"
+    br = Xv6Bridge(AgentClient("http://x", get=FakeAgent().get,
+                               post=lambda u: json.dumps({"ok": False, "error": reason})))
+    fr = br.catch_trap("timer")
+    assert fr.ok is False and fr.error == reason
+    assert br.last_catch_error == reason
+
+
+def test_catch_trap_passes_the_wait_through():
+    br, fa = _bridge()
+    br.catch_trap("timer", wait=20)
+    assert "kind=timer" in fa.posts[-1] and "wait=20" in fa.posts[-1]

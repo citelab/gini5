@@ -164,3 +164,19 @@ def test_trap_lab_kind_selector_passes_kind_to_catch(app):
 def _mk_frame():
     from gini.domain.xv6 import TrapFrame
     return TrapFrame(scause="0x8000000000000005", kind=2, kind_name="timer", ok=True)
+
+
+def test_a_failed_catch_shows_the_reason_and_opens_no_journey(app):
+    """A catch that found nothing must say WHY, not open a journey of authored placeholders as if
+    a trap had been caught."""
+    from gini.domain.xv6 import TrapFrame
+    from gini.ui.trap_lab import TrapLab
+    got = []
+    lab = TrapLab(None, _theme(app), _Dev(), traps_source=lambda: "",
+                  catch_source=lambda kind="any": TrapFrame(ok=False, error="no timer in 10s"),
+                  on_step=lambda fr: got.append(fr))
+    lab._step()
+    _wait(app, lambda: "no timer" in lab._catch_msg.text())
+    assert got == [], "a failed catch opened the journey anyway"
+    assert "no timer in 10s" in lab._catch_msg.text()
+    lab.close()

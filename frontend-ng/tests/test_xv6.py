@@ -216,6 +216,38 @@ def test_parse_trapframe_from_gdb_output():
     assert fr.regs["a7"] == "0x000000000000000f" and fr.regs["sp"] == "0x0000003fffff9000"
 
 
+def test_parse_trapframe_reads_the_new_capture_fields():
+    """The kernel-side capture adds from_user/hart/qticks/quantum (§11). The parser reads them; an
+    OLD image without them still parses (the fields keep their defaults) — additive + skew-safe."""
+    from gini.domain.xv6 import parse_trapframe
+    out = ("===TRAP===\n"
+           "scause 0x8000000000000005\nsepc 0x0000000000000006\nstval 0x0\npid 4\n"
+           "from_user 1\nhart 1\nqticks 0\nquantum 1\n"
+           "epc 0x6\nra 0x72\nsp 0x3fd0\na0 0x1\na1 0x3fe0\na2 0x2027\na7 0x7\n")
+    fr = parse_trapframe(out)
+    assert fr.ok and fr.kind == 2 and "timer" in fr.kind_name      # timer interrupt
+    assert fr.from_user is True and fr.hart == 1
+    assert fr.quantum == 1 and fr.qticks == 0                       # this tick did NOT preempt
+
+
+def test_a_kernel_mode_trap_is_marked_not_from_user():
+    """from_user 0 is the load-bearing flag: no trapframe was written, so the journey must not
+    show the user registers as this trap's state."""
+    from gini.domain.xv6 import parse_trapframe
+    fr = parse_trapframe("===TRAP===\nscause 0x8000000000000009\nsepc 0x80001abc\nstval 0x0\n"
+                         "pid 4\nfrom_user 0\nhart 0\nqticks 2\nquantum 3\n")
+    assert fr.ok and fr.from_user is False and fr.kind == 3          # device, kernel-mode
+
+
+def test_an_old_image_trapframe_still_parses():
+    """No from_user/hart/qticks/quantum lines: the new fields keep their defaults, ok is unchanged.
+    This is the old-image / new-gBuilder skew cell."""
+    from gini.domain.xv6 import parse_trapframe
+    fr = parse_trapframe("===TRAP===\nscause 0x8\nsepc 0x1080\nstval 0x0\npid 5\na7 0xf\n")
+    assert fr.ok and fr.kind == 0                                    # syscall
+    assert fr.from_user is True and fr.hart == -1                    # defaults, no crash
+
+
 def test_parse_trapframe_timeout_is_not_ok():
     from gini.domain.xv6 import parse_trapframe
     assert parse_trapframe("gdb-timeout").ok is False        # idle kernel -> authored fallback

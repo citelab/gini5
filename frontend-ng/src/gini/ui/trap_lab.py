@@ -151,6 +151,12 @@ class TrapLab(QDialog):
             f"border-radius:8px;padding:6px 12px;}}QPushButton:hover{{border-color:{t.accent};}}")
         self._step_btn.clicked.connect(self._step)
         row.addWidget(self._step_btn)
+        # Why a catch found nothing, when it does. Shown here rather than opening a journey full of
+        # authored placeholders as if a trap had been caught.
+        self._catch_msg = QLabel("")
+        self._catch_msg.setWordWrap(True)
+        self._catch_msg.setStyleSheet(f"color:{t.muted};font-size:12px;")
+        row.addWidget(self._catch_msg, 1)
         root.addLayout(row)
 
         self.traps_ready.connect(self._apply)
@@ -198,7 +204,15 @@ class TrapLab(QDialog):
     def _on_caught(self, frame) -> None:
         self._step_btn.setEnabled(True)
         self._step_btn.setText("  Step a trap ▸")
-        if not self._closed and callable(self._on_step):
+        if self._closed:
+            return
+        # A catch that found nothing: say WHY (the agent's real reason), do not open a journey that
+        # would present authored placeholders as a captured trap.
+        if frame is not None and not getattr(frame, "ok", False):
+            self._catch_msg.setText(getattr(frame, "error", "") or "No trap was caught.")
+            return
+        self._catch_msg.setText("")
+        if callable(self._on_step):
             self._on_step(frame)
 
     def _fetch(self) -> None:

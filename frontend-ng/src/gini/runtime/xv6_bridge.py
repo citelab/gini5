@@ -331,19 +331,27 @@ class Xv6Bridge:
         """Raw gini_trapdump text (TC per-kind counters + TR trap ring) for the Traps face."""
         return self.agent.get_text("/traps")
 
-    def catch_trap(self, kind: str = "any"):
-        """Freeze the next live user trap (gdb /trapcatch) and parse it into a TrapFrame — the
-        real scause/sepc/stval + saved user registers that seed the CPU journey. `kind` conditions
-        the breakpoint (pagefault/syscall/timer/illegal/device). Returns a not-ok TrapFrame on
-        timeout/idle, so the journey falls back to its authored captions."""
+    def catch_trap(self, kind: str = "any", wait: float | None = None):
+        """Arm the kernel-side one-shot capture and parse the caught trap into a TrapFrame — the
+        real scause/sepc/stval + (for a user-mode trap) the saved user registers that seed the CPU
+        journey. `kind` is any/syscall/pagefault/timer/device/illegal; `wait` overrides the agent's
+        default catch window. On timeout the agent returns `{ok:false, error}`; that reason is kept
+        on the frame AND on `last_catch_error` (like `last_run_error`), so the lab can say WHY a
+        catch found nothing instead of silently opening an authored journey."""
         from ..domain.xv6 import parse_trapframe
-        raw = self.agent.post(f"/trapcatch?kind={kind}")
-        txt = ""
+        self.last_catch_error = ""
+        path = f"/trapcatch?kind={kind}" + (f"&wait={float(wait)}" if wait else "")
+        raw = self.agent.post(path)
         try:
-            txt = json.loads(raw).get("out", "")
+            reply = json.loads(raw)
         except Exception:
-            txt = raw or ""
-        return parse_trapframe(txt)
+            reply = {"out": raw or ""}
+        if reply.get("ok") is False:
+            self.last_catch_error = str(reply.get("error") or "the catch found nothing")
+            fr = parse_trapframe("")            # ok=False
+            fr.error = self.last_catch_error
+            return fr
+        return parse_trapframe(reply.get("out", ""))
 
     def alarms(self) -> str:
         """Raw gini_dump text (contains the per-proc `ALARM …` lines) for the sigalarm-lab strip."""

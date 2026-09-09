@@ -695,6 +695,15 @@ class TrapFrame:
     kind: int = 5
     kind_name: str = "other"
     ok: bool = False
+    # From the kernel-side capture (xv6-rebuild-batch §11). `from_user` False means a KERNEL-mode
+    # trap: uservec did not run and no trapframe was written, so `regs` is not this trap's user
+    # state and the journey must not show it. `qticks`/`quantum` say whether this timer tick
+    # actually preempted (qticks+1 == quantum). `error` carries an honest reason on a failed catch.
+    from_user: bool = True
+    hart: int = -1
+    qticks: int = 0
+    quantum: int = 0
+    error: str = ""
 
 
 def parse_trapframe(text: str) -> TrapFrame:
@@ -718,6 +727,16 @@ def parse_trapframe(text: str) -> TrapFrame:
                 pass
         elif key in ("epc", "ra", "sp", "a0", "a1", "a2", "a3", "a4", "a5", "a6", "a7"):
             fr.regs[key] = val
+        elif key == "from_user":
+            try:
+                fr.from_user = int(val, 0) != 0
+            except ValueError:
+                pass
+        elif key in ("hart", "qticks", "quantum"):
+            try:
+                setattr(fr, key, int(val, 0))
+            except ValueError:
+                pass
     if fr.scause:
         fr.kind, fr.kind_name = decode_scause(fr.scause)
         fr.ok = True
