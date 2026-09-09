@@ -1697,9 +1697,9 @@ regex_once("kernel/console.c",
            r"  case C('X'): gini_shadow_reset(); break;  // GINI: clear reject/call counters\n"
            f"  case C('L'): gini_obs_begin(); gini_lockdump(); gini_obs_end(); break;  "
            "// GINI: lock contention (0x1e/0x1f-bracketed)\n"
-           r"  case C('Z'): gini_lockreset(); break;  // GINI: zero the lock counters\n"
-           f"  case C('W'): gini_obs_begin(); gini_shadowdump(); gini_obs_end(); break;  "
-           "// GINI: shadow manifest (0x1e/0x1f-bracketed)",
+           r"  case C('Z'): gini_lockreset(); break;  // GINI: zero the lock counters",
+           # NOTE: no `case C('W')` — Ctrl-W is now the command-mux PREFIX (§4f5). Shadowdump moved
+           # to the self-escape Ctrl-W Ctrl-W; the agent's /shadows sends b"\x17\x17" to match.
            "gini_dump();")
 
 # 4f2) console.c — CONTROL-PLANE kill (pid-carrying). The switch above handles single control chars;
@@ -1758,6 +1758,43 @@ regex_once("kernel/console.c",
            "  if(c == C('G')){ gini_shidx = 0; release(&cons.lock); return; }\n"
            r"  \1",
            "GINI: shadow toggle by index")
+
+# 4f5) console.c — TWO-BYTE COMMAND MULTIPLEXER. The control-byte space is exhausted, so a fresh
+# command space is multiplexed behind ONE prefix: Ctrl-W. `PREFIX <letter>` is a command, so every
+# future console command needs no new byte. `backend/xv6/console_mux.py` is the PROVEN executable
+# spec for this exact state machine (round-trip, passthrough, interleave-abort, fuzz) — keep the
+# two in step. Ctrl-W's old job (shadowdump) moves to the self-escape Ctrl-W Ctrl-W. Two locks make
+# it safe against a human typing into the same stream: selectors are PRINTABLE (a selector split
+# from its prefix by a keystroke is just text, never a single-byte command), and an unrecognised
+# byte ABORTS and is reprocessed as ordinary input (never a wrong command) — the discipline the
+# Ctrl-G machine lacked (known issue #1). Placed after the other entry machines; an aborted byte
+# falls through to the switch, which is faithful for every reachable input (the only bytes that
+# would want an earlier machine are control bytes the human never types).
+regex_once("kernel/console.c",
+           r"(switch\s*\(c\)\s*\{)",
+           "static int gini_mux = 0, gini_mux_arg = 0;  // 0 idle | 1 await-sel | 2 await-digits\n"
+           "  if(gini_mux == 1){\n"
+           "    gini_mux = 0;\n"
+           "    if(c == C('W')){ gini_obs_begin(); gini_shadowdump(); gini_obs_end();"
+           " release(&cons.lock); return; }  // PREFIX PREFIX -> shadowdump (its new binding)\n"
+           "    if(c == 'a'){ gini_mux = 2; gini_mux_arg = 0; release(&cons.lock); return; }"
+           "  // arm the trap capture; a kind digit + newline follow\n"
+           "    if(c == 'r'){ gini_boardreset(); release(&cons.lock); return; }"
+           "  // reset the kernel board (was dead code — known issue #4)\n"
+           "    /* unrecognised selector -> abort: fall through and process c below */\n"
+           "  } else if(gini_mux == 2){\n"
+           "    if(c >= '0' && c <= '9'){ gini_mux_arg = gini_mux_arg * 10 + (c - '0');"
+           " release(&cons.lock); return; }\n"
+           # 10/13 (newline/CR) as ints, NOT '\\n'/'\\r' char literals: this string is a re.subn
+           # REPLACEMENT, which turns a backslash-n into a real newline and corrupts the C literal.
+           "    if(c == 10 || c == 13){ gini_mux = 0;"
+           " gini_catch_kind = (gini_mux_arg == 9) ? GINI_CATCH_ANY : gini_mux_arg;"
+           " gini_catch_ready = 0; release(&cons.lock); return; }  // newline/CR ends the kind arg\n"
+           "    gini_mux = 0;  /* non-digit mid-argument -> abort: fall through */\n"
+           "  }\n"
+           "  if(c == C('W')){ gini_mux = 1; release(&cons.lock); return; }  // the prefix byte\n"
+           r"  \1",
+           "GINI: two-byte command mux (Ctrl-W prefix)")
 
 # 4g) syscall.c — per-syscall counters (histogram) + a recent-call trace ring (strace view).
 #     The definitions + gini_scdump go at end-of-file (types/externs are declared in defs.h so

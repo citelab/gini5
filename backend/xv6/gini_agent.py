@@ -648,8 +648,9 @@ class Handler(BaseHTTPRequestHandler):
             self._send(_SERIAL.dump(b"\x06"), ctype="text/plain")   # Ctrl-F -> gini_fsdump()
         elif path == "/sc":
             self._send(_SERIAL.dump(b"\x13"), ctype="text/plain")   # Ctrl-S -> gini_scdump()
-        elif path == "/shadows":                                    # Ctrl-W -> gini_shadowdump(),
-            self._send(_stamp_manifest(_SERIAL.dump(b"\x17")), ctype="text/plain")  # hash-stamped
+        elif path == "/shadows":              # Ctrl-W Ctrl-W -> gini_shadowdump() (mux self-escape;
+            #                                   bare Ctrl-W is now the command-mux prefix — §4f5)
+            self._send(_stamp_manifest(_SERIAL.dump(b"\x17\x17")), ctype="text/plain")  # hash-stamped
         elif path == "/vmall":
             self._send(_SERIAL.dump(b"\x01"), ctype="text/plain")   # Ctrl-A -> gini_vmdump_all()
         elif path == "/faults":

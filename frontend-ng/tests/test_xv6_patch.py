@@ -96,7 +96,13 @@ def test_patcher_applies_and_is_idempotent(tmp_path):
     assert "gini_dump();" in con and "gini_vmdump();" in con and "gini_fsdump();" in con
     assert "gini_vmdump_all();" in con and "gini_faultdump();" in con
     assert "case C('A')" in con and "case C('E')" in con
-    assert "case C('W')" in con and "gini_shadowdump();" in con   # the shadow manifest dump
+    # Ctrl-W is now the command-mux PREFIX (§4f5), NOT a switch case; shadowdump moved to the
+    # self-escape Ctrl-W Ctrl-W and is reachable from the mux block instead.
+    assert "case C('W')" not in con, "Ctrl-W is the mux prefix now, not a switch case"
+    assert "gini_shadowdump();" in con                            # still reachable (mux self-escape)
+    assert "if(c == C('W')){ gini_mux = 1;" in con               # Ctrl-W is the mux prefix
+    assert "gini_catch_kind = (gini_mux_arg == 9)" in con         # arm-trap wired through the mux
+    assert "if(c == 'r'){ gini_boardreset();" in con              # #4 boardreset homed on the mux
     assert "case C('L')" in con and "gini_lockdump();" in con     # lock contention (Lock Lab)
     # Every bracketed dump must be BALANCED — an unmatched 30/31 would corrupt the frame the
     # agent splits on, so compare the counts to each other rather than to a magic number.
