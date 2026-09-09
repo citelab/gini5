@@ -186,21 +186,50 @@ def test_every_distribution_has_a_publish_workflow():
             f"silently leave this one behind")
 
 
+def _publish_workflows():
+    """The workflows that actually build and upload a distribution.
+
+    It used to be safe to say "every file in .github/workflows/", because every one of them
+    published. `tests.yml` broke that: it runs the suite on each push and uploads nothing. The two
+    rules below are about PUBLISHING, so they have to name the publishers rather than assume it.
+
+    Keyed on `outdir dist/` — the line that makes a workflow a publisher — and not on a filename
+    convention, so a new publish workflow is covered the day it is added and cannot opt out of
+    these checks by being called something else.
+    """
+    flows = sorted((ROOT / ".github" / "workflows").glob("*.yml"))
+    pub = [f for f in flows if "outdir dist/" in f.read_text(encoding="utf-8")]
+    # Without this, a bug that made the filter match nothing would turn both callers into loops
+    # over an empty list — green, and checking nothing at all.
+    assert pub, "no publish workflow found; the rules below would pass vacuously"
+    return pub
+
+
 def test_each_project_gets_its_own_workflow_file():
     """PyPI's trusted publishing binds one workflow file per project, and a shared file would let
-    one distribution's failure block the rest."""
-    flows = sorted((ROOT / ".github" / "workflows").glob("*.yml"))
-    assert len(flows) >= len(_distributions())
-    for f in flows:
+    one distribution's failure block the rest.
+
+    Stated as two rules since not every workflow publishes any more. The binding: NO workflow may
+    build more than one distribution — checked across every file, including the ones that publish
+    nothing, because that is where a second `outdir dist/` would be easiest to add by accident.
+    The coverage: there must still be at least one publisher per distribution.
+    """
+    for f in sorted((ROOT / ".github" / "workflows").glob("*.yml")):
         built = [l for l in f.read_text(encoding="utf-8").splitlines() if "outdir dist/" in l]
-        assert len(built) == 1, f"{f.name} builds {len(built)} distributions; expected exactly 1"
+        assert len(built) <= 1, f"{f.name} builds {len(built)} distributions; expected at most 1"
+    assert len(_publish_workflows()) >= len(_distributions())
 
 
 def test_the_release_script_names_every_workflow_it_will_trigger():
     """The script prints what the tag is about to publish, and you confirm from that list. If it
-    under-reports, you approve a release believing something shipped that did not."""
+    under-reports, you approve a release believing something shipped that did not.
+
+    Publishers only: a workflow that uploads nothing has nothing to under-report, and requiring
+    `tests.yml` to appear in the release script would be asking the confirmation list to name
+    something it does not publish.
+    """
     script = (ROOT / "scripts" / "release.sh").read_text(encoding="utf-8")
-    for f in (ROOT / ".github" / "workflows").glob("*.yml"):
+    for f in _publish_workflows():
         assert f.name in script, f"release.sh does not mention {f.name} in its confirmation"
 
 
