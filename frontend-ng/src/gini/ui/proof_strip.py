@@ -29,7 +29,6 @@ Thin by design: every decision belongs to `services.proof_recorder`, which is te
 """
 from __future__ import annotations
 
-import threading
 
 from PySide6.QtCore import Qt, Signal
 from PySide6.QtWidgets import (
@@ -37,6 +36,7 @@ from PySide6.QtWidgets import (
 )
 
 from ..services import outbox, tc_submit
+from .worker_host import run_off_gui
 
 
 def _ago(seconds: float) -> str:
@@ -224,7 +224,7 @@ class ProofStrip(QWidget):
                 answer = {}                       # empty == could not ask, NOT a refusal
             self.armChecked.emit(typed, answer)
 
-        threading.Thread(target=work, daemon=True).start()
+        run_off_gui(self, work)
 
     def _on_arm_checked(self, typed: str, answer: dict) -> None:
         if answer and not answer.get("ok"):
@@ -338,7 +338,7 @@ class ProofStrip(QWidget):
                 answer = {"ok": False, "unreachable": True, "error": str(e)}
             self.handedIn.emit(result, answer)
 
-        threading.Thread(target=work, daemon=True).start()
+        run_off_gui(self, work)
 
     def _busy(self, on: bool) -> None:
         """Show that something is in flight. The bar is the only honest progress we have."""
@@ -417,7 +417,7 @@ class ProofStrip(QWidget):
         def work():
             self.flushed.emit(outbox.flush(url, tc_submit.submit))
 
-        threading.Thread(target=work, daemon=True).start()
+        run_off_gui(self, work)
 
     def _on_flushed(self, summary: dict) -> None:
         self._busy(False)

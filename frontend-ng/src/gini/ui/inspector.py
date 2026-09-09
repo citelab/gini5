@@ -7,7 +7,6 @@ device's terminal/console.
 """
 from __future__ import annotations
 
-import threading
 
 from PySide6.QtCore import Qt, QTimer, Signal
 from PySide6.QtWidgets import (
@@ -19,6 +18,7 @@ from ..agent.api import GiniAPI
 from ..app import AppContext
 from .theme import ThemeManager, icons
 from .theme.manager import scale_css as _scss
+from .worker_host import run_off_gui
 
 
 _FUNCTION_STARTER = (
@@ -524,8 +524,7 @@ class Inspector(QWidget):
         self._show_rider_live(d)                 # reflect its last run (or a hint) in the Live tab
 
     def _toggle_rider(self, device_id: str) -> None:
-        import threading
-        threading.Thread(target=lambda: self.ctx.toggle_rider(device_id), daemon=True).start()
+        run_off_gui(self, lambda: self.ctx.toggle_rider(device_id))
 
     def _on_rider_ran(self, device_id: str, result) -> None:
         if device_id != self._device_id:
@@ -661,7 +660,7 @@ class Inspector(QWidget):
                 self._polling = False
             if allstats:
                 self.metrics_ready.emit((allstats, time.monotonic()))
-        threading.Thread(target=work, daemon=True).start()
+        run_off_gui(self, work)
 
     def _on_metrics(self, payload) -> None:
         """Append one whole-lab sample to EVERY element's history (so each keeps a
@@ -926,7 +925,7 @@ class Inspector(QWidget):
             else:
                 out = "This is a host container — use “Log in” for a shell."
             self.live_ready.emit(out)
-        threading.Thread(target=work, daemon=True).start()
+        run_off_gui(self, work)
 
     @staticmethod
     def _runtime_note(d) -> str:

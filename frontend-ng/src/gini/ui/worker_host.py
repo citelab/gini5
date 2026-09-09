@@ -1,9 +1,13 @@
-"""Running slow hardware work off the GUI thread, safely.
+"""Running slow work off the GUI thread, safely.
 
-Extracted from board_dialog so that every hardware dialog shares ONE copy. The rules
-below are not stylistic — each one is a bug that aborted the whole process when it was
-found by running the setup dialog headless, and re-deriving them per dialog is how they
-come back:
+Two mechanisms, one subject. `WorkerHost` (rules 1-3) is the QThread + worker-QObject pair the
+hardware dialogs use for serial work. `run_off_gui` (rule 4, at the foot of this file) is the
+plain daemon thread every lab, HUD and dialog uses for a docker exec or an HTTP read. They share
+a file because they share the failure: something outlives the widget that started it.
+
+Rules 1-3 were extracted from board_dialog so that every hardware dialog shares ONE copy. They
+are not stylistic — each one is a bug that aborted the whole process when it was found by running
+the setup dialog headless, and re-deriving them per dialog is how they come back:
 
 1. **Hold a Python reference to the worker AND the thread.** PySide does not keep a
    worker alive merely because a signal is connected to it, so a worker passed in as a
@@ -20,9 +24,12 @@ A host must provide `_alive: bool` and a `_worker_failed(str)` slot.
 """
 from __future__ import annotations
 
+import itertools
+import threading
+import traceback
 import warnings
 
-from PySide6.QtCore import QObject, QThread
+from PySide6.QtCore import QCoreApplication, QObject, QThread, Signal, Slot
 
 # Workers and their threads outlive the dialog that started them, so they need an owner
 # that is not the dialog. Entries retire themselves when the thread ends.
@@ -100,3 +107,118 @@ class WorkerHost:
                 except (RuntimeError, TypeError):
                     pass
         self._connections = []
+
+
+# --------------------------------------------------------------------------------------------- #
+# Rule 4, and the reason this section exists: a plain `threading.Thread` closure must never be
+# the last owner of the widget it reports back to.
+#
+# Most background work in this app is not a WorkerHost QThread — it is the small, uniform
+# `threading.Thread(target=work, daemon=True)` that every lab, HUD and dialog uses to keep a
+# docker exec or an HTTP read off the GUI thread. That shape has one flaw, and it is not the
+# `self._closed` check those closures all make. It is OWNERSHIP:
+#
+#     def work():
+#         txt = self._src()          # `work` closes over self — a strong reference
+#         if not self._closed:
+#             self.ready.emit(txt)   # queued to the GUI thread; fine on its own
+#     threading.Thread(target=work, daemon=True).start()
+#
+# A parentless dialog is owned by Python. Close it and drop the last GUI-side reference — which
+# is exactly what happens when a lab window is replaced, or when a test function returns — and
+# the only reference left is the one inside `work`. The widget's refcount then reaches zero when
+# the WORKER THREAD's frame is torn down, so PySide destroys a QWidget off the GUI thread. Qt
+# forbids that, and the symptom is a segfault somewhere else entirely: in the next
+# `processEvents()`, in an unrelated test, at a different point on every run.
+#
+# Measured before the fix: a loop of 30 open/close cycles destroyed 30 of 30 widgets on a worker
+# thread, 0 on the GUI thread.
+#
+# `_closed` cannot help — it is a Python attribute and still reads perfectly well after the C++
+# object is gone. Nor can a weakref inside the closure, on its own: dereferencing it to emit
+# re-creates a strong reference on the worker thread, and the same teardown can land there.
+#
+# So the fix is to give the GUI side an owner that outlives the worker. `run_off_gui` holds the
+# widget in a module-level registry for the duration of the call, and the worker releases it by
+# emitting to a singleton reaper that lives on the GUI thread. The worker drops its own reference
+# BEFORE it asks for that release, so no interleaving leaves it holding the last one. The widget
+# is then destroyed where every widget must be: on the GUI thread.
+# --------------------------------------------------------------------------------------------- #
+
+_HELD: dict[int, object] = {}          # token -> owner, kept alive while its worker runs
+_HELD_LOCK = threading.Lock()
+_TOKENS = itertools.count()
+
+
+class _Reaper(QObject):
+    """Drops a held reference ON THE GUI THREAD.
+
+    A module-level singleton, deliberately: it must outlive every widget it releases, and it must
+    live in the GUI thread so the queued `released` emission is delivered there. Nothing else in
+    the process holds a reference to it, which is also why it can never be the object whose
+    destruction is being made safe.
+    """
+
+    released = Signal(int)
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.released.connect(self._drop)    # cross-thread emit -> queued -> runs on the GUI thread
+
+    @Slot(int)
+    def _drop(self, token: int) -> None:
+        with _HELD_LOCK:
+            owner = _HELD.pop(token, None)
+        del owner                            # the last reference may die here, and here is correct
+
+
+_reaper: "_Reaper | None" = None
+
+
+def _the_reaper() -> "_Reaper | None":
+    """The singleton, built lazily on the GUI thread (every caller of `run_off_gui` is on it)."""
+    global _reaper
+    if _reaper is None and QCoreApplication.instance() is not None:
+        _reaper = _Reaper()
+    return _reaper
+
+
+def held_count() -> int:
+    """How many owners are currently pinned. For tests and for a leak check; never for logic."""
+    with _HELD_LOCK:
+        return len(_HELD)
+
+
+def run_off_gui(owner: QObject, work, *args) -> None:
+    """Run `work(*args)` on a daemon thread, keeping `owner` alive and GUI-thread-owned.
+
+    A drop-in for `threading.Thread(target=work, daemon=True).start()` in any method of a QObject
+    or QWidget — same thread, same daemon semantics, same `self._closed` guards inside `work`. The
+    only difference is who holds the last reference to `owner`; see the note above for why that is
+    the whole bug.
+
+    Exceptions out of `work` are printed rather than propagated. That is not a style choice: an
+    escaping exception keeps a traceback, a traceback keeps `work`'s frame, and that frame is the
+    strong reference this function exists to get rid of — so it would be released on the worker
+    thread after all, which is the crash.
+    """
+    reaper = _the_reaper()
+    if reaper is None:                       # no QApplication: no widgets, nothing to protect
+        threading.Thread(target=work, args=args, daemon=True).start()
+        return
+
+    token = next(_TOKENS)
+    with _HELD_LOCK:
+        _HELD[token] = owner
+    box = [work, args]                       # the worker's ONLY strong path to `owner`
+
+    def guarded() -> None:
+        try:
+            box[0](*box[1])
+        except Exception:                    # noqa: BLE001 — see the docstring: never propagate
+            traceback.print_exc()
+        finally:
+            box[0] = box[1] = None           # drop the closure, and the widget with it …
+            reaper.released.emit(token)      # … and only then ask the GUI thread to let go
+
+    threading.Thread(target=guarded, daemon=True).start()

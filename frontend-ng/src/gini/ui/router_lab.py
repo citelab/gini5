@@ -17,6 +17,7 @@ from PySide6.QtWidgets import (
 
 from ..domain.router_modules import BASE, CUSTOM, INLINE, MODULE_BY_KEY, RouterProgram
 from .theme import ThemeManager, icons
+from .worker_host import run_off_gui
 
 
 class RouterLab(QDialog):
@@ -391,7 +392,6 @@ class RouterLab(QDialog):
             return
         if not self._round_begin(1):
             return                              # previous round still out; skip this tick
-        import threading
         self._set_flow_status("reading flow table…")
         qf = self.query_fn
 
@@ -421,7 +421,7 @@ class RouterLab(QDialog):
             self._emit(self.tablestats_ready, stats)
             if counted:
                 self._emit(self.worker_done)
-        threading.Thread(target=work, daemon=True).start()
+        run_off_gui(self, work)
 
     def _on_flows(self, rows) -> None:
         if rows is None:
@@ -515,7 +515,6 @@ class RouterLab(QDialog):
         if self.query_fn is None:
             self._set_route_status("not running — press Run to see the live route table")
             return
-        import threading
         self._set_route_status("reading route table…")
         qf = self.query_fn
 
@@ -543,7 +542,7 @@ class RouterLab(QDialog):
             self._emit(self.chain_ready, chain)
             if counted:
                 self._emit(self.worker_done)
-        threading.Thread(target=work, daemon=True).start()
+        run_off_gui(self, work)
 
     def _on_routes(self, rows) -> None:
         if rows is None:
@@ -730,7 +729,6 @@ class RouterLab(QDialog):
         if self.query_fn is None:
             self._set_qos_status("not running — press Run to see live queue stats")
             return
-        import threading
         qf = self.query_fn
 
         def work():
@@ -750,7 +748,7 @@ class RouterLab(QDialog):
             self._emit(self.qstats_ready, payload)
             if counted:
                 self._emit(self.worker_done)
-        threading.Thread(target=work, daemon=True).start()
+        run_off_gui(self, work)
 
     def _on_qstats(self, payload) -> None:
         if payload is None:                             # a failed poll — carry the last table
@@ -829,7 +827,6 @@ class RouterLab(QDialog):
         if self.command_fn is None:
             self._set_fw_status("not running — press Run to deploy the rules")
             return
-        import threading
         self._set_fw_status("deploying…")
         cf, qf = self.command_fn, self.query_fn
         cmds = deploy_commands(self.fw_rules.toPlainText())
@@ -843,7 +840,7 @@ class RouterLab(QDialog):
             except Exception as e:
                 listing = f"(deploy failed: {e})"
             self._emit(self.chain_ready, listing)
-        threading.Thread(target=work, daemon=True).start()
+        run_off_gui(self, work)
 
     def _set_fw_status(self, text: str) -> None:
         if hasattr(self, "fw_status"):
@@ -938,7 +935,6 @@ class RouterLab(QDialog):
         if qf is None:
             self._set_delay_status("not running — press Run, then Apply")
             return
-        import threading
         self._set_delay_status("applying…")
         cmds = [self._delay_cmd("ingress", self.di_base.value(), self.di_jit.value(), self.di_corr.value()),
                 self._delay_cmd("egress",  self.de_base.value(),  self.de_jit.value(),  self.de_corr.value())]
@@ -952,7 +948,7 @@ class RouterLab(QDialog):
             except Exception as e:
                 out = f"(apply failed: {e})"
             self._emit(self.delay_ready, out.strip() or "applied")
-        threading.Thread(target=work, daemon=True).start()
+        run_off_gui(self, work)
 
     def _clear_delay(self) -> None:
         for s in (self.di_base, self.di_jit, self.di_corr,
@@ -965,7 +961,6 @@ class RouterLab(QDialog):
         if qf is None:
             self._set_delay_status("cleared (not running)")
             return
-        import threading
         self._set_delay_status("clearing…")
 
         def work():
@@ -974,7 +969,7 @@ class RouterLab(QDialog):
             except Exception as e:
                 self._emit(self.delay_ready, f"(clear failed: {e})"); return
             self._emit(self.delay_ready, "cleared")
-        threading.Thread(target=work, daemon=True).start()
+        run_off_gui(self, work)
 
     def _set_delay_status(self, text: str) -> None:
         if hasattr(self, "delay_status"):
@@ -1019,7 +1014,6 @@ class RouterLab(QDialog):
         if self.command_fn is None:
             self._set_deploy_status("not running — press Run to deploy the chain")
             return
-        import threading
         self._set_deploy_status("deploying…")
         prog = self.program
         cf, qf = self.command_fn, self.query_fn
@@ -1033,7 +1027,7 @@ class RouterLab(QDialog):
             except Exception as e:
                 listing = f"(deploy failed: {e})"
             self._emit(self.chain_ready, listing)
-        threading.Thread(target=work, daemon=True).start()
+        run_off_gui(self, work)
 
     def _on_chain(self, text: str) -> None:
         from ..domain.modulechain import chain_summary

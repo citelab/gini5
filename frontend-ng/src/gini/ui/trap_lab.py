@@ -23,6 +23,7 @@ from ..domain.xv6 import (
     TRAP_KINDS, TrapRate, parse_alarms, parse_trapcounts, parse_traptrace, trap_kind_name,
 )
 from .theme import ThemeManager, icons
+from .worker_host import run_off_gui
 
 # trap kinds the "Step a trap" catcher can target (conditioned gdb breakpoint); "any" = next trap
 _CATCH_KINDS = ["any", "pagefault", "syscall", "timer", "illegal", "device"]
@@ -182,7 +183,6 @@ class TrapLab(QDialog):
             kind = self._kind.currentText()
             self._step_btn.setEnabled(False)
             self._step_btn.setText("  freezing a trap…")
-            import threading
 
             def work():
                 try:
@@ -191,7 +191,7 @@ class TrapLab(QDialog):
                     fr = None
                 if not self._closed:
                     self.caught.emit(fr)
-            threading.Thread(target=work, daemon=True).start()
+            run_off_gui(self, work)
         else:
             self._on_step(None)
 
@@ -205,7 +205,6 @@ class TrapLab(QDialog):
         if self._busy or self._closed:
             return
         self._busy = True
-        import threading
 
         def work():
             try:
@@ -222,7 +221,7 @@ class TrapLab(QDialog):
                 self.traps_ready.emit(txt or "")
                 if callable(self._alarm_src):
                     self.alarms_ready.emit(atxt)
-        threading.Thread(target=work, daemon=True).start()
+        run_off_gui(self, work)
 
     def _apply_alarms(self, txt) -> None:
         if self._closed:

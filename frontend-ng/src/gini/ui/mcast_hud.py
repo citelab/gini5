@@ -21,6 +21,7 @@ from PySide6.QtWidgets import QWidget
 
 from ..domain.mcast import McastTracker, parse_cp_status
 from .glass import apply_glass, paint_glass_panel
+from .worker_host import run_off_gui
 
 _CHIP_H = 22
 _ROW_H = 26
@@ -189,7 +190,6 @@ class McastHudController(QObject):
     def refresh(self) -> None:
         if self._busy:
             return
-        import threading
 
         # Snapshot the router list HERE, on the GUI thread -- see the same note in
         # flow_hud.refresh(). `_routers()` iterates ctx.topology.devices, which a project
@@ -215,7 +215,7 @@ class McastHudController(QObject):
                 self.rows_ready.emit(rows, polled, tnow)
             finally:
                 self._busy = False
-        threading.Thread(target=work, daemon=True).start()
+        run_off_gui(self, work)
 
     def show_topright(self) -> None:
         par = self.hud.parentWidget()

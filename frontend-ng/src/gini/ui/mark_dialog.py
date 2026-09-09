@@ -20,7 +20,6 @@ receipts would make the tool useless exactly when it is being used most.
 from __future__ import annotations
 
 import pathlib
-import threading
 
 from PySide6.QtCore import Qt, Signal
 from PySide6.QtWidgets import (
@@ -29,6 +28,7 @@ from PySide6.QtWidgets import (
 )
 
 from ..services import tc_staff
+from .worker_host import run_off_gui
 
 
 def _fmt(rep: dict) -> str:
@@ -186,7 +186,7 @@ class MarkDialog(QDialog):
             except Exception as e:                                # noqa: BLE001
                 self.signedIn.emit(None, str(e))
 
-        threading.Thread(target=work, daemon=True).start()
+        run_off_gui(self, work)
 
     def _on_signed_in(self, result, error: str) -> None:
         self._busy(False)
@@ -241,7 +241,7 @@ class MarkDialog(QDialog):
             except Exception as e:                               # noqa: BLE001
                 self.accepted.emit(None, str(e))
 
-        threading.Thread(target=work, daemon=True).start()
+        run_off_gui(self, work)
 
     def _on_accepted(self, answer, error: str) -> None:
         self._busy(False)
@@ -269,7 +269,7 @@ class MarkDialog(QDialog):
             except Exception as e:                                # noqa: BLE001
                 self.fetched.emit(None, str(e))
 
-        threading.Thread(target=work, daemon=True).start()
+        run_off_gui(self, work)
 
     def _on_fetched(self, rep, error: str) -> None:
         self._busy(False)
@@ -298,7 +298,7 @@ class MarkDialog(QDialog):
             except Exception as e:                                # noqa: BLE001
                 self.opened.emit(None, str(e))
 
-        threading.Thread(target=work, daemon=True).start()
+        run_off_gui(self, work)
 
     def _on_opened(self, project, error: str) -> None:
         self._busy(False)

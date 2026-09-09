@@ -22,6 +22,7 @@ from .diagnose_game import DiagnoseGameWidget
 from .game_renderers import RadarChart, ScatterBoard
 from .theme import ThemeManager, icons
 from .theme.manager import scale_css as _scss
+from .worker_host import run_off_gui
 
 _PALETTE = ["blue", "green", "purple", "amber", "teal", "pink", "orange", "indigo", "red", "cyan"]
 
@@ -129,8 +130,7 @@ class FingerprintLab(QWidget):
     def _tick(self) -> None:
         if self._closed or self._busy:
             return
-        import threading
-        threading.Thread(target=self._accumulate, daemon=True).start()
+        run_off_gui(self, self._accumulate)
 
     def _accumulate(self) -> None:
         self._busy = True

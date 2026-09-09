@@ -23,6 +23,7 @@ from .canvas import NODE_H, NODE_W, CanvasView
 from .inspector import Inspector
 from .palette import Palette
 from .theme import ThemeManager, icons
+from .worker_host import run_off_gui
 
 
 def _theme_swatch(theme, size: int = 18):
@@ -310,7 +311,6 @@ class MainWindow(QMainWindow):
         if tc is None or not tc.signed_in():           # not signed in — a perfectly normal state
             self.ctx.bus.enrolment_changed.emit("", False, 0)
             return
-        import threading
         student = self.ctx.settings.tc_student
 
         def probe():
@@ -355,7 +355,7 @@ class MainWindow(QMainWindow):
             except Exception:                          # noqa: BLE001
                 pass
             self.ctx.bus.enrolment_changed.emit(student, online, due)
-        threading.Thread(target=probe, daemon=True).start()
+        run_off_gui(self, probe)
 
     def _on_enrolment(self, student: str, online: bool, due: int) -> None:
         self.mode_indicator.set_enrolment(student, online, due)
@@ -445,8 +445,7 @@ class MainWindow(QMainWindow):
         # switching identity: drop the current session and start fresh as the typed username
         tc = getattr(self.ctx, "teaching_center", None)
         if tc is not None:
-            import threading
-            threading.Thread(target=tc.logout, daemon=True).start()
+            run_off_gui(self, tc.logout)
         self.ctx.teaching_center = None
         self.ctx.settings.tc_student = who.strip()
         self.ctx.settings.tc_token = ""          # a different account's enrolment token isn't this one's
@@ -458,8 +457,7 @@ class MainWindow(QMainWindow):
         Your student id stays in Settings; anything unsent stays queued for the next sign-in."""
         tc = getattr(self.ctx, "teaching_center", None)
         if tc is not None:
-            import threading
-            threading.Thread(target=tc.logout, daemon=True).start()   # network — never on the GUI thread
+            run_off_gui(self, tc.logout)   # network — never on the GUI thread
         self.ctx.teaching_center = None
         self.ctx.bus.enrolment_changed.emit("", False, 0)
         self.ctx.log("Teaching Center: signed out — Missions now offers the practice catalog.",
@@ -595,13 +593,12 @@ class MainWindow(QMainWindow):
             QMessageBox.warning(self, "Couldn't read that", "That file isn't an image I can read.")
             return
 
-        import threading
         def work():
             res = tc.set_photo(data_url)
             self.ctx.log("Photo updated — your instructor will see it." if res.get("ok")
                          else f"Couldn't set photo: {res.get('error', 'unknown error')}",
                          "ok" if res.get("ok") else "error")
-        threading.Thread(target=work, daemon=True).start()
+        run_off_gui(self, work)
 
     def _add_signin_items(self, menu) -> None:
         """The signed-out user menu: sign in as the saved user, or type a different username."""
@@ -728,8 +725,7 @@ class MainWindow(QMainWindow):
                 beat(progress)
             except Exception:                                # noqa: BLE001
                 pass
-        import threading
-        threading.Thread(target=_beat, daemon=True).start()
+        run_off_gui(self, _beat)
 
     def _persist_settings(self) -> None:
         """Save the current Settings to ~/.gini/config.json (used by the Cue Cards tour
@@ -789,7 +785,6 @@ class MainWindow(QMainWindow):
             self.mode_indicator.set_model(s.llm_model, True)       # optimistic; probe corrects
             # Check reachability OFF the GUI thread — backend.available() does a blocking
             # urlopen (up to 3s), which would freeze the UI on startup / settings-save.
-            import threading
             url, model = s.llm_url, s.llm_model
 
             def probe():
@@ -798,7 +793,7 @@ class MainWindow(QMainWindow):
                 except Exception:
                     ok = False
                 self.ctx.bus.llm_reachable.emit(model, ok)
-            threading.Thread(target=probe, daemon=True).start()
+            run_off_gui(self, probe)
         except Exception as e:  # never let LLM wiring break startup
             self.mode_indicator.set_model("", False)
             self.ctx.log(f"GINI AI: LLM unavailable ({e}); offline mode.", "info")
@@ -2160,7 +2155,6 @@ class MainWindow(QMainWindow):
         if self._running:
             self.ctx.log("Already running — stop first.", "info")
             return
-        import threading
         topo = self.ctx.topology
         self.ctx.log("Sending topology to the GINI server…", "info")
         self.run_button.set_state("booting")
@@ -2173,7 +2167,7 @@ class MainWindow(QMainWindow):
             self.ctx.log("Launching on the server (pulling images / booting)…", "info")
             ok, msg = self._remote.wait_until_running()   # poll until up / error
             self.ctx.bus.run_state.emit(ok, msg)
-        threading.Thread(target=worker, daemon=True).start()
+        run_off_gui(self, worker)
 
     def _on_remote_run_state(self, ok: bool, msg: str) -> None:
         if ok:
@@ -2195,7 +2189,6 @@ class MainWindow(QMainWindow):
     def _poll_remote_metrics(self) -> None:
         if not self._running or self._remote is None:
             return
-        import threading
 
         def work():
             m = self._remote.metrics() or {}
@@ -2203,7 +2196,7 @@ class MainWindow(QMainWindow):
             if startup:
                 line = ", ".join(f"{s} {ms:.0f} ms" for s, ms in sorted(startup.items()))
                 self.ctx.log("Startup times — " + line, "info")
-        threading.Thread(target=work, daemon=True).start()
+        run_off_gui(self, work)
 
     def _toggle_run(self) -> None:
         """The circular power button was pressed — what it means depends on state."""
@@ -2216,7 +2209,6 @@ class MainWindow(QMainWindow):
 
     def _run(self) -> None:
         import tempfile
-        import threading
         if self._remote is not None:           # remote backend: the server runs it
             self._run_remote()
             return
@@ -2279,7 +2271,7 @@ class MainWindow(QMainWindow):
             except Exception as e:                      # noqa: BLE001
                 ok, msg = False, f"{type(e).__name__}: {e}"
             self.ctx.bus.run_state.emit(ok, msg)
-        threading.Thread(target=worker, daemon=True).start()
+        run_off_gui(self, worker)
 
     def _on_run_state(self, ok: bool, msg: str) -> None:
         self._launching = False            # settled, one way or the other
@@ -2347,7 +2339,6 @@ class MainWindow(QMainWindow):
         self._update_status()
 
     def _stop(self) -> None:
-        import threading
         if not (self._running or self._orphaned):
             self.ctx.log("Not running.", "info")
             return
@@ -2363,18 +2354,17 @@ class MainWindow(QMainWindow):
             if not ok:
                 self.ctx.log(f"Stop issue: {msg}", "error")
             self.ctx.bus.runtime_status.emit({})   # force a final reconcile -> idle
-        threading.Thread(target=worker, daemon=True).start()
+        run_off_gui(self, worker)
 
     # -- real status reconciliation ----------------------------------------- #
     def _poll_status(self) -> None:
-        import threading
         if not self._workdir:
             return
         wd = self._workdir
 
         def worker():
             self.ctx.bus.runtime_status.emit(self._gloader.status(wd))
-        threading.Thread(target=worker, daemon=True).start()
+        run_off_gui(self, worker)
 
     def _on_runtime_status(self, states) -> None:
         from ..services.compiler import _role, _svc
@@ -2537,7 +2527,6 @@ class MainWindow(QMainWindow):
         if getattr(self, "_boards_busy", False):
             return                              # last fetch still out; skip rather than pile up
         self._boards_busy = True
-        import threading
 
         def worker():
             st = None
@@ -2546,7 +2535,7 @@ class MainWindow(QMainWindow):
             finally:
                 # Emit even on failure so the busy flag is always cleared on the GUI thread.
                 self.ctx.bus.board_status_ready.emit(st)
-        threading.Thread(target=worker, daemon=True).start()
+        run_off_gui(self, worker)
 
     def _on_board_status(self, st) -> None:
         """Apply a relay snapshot. Runs on the GUI thread via a queued signal.
@@ -2633,7 +2622,6 @@ class MainWindow(QMainWindow):
         whichever interface happened to be numbered eth0. Now each machine's `R1` is the router's
         address on that machine's own segment."""
         import subprocess
-        import threading
         from ..services.compiler import _role, _svc, overlay_host_lines
         orch = getattr(self.ctx, "orchestrator", None)
         if orch is None:
@@ -2701,7 +2689,7 @@ class MainWindow(QMainWindow):
                 self.ctx.log("Name resolution over the drawn network could not be set up on: "
                              + ", ".join(failed[:4])
                              + (" …" if len(failed) > 4 else ""), "warn")
-        threading.Thread(target=work, daemon=True).start()
+        run_off_gui(self, work)
 
     def _recompute_addressing(self) -> None:
         from ..services.compiler import address_map
@@ -2827,7 +2815,6 @@ class MainWindow(QMainWindow):
         Comparing against the last applied value matters because device_changed fires for
         every property (renaming the controller must not bounce it).
         """
-        import threading
         from ..services.compiler import _svc
         app = (d.properties.get("App") or "").strip()
         if not app:
@@ -2847,10 +2834,9 @@ class MainWindow(QMainWindow):
                          f"before testing." if ok
                          else f"{d.name}: could not switch app ({msg}) — stop and Run "
                               f"to apply it.", "ok" if ok else "info")
-        threading.Thread(target=work, daemon=True).start()
+        run_off_gui(self, work)
 
     def _k8s_live(self, d, *, scale: bool) -> None:
-        import threading
         from ..services.compiler import _role, _svc
         cluster = self._k8s_cluster_svc(d.id)
         if not cluster:
@@ -2862,7 +2848,7 @@ class MainWindow(QMainWindow):
                 ok, msg = self._gloader.k8s_scale(cluster, dep, n)
                 self.ctx.log(f"{d.name}: scaled to {n} replicas." if ok
                              else f"{d.name}: scale failed ({msg})", "ok" if ok else "info")
-            threading.Thread(target=work_scale, daemon=True).start()
+            run_off_gui(self, work_scale)
         else:
             # the HPA name == the connected Pod's deployment name
             hpa = None
@@ -2882,7 +2868,7 @@ class MainWindow(QMainWindow):
                                                     mx=d.properties.get("Max"))
                 self.ctx.log(f"{d.name}: HPA target {tgt}% applied." if ok
                              else f"{d.name}: HPA patch failed ({msg})", "ok" if ok else "info")
-            threading.Thread(target=work_patch, daemon=True).start()
+            run_off_gui(self, work_patch)
 
     def _loadgen_target(self, did: str) -> str | None:
         """The full URL a Load Generator should hit, from what it's wired to:
@@ -2933,7 +2919,6 @@ class MainWindow(QMainWindow):
         """Drive a single Load Generator at its QPS against its connected target."""
         if not self._running:
             return
-        import threading
         d = self.ctx.topology.devices.get(did)
         if d is None or d.type_key != "load_generator":
             return
@@ -2960,7 +2945,7 @@ class MainWindow(QMainWindow):
             ok, msg = self._gloader.drive_load(hp, url, qps, conns)
             self.ctx.log(f"{name}: {msg}" if ok else f"{name}: load failed ({msg})",
                          "ok" if ok else "info")
-        threading.Thread(target=work, daemon=True).start()
+        run_off_gui(self, work)
 
     def _drive_loadgens(self) -> None:
         for d in list(self.ctx.topology.devices.values()):
@@ -2970,7 +2955,6 @@ class MainWindow(QMainWindow):
     def _poll_k8s(self) -> None:
         if not self._running or not getattr(self, "_last_k8s", None):
             return
-        import threading
         clusters = list(self._last_k8s)
 
         def work():
@@ -2980,7 +2964,7 @@ class MainWindow(QMainWindow):
                 merged["deployments"].update(m.get("deployments", {}))
                 merged["pods"] += m.get("pods", 0)
             self.ctx.bus.k8s_metrics.emit(merged)
-        threading.Thread(target=work, daemon=True).start()
+        run_off_gui(self, work)
 
     def _on_k8s_metrics(self, snap) -> None:
         self.inspector.set_k8s_snapshot(snap)
@@ -3009,7 +2993,6 @@ class MainWindow(QMainWindow):
     def _apply_k8s(self) -> None:
         """Once running, wait for each k3s cluster to be Ready and apply its manifests,
         then report the pods that scheduled."""
-        import threading
         clusters = list(getattr(self, "_last_k8s", []))
 
         def work():
@@ -3022,18 +3005,17 @@ class MainWindow(QMainWindow):
                 pods = self._gloader.k8s_pods(k.svc)
                 self.ctx.log(f"{k.name}: applied {len(k.deployments)} deployment(s); "
                              f"{len(pods)} pod(s) scheduling.", "ok")
-        threading.Thread(target=work, daemon=True).start()
+        run_off_gui(self, work)
 
     def _poll_fabric(self) -> None:
         if not self._running:
             return
-        import threading
 
         def work():
             snap = self._gloader.fabric_metrics()
             if snap:
                 self.ctx.bus.fabric_metrics.emit(snap)
-        threading.Thread(target=work, daemon=True).start()
+        run_off_gui(self, work)
 
     def _on_fabric_metrics(self, snap) -> None:
         self.dashboard.set_fabric(snap.get("totals", {}))
@@ -3043,7 +3025,6 @@ class MainWindow(QMainWindow):
     def _poll_mem(self) -> None:
         if not self._running:
             return
-        import threading
         import time as _time
 
         def work():
@@ -3052,7 +3033,7 @@ class MainWindow(QMainWindow):
                 self.ctx.bus.mem_metrics.emit(
                     {"stats": stats, "vm": self._gloader.vm_memory_mib(),
                      "t": _time.monotonic()})
-        threading.Thread(target=work, daemon=True).start()
+        run_off_gui(self, work)
 
     def _on_mem_metrics(self, snap) -> None:
         self._memwatch.ingest(snap["stats"], snap["t"])
@@ -3078,7 +3059,6 @@ class MainWindow(QMainWindow):
     def _preflight_vm_memory(self) -> None:
         """At Run: warn if the Docker VM looks undersized for this topology — the
         student-facing version of the lesson from the OOM sweep."""
-        import threading
 
         def work():
             vm = self._gloader.vm_memory_mib()
@@ -3094,7 +3074,7 @@ class MainWindow(QMainWindow):
                     f"is tight for the Docker VM's {vm / 1024:.1f} GB. If containers "
                     "die with exit 137, raise Docker Desktop memory "
                     "(Settings → Resources).", "warn")
-        threading.Thread(target=work, daemon=True).start()
+        run_off_gui(self, work)
 
     def _element_stats(self, device_name: str):
         """Live CPU%/memory sample for the Inspector's metrics plots (None if not running)."""
@@ -3112,7 +3092,6 @@ class MainWindow(QMainWindow):
         to its container live (vertical scaling) via `docker update` — no restart."""
         if not self._running:
             return
-        import threading
         from ..domain import pricing
         from ..services.compiler import _svc
         d = self.ctx.topology.devices.get(device_id)
@@ -3130,7 +3109,7 @@ class MainWindow(QMainWindow):
             else:
                 self.ctx.log(f"{dname}: couldn't apply size live ({msg}). "
                              f"It takes effect on the next Run.", "info")
-        threading.Thread(target=worker, daemon=True).start()
+        run_off_gui(self, worker)
 
     def _on_palette_explain(self, type_key: str) -> None:
         """In explain mode, clicking a palette element explains that element TYPE."""
@@ -3336,19 +3315,17 @@ class MainWindow(QMainWindow):
         (a Kata Instance boots a guest kernel, so it starts much slower than a container)."""
         if not self._running:
             return
-        import threading
 
         def work():
             times = self._gloader.startup_times()
             if times:
                 line = ", ".join(f"{svc} {ms:.0f} ms" for svc, ms in sorted(times.items()))
                 self.ctx.log("Startup times — " + line, "info")
-        threading.Thread(target=work, daemon=True).start()
+        run_off_gui(self, work)
 
     def _on_function_deploy(self) -> None:
         """AWS-style 'Deploy': push the current function code to the running runtime by
         recreating only the faas container (the rest of the lab keeps running)."""
-        import threading
         if not self._running or not self._workdir:
             self.ctx.log("Run the topology first, then Deploy.", "info")
             return
@@ -3363,14 +3340,13 @@ class MainWindow(QMainWindow):
             self.ctx.log("Functions deployed — the runtime restarted with your latest code."
                          if ok else f"Deploy failed: {msg}", "ok" if ok else "error")
 
-        threading.Thread(target=worker, daemon=True).start()
+        run_off_gui(self, worker)
 
     def _on_function_invoke(self, device_id: str, method: str, body: str) -> None:
         """Invoke a Function from the inspector's Test panel: call it inside the faas
         runtime, capture status/duration/cold, and send the result back to the inspector."""
         import json
         import subprocess
-        import threading
         from ..services.compiler import _svc
         dev = self.ctx.topology.devices.get(device_id)
         if dev is None:
@@ -3399,7 +3375,7 @@ class MainWindow(QMainWindow):
                 text = f"Invoke failed: {e}"
             self.ctx.bus.function_invoke_result.emit(device_id, text)
 
-        threading.Thread(target=work, daemon=True).start()
+        run_off_gui(self, work)
 
     # -- double-click: routers open the Router Lab, others open a terminal -- #
     def _on_device_activated(self, device_id: str) -> None:
@@ -3438,16 +3414,14 @@ class MainWindow(QMainWindow):
     def _toggle_rider(self, device_id: str) -> None:
         """Double-click a Source/Sink → start it (runs continuously, output streams to its Live tab)
         or stop it. Off the GUI thread since the start/kill exec can block briefly."""
-        import threading
         dev = self.ctx.topology.devices.get(device_id)
         if dev is None:
             return
-        threading.Thread(target=lambda: self.ctx.toggle_rider(device_id), daemon=True).start()
+        run_off_gui(self, lambda: self.ctx.toggle_rider(device_id))
 
     def _toggle_xv6_rider(self, rider_id: str) -> dict:
         """Start/stop an xv6 rider (Shell Probe / Workload) over the machine's console. Called by
         ctx.toggle_rider for qemu-serial riders, so double-click and the inspector both reach here."""
-        import threading
         dev = self.ctx.topology.devices.get(rider_id)
         if dev is None:
             return {"ok": False}
@@ -3469,8 +3443,7 @@ class MainWindow(QMainWindow):
             return {"ok": False, "error": str(e)}
         sess = self._xv6_rider_sessions[rider_id] = {"stop": False}
         self.ctx.log(f"{dev.name} → xv6: {cmd}", "info")
-        threading.Thread(target=self._xv6_reader, args=(rider_id, provider, cmd, sess),
-                         daemon=True).start()
+        run_off_gui(self, self._xv6_reader, rider_id, provider, cmd, sess)
         return {"ok": True, "running": True}
 
     def _xv6_reader(self, rider_id: str, provider, cmd: str, sess: dict) -> None:

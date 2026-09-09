@@ -26,6 +26,7 @@ from ..domain.xv6 import (
 )
 from .theme import ThemeManager, icons
 from .theme.manager import scale_css as _scss
+from .worker_host import run_off_gui
 
 # register tiles grouped by role -> (row of reg names, accent key)
 _REG_GROUPS = [
@@ -216,7 +217,6 @@ class CpuLab(QWidget):
         if self._busy or self._closed:
             return
         self._busy = True
-        import threading
 
         def work():
             try:
@@ -226,7 +226,7 @@ class CpuLab(QWidget):
                     self.snap_ready.emit(None)
             except (Exception, RuntimeError):
                 pass
-        threading.Thread(target=work, daemon=True).start()
+        run_off_gui(self, work)
 
     def _read_traps(self) -> str:
         """Raw `/traps` text (gini_trapdump over the serial). Returns '' when there's no live

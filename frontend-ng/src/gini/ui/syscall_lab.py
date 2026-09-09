@@ -15,6 +15,7 @@ from PySide6.QtWidgets import (
 
 from ..domain.xv6 import SyscallRate, parse_sccounts, parse_sctrace, syscall_name
 from .theme import ThemeManager, icons
+from .worker_host import run_off_gui
 
 
 class HistogramBars(QWidget):
@@ -117,7 +118,6 @@ class SyscallLab(QDialog):
         if self._busy:
             return
         self._busy = True
-        import threading
 
         def work():
             try:
@@ -125,7 +125,7 @@ class SyscallLab(QDialog):
             except Exception:
                 txt = ""
             self.sc_ready.emit(txt or "")
-        threading.Thread(target=work, daemon=True).start()
+        run_off_gui(self, work)
 
     def _apply(self, txt) -> None:
         self._busy = False

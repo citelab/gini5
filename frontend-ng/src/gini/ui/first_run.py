@@ -15,7 +15,6 @@ Three principles, each one a mistake this project has already made once:
 """
 from __future__ import annotations
 
-import threading
 
 from PySide6.QtCore import Qt, Signal
 from PySide6.QtWidgets import (
@@ -23,6 +22,7 @@ from PySide6.QtWidgets import (
 )
 
 from ..services import bootstrap
+from .worker_host import run_off_gui
 
 
 class FirstRunDialog(QDialog):
@@ -128,7 +128,7 @@ class FirstRunDialog(QDialog):
             result = bootstrap.execute(self.plan, on_step=self.stepped.emit)
             self.finished_setup.emit(result)
 
-        threading.Thread(target=work, daemon=True).start()
+        run_off_gui(self, work)
 
     def _on_step(self, text: str) -> None:
         self.detail.setText(text)

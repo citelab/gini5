@@ -9,7 +9,6 @@ share one brain.
 from __future__ import annotations
 
 import re
-import threading
 import time
 from collections.abc import Callable
 
@@ -26,6 +25,7 @@ from ..domain import all_devices
 from .mission_panel import MissionPanel
 from .theme import ThemeManager, icons
 from .theme.manager import sp as _sp
+from .worker_host import run_off_gui
 
 
 class Stopped(Exception):
@@ -591,7 +591,7 @@ class Assistant(QWidget):
             except Exception:                          # noqa: BLE001 — a failed poll is a non-event
                 return
             self.mission_ui_op.emit(("convos", chans, msgs))
-        threading.Thread(target=work, daemon=True).start()
+        run_off_gui(self, work)
 
     def _apply_convo_op(self, op) -> None:
         if not isinstance(op, tuple) or not op or op[0] != "convos":
@@ -851,7 +851,7 @@ class Assistant(QWidget):
                 msgs = None
             if msgs is not None:
                 self.mission_ui_op.emit(("convos", self._channels, msgs))
-        threading.Thread(target=work, daemon=True).start()
+        run_off_gui(self, work)
 
     # deterministic intent handling (LLM-free) ------------------------------ #
     def _handle(self, text: str) -> str:
@@ -1572,7 +1572,6 @@ class Assistant(QWidget):
             return
         self._mission_busy = True
         self._mission_world = self._snapshot_world()     # snapshot on the UI thread
-        import threading
 
         def work():
             self.mission_ui_op.emit(("busy", True))      # the game master is reasoning (LLM)
@@ -1592,7 +1591,7 @@ class Assistant(QWidget):
             finally:
                 self.mission_ui_op.emit(("busy", False))
                 self.mission_ui_op.emit(("done",))
-        threading.Thread(target=work, daemon=True).start()
+        run_off_gui(self, work)
 
     def _start_preview_mission(self, archetype_id: str) -> str | None:
         """Launch a seed Game-Catalog archetype for a quick preview (temporary command)."""
@@ -1615,7 +1614,6 @@ class Assistant(QWidget):
         worker thread so the UI never freezes) and launch it. The compose SELECTS/COMBINES verified
         catalog archetypes; it never fabricates objectives, so the result is always gradable."""
         self._post("GINI", "Shaping a mission from that…")
-        import threading
 
         def work():
             self.mission_ui_op.emit(("busy", True))      # composing a mission engages the LLM
@@ -1633,7 +1631,7 @@ class Assistant(QWidget):
                 les = None
             self.mission_ui_op.emit(("busy", False))
             self.mission_ui_op.emit(("compose_start", les, note))
-        threading.Thread(target=work, daemon=True).start()
+        run_off_gui(self, work)
         return None
 
     def _submit_to_center(self, lesson_id: str, mission) -> None:
@@ -1711,7 +1709,6 @@ class Assistant(QWidget):
         blocks the canvas; deduped so it doesn't nag."""
         if self._loop is None or self._mission_ctrl is None or self._mission_ctrl.gm is None:
             return
-        import threading
         gm = self._mission_ctrl.gm
 
         def work():
@@ -1722,7 +1719,7 @@ class Assistant(QWidget):
                 line = "; ".join(reasons)
             self.mission_ui_op.emit(("busy", False))
             self.mission_ui_op.emit(("say", line))
-        threading.Thread(target=work, daemon=True).start()
+        run_off_gui(self, work)
 
     def _clear_mission_flags(self) -> None:
         self._mission_flag_ids = set()
@@ -1875,7 +1872,6 @@ class Assistant(QWidget):
         return ", ".join(f"{d.name} ({d.type.label})" for d in devs[:12])
 
     def _pick_starter_async(self, goal: str) -> None:
-        import threading
         from ..agent import wizard as wz
         catalog, names = wz.element_catalog(), wz.element_names()
 
@@ -1900,7 +1896,7 @@ class Assistant(QWidget):
             self.ctx.log(f"Wizard starter — model said: “{snippet}” → parsed: {key or '(none)'}",
                          "info")
             self.starter_ready.emit(key, reason)
-        threading.Thread(target=work, daemon=True).start()
+        run_off_gui(self, work)
 
     def _place_starter(self, type_key: str, reason: str) -> None:
         from ..domain.devices import REGISTRY
@@ -1945,7 +1941,6 @@ class Assistant(QWidget):
         if self._loop is None:                          # safety: no model -> grammar ring
             self.ctx.bus.wizard_ghosts_ready.emit(device_id, grammar_items)
             return
-        import threading
         from ..agent import wizard as wz
         goal, cur = m.goal, REGISTRY[d.type_key].label
         summary = self._canvas_summary()
@@ -1958,7 +1953,7 @@ class Assistant(QWidget):
                 items = grammar_items
             self._ghost_cache[key] = items
             self.ctx.bus.wizard_ghosts_ready.emit(device_id, items)
-        threading.Thread(target=work, daemon=True).start()
+        run_off_gui(self, work)
 
     def _show_mission(self, mission, refined: bool = False, speak: bool = True) -> None:
         t = self.theme.theme
@@ -2446,7 +2441,6 @@ class Assistant(QWidget):
 
     def _ask_async(self, prompt: str, device: str, grounded=None, *,
                    proactive: bool = False) -> None:
-        import threading
         # Every other pathway arrives here: a click on a device, on a lint badge, on a palette
         # element, the Coach button. None of them went through the text box, and all of them used
         # to start a turn of their own on top of whatever was already running.
@@ -2610,7 +2604,7 @@ class Assistant(QWidget):
                 work()
             except Stopped:
                 self.answer_ready.emit(device or "", "")
-        threading.Thread(target=guarded, daemon=True).start()
+        run_off_gui(self, guarded)
 
     def _send_figures(self, emit) -> None:
         """Fetch the pictures that belong to this answer's passages and hand them to the pane.

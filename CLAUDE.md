@@ -306,17 +306,26 @@ The code behind each door still compiles, is still refactored, and is still test
    `printk → consputc → uartputc_sync`, which spins without interrupts). The companion revert,
    `3c5be99` (Process Scheduler panel width), **was** re-landed as `307ee2f`.
 
-3. **UI worker threads have a lifetime race.** 18 files under `ui/` spawn raw
-   `threading.Thread(target=work, daemon=True)` and guard the emit with a `self._closed` flag.
-   That is TOCTOU: the widget can be closed and its C++ object destroyed between the check and the
-   `Signal.emit`. Reproduced on this machine — `pytest tests/test_trap_lab.py` **segfaults** on the
-   third test (`test_trap_lab_empty_source_is_safe`), which passes when run alone.
-   `ui/worker_host.py` is the correct pattern (holds references, bound-method connections,
-   unparented `QThread`, a registry that outlives the dialog) and its docstring enumerates exactly
-   these bugs — but it is only used by `board_dialog`, `flash_dialog`, `reset_dialog` and
-   `main_window`. **Migrating the labs and HUDs onto `WorkerHost` is a concrete, high-value task.**
-   (Verified with Python 3.13.13 / PySide6 6.11.2 / macOS offscreen; the project targets 3.10–3.12,
-   so confirm on a supported interpreter before treating the crash as version-independent.)
+3. **UI widgets were destroyed off the GUI thread — FIXED on this branch.** Every background call
+   in `ui/` used `threading.Thread(target=work, daemon=True)`, where `work` closes over `self`.
+   Once the GUI side dropped its last reference (a lab window replaced, a test function returning),
+   the closure was the only owner left, so the widget's refcount reached zero when the *worker
+   thread's* frame was torn down and PySide destroyed a `QWidget` off the GUI thread — which Qt
+   forbids. The symptom was a segfault somewhere unrelated, at a different point on every run.
+   Measured: 30 of 30 open/close cycles destroyed the widget on a worker thread, 0 on the GUI
+   thread; `pytest tests/test_trap_lab.py` crashed **20 times in 30 runs**.
+
+   Note for anyone re-reading the old `self._closed` guards: they are *not* what was broken. A
+   Python attribute still reads fine after the C++ object is gone, so the guard was never load-
+   bearing here. This was ownership, not a check.
+
+   The fix is `run_off_gui()` in `ui/worker_host.py` (rule 4) — it pins the owner in a GUI-thread
+   registry for the duration of the call and releases it through a singleton reaper, so the widget
+   is always destroyed on the GUI thread. All 72 call sites across 20 files now go through it;
+   `grep 'threading.Thread(' src/gini/ui/` should stay empty. After: 0 crashes in 30 runs, and the
+   full suite is green (2,934 passed / 22 skipped / 0 failed).
+   (Measured with Python 3.13.13 / PySide6 6.11.2 / macOS offscreen. The project targets 3.10–3.12;
+   the ownership bug is version-independent, but how loudly it crashes is not.)
 
 4. **No CI runs the tests.** `.github/workflows/` contains three *publish* workflows and nothing
    else. `release.sh` runs the suite locally before tagging — that is the only gate.
@@ -376,6 +385,6 @@ Present: `docs/REASONING_2.0_DESIGN.md`, `docs/LEARNER_MODEL_DESIGN.md`,
   so `git log` will not explain design decisions from before 2026-06-15 — the docstrings will.
 - **Branches**: work has been landing on `os-improvements` and merged to `master` via PRs
   (#70–#85). `cloud-sdn` carried the June/July work.
-- Baseline for "did I break something": **2,837 passed, 22 skipped** on this machine
-  (`QT_QPA_PLATFORM=offscreen`, `--ignore=tests/test_trap_lab.py`, ~2m50s), plus 86 qtbot tests that
-  need `pytest-qt`.
+- Baseline for "did I break something": **2,934 passed, 22 skipped, 0 failed** on this machine
+  (`QT_QPA_PLATFORM=offscreen`, ~3m). Install `pytest-qt` first or 86 tests error out with
+  "fixture 'qtbot' not found" — that is the environment, not the code.
