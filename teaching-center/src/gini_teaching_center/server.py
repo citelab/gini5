@@ -594,8 +594,13 @@ class Handler(BaseHTTPRequestHandler):
             mins = _number(b.get("session_minutes"), prev.get("session_minutes"), 60, int)
         except ValueError:
             return {"ok": False, "error": "Minutes per attempt must be a number."}
-        if mins <= 0:
-            return {"ok": False, "error": "Minutes per attempt must be more than zero."}
+        if mins < 0:
+            # 0 is ALLOWED and meaningful: it means "no timed attempt — the lab is due when
+            # vending stops". Rejecting it (as this did) left a teacher no way to run a lab with a
+            # fixed hand-in time; they had to guess a duration and every student got a different
+            # effective deadline. See activities.valid_until_for.
+            return {"ok": False, "error": "Minutes per attempt cannot be negative. "
+                                          "Use 0 for a lab that is simply due at the deadline."}
         try:
             grace = _number(b.get("grace_minutes"), prev.get("grace_minutes"), 0, int)
         except ValueError:

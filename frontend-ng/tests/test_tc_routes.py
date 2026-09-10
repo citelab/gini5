@@ -556,12 +556,28 @@ def test_a_deadline_the_server_cannot_read_is_refused_not_a_crash(tc):
     assert "deadline" in r["error"]
 
 
-def test_minutes_must_be_a_number_and_must_be_positive(tc):
+def test_minutes_must_be_a_number_and_may_not_be_negative(tc):
     tc.signin("boss", "correct-horse")
     tc.call("/api/courses", {"id": "comp535", "title": "Networks"})
     base = {"course": "comp535", "lab": "lab1", "title": "t"}
     assert "number" in tc.call("/api/activities/save", {**base, "session_minutes": "sixty"})[1]["error"]
-    assert "zero" in tc.call("/api/activities/save", {**base, "session_minutes": -5})[1]["error"]
+    assert "negative" in tc.call("/api/activities/save", {**base, "session_minutes": -5})[1]["error"]
+
+
+def test_zero_minutes_is_accepted_and_means_due_at_the_deadline(tc):
+    """0 used to be REFUSED ("must be more than zero"), which left no way to run a lab with a fixed
+    hand-in time — a teacher had to invent a duration, and every student then got a different
+    effective deadline. Now 0 is a real setting: the code expires exactly when vending stops."""
+    tc.signin("boss", "correct-horse")
+    tc.call("/api/courses", {"id": "comp535", "title": "Networks"})
+    vend = 2_000_000_000.0
+    ok, body = tc.call("/api/activities/save", {"course": "comp535", "lab": "fixed", "title": "t",
+                                                "session_minutes": 0, "vend_until": vend})
+    assert body.get("ok"), body
+    # and it SURVIVES the round trip — a 0 quietly re-defaulted to 60 on read would be the bug
+    rows = tc.call("/api/activities?course=comp535")[1]
+    row = next(r for r in rows if r["lab"] == "fixed")
+    assert row["session_minutes"] == 0
 
 
 def test_a_null_field_keeps_what_was_already_saved(tc):

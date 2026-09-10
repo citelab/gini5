@@ -163,7 +163,11 @@
         <textarea id="a-brief" placeholder="Build a few LANs joined by routers and show a machine on one LAN can talk to a machine on another."></textarea>
         <label>Codes stop being issued</label><input id="a-vend" type="datetime-local">
         <div class="note">The hard stop. After this no student can start.</div>
-        <label>Minutes per attempt</label><input id="a-mins" type="number" value="60">
+        <label>Minutes per attempt <span style="font-weight:400;opacity:.7">— 0 = due at the
+          deadline</span></label>
+        <input id="a-mins" type="number" min="0" value="60"
+               title="How long a student gets once they start. Set 0 for a lab with a fixed
+hand-in time: everyone is then due when code vending stops, however early they began.">
         <div class="note">From when they enter the code, not from now.</div>
         <label>Grace period (minutes)</label><input id="a-grace" type="number" value="0">
         <div class="note">After the deadline, still accepted and tagged LATE. 0 = a hard stop.
@@ -588,7 +592,9 @@ function editAct(json){
   const a = typeof json === 'string' ? JSON.parse(json) : json;
   $('#a-lab').value = a.lab; $('#a-title').value = a.title || '';
   $('#a-brief').value = a.brief || '';
-  $('#a-mins').value = Number(a.session_minutes) || 60;
+  // `|| 60` here turned a saved 0 back into 60 on the way into the form, so opening a
+  // due-at-the-deadline lab and pressing Save silently gave it a timed attempt instead.
+  $('#a-mins').value = a.session_minutes == null ? 60 : Number(a.session_minutes);
   $('#a-grace').value = Number(a.grace_minutes) || 0;
   // datetime-local wants exactly YYYY-MM-DDTHH:mm in LOCAL time, which toISOString would shift.
   if (a.vend_until) {
@@ -673,15 +679,64 @@ async function release(lab, on){
   loadActs();
 }
 
+// Which lab bins are expanded. A real class hands in hundreds of times across a term, and one flat
+// list of every submission in the course is unreadable — so submissions are binned BY LAB and a
+// bin opens on click. Kept across reloads (the list refreshes on a timer) so a teacher reading one
+// lab's submissions does not have it collapse under them.
+let SUB_OPEN = {};
+let SUB_ROWS = [];
+
+function toggleBin(lab){
+  SUB_OPEN[lab] = !SUB_OPEN[lab];
+  drawSubs();
+}
+
 async function loadSubs(){
-  const rows = await api('/api/submissions?course=' + encodeURIComponent(COURSE));
+  SUB_ROWS = await api('/api/submissions?course=' + encodeURIComponent(COURSE));
+  drawSubs();
+}
+
+function drawSubs(){
+  const rows = SUB_ROWS || [];
   // Same-topology twins are worth SEEING in the list, not only inside one report — a teacher
   // scanning what came in should notice a cluster without opening thirty receipts one by one.
+  // Counted across the WHOLE course, not per bin: two students who shared a topology may well have
+  // handed it to different labs, and that is exactly the case worth catching.
   const seen = {};
   rows.forEach(r => { seen[r.artifact_hash] = (seen[r.artifact_hash]||0) + 1; });
-  $('#sub-list').innerHTML = rows.length ? (
-      '<tr><th>Receipt<th>Lab<th>Claimed by<th>Arrived<th>' +
-      rows.map(r => `<tr>
+
+  // Bin by lab, newest bin first. `activity` is "course/lab"; fall back to the whole id if it is
+  // ever not, so a malformed row lands in a visible bin instead of vanishing.
+  const bins = new Map();
+  rows.forEach(r => {
+    const lab = (r.activity||'').split('/')[1] || r.activity || '(unknown)';
+    if (!bins.has(lab)) bins.set(lab, []);
+    bins.get(lab).push(r);
+  });
+  if (!rows.length){
+    $('#sub-list').innerHTML = '<tr><td class="empty">Nothing submitted yet.</td></tr>';
+    return;
+  }
+  const order = [...bins.keys()].sort((a,b) =>
+      Math.max(...bins.get(b).map(r=>r.ts||0)) - Math.max(...bins.get(a).map(r=>r.ts||0)));
+
+  let html = '';
+  for (const lab of order){
+    const rs = bins.get(lab).slice().sort((a,b) => (b.ts||0) - (a.ts||0));
+    const open = !!SUB_OPEN[lab];
+    const unclaimed = rs.filter(r => !r.student_id).length;
+    const late = rs.filter(r => r.late).length;
+    // The bin header carries the counts a teacher triages on, so the bins alone answer "where is
+    // marking outstanding" without opening any of them.
+    html += `<tr class="bin" onclick="toggleBin('${esc(lab)}')" style="cursor:pointer">
+      <td colspan="5" style="background:#f2f5f1;border-top:1px solid #dfe3dd">
+        <b style="font-size:15px">${open ? '▾' : '▸'} ${esc(lab)}</b>
+        <span class="tag" style="margin-left:12px">${rs.length} submitted</span>
+        ${unclaimed ? `<span class="tag draft" style="margin-left:8px">${unclaimed} unclaimed</span>` : ''}
+        ${late ? `<span class="tag warn" style="margin-left:8px">${late} late</span>` : ''}</td>`;
+    if (!open) continue;
+    html += '<tr><th>Receipt<th>Lab<th>Claimed by<th>Arrived<th>';
+    html += rs.map(r => `<tr>
         <td class="mono">${esc(r.receipt)}
         <td class="mono">${esc((r.activity||'').split('/')[1] || r.activity)}
         <td>${r.student_id ? '<span class="mono">'+esc(r.student_id)+'</span>'
@@ -690,8 +745,9 @@ async function loadSubs(){
             ${r.late ? `<span class="tag warn" style="margin-left:10px">late</span>` : ''}
             ${seen[r.artifact_hash] > 1
                ? `<span class="tag warn" style="margin-left:10px">shared topology</span>` : ''}
-        <td><button class="flat" onclick="openReceipt('${esc(r.receipt)}')">Open</button>`).join('')
-    ) : '<tr><td class="empty">Nothing submitted yet.</td></tr>';
+        <td><button class="flat" onclick="openReceipt('${esc(r.receipt)}')">Open</button>`).join('');
+  }
+  $('#sub-list').innerHTML = html;
 }
 
 // ---- taking one in by hand ---------------------------------------------------

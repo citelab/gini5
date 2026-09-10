@@ -331,13 +331,45 @@ class ProofStrip(QWidget):
                 self.questionsArrived.emit()
         what = " · ".join([b for b in (f"<b>{activity}</b>" if activity else "",
                                        f"“{title}”" if title else "") if b]) or "this code"
+        due = self._due_phrase(answer)
         course = activity.split("/")[0] if "/" in activity else ""
         mine = self._tc_course()
         if course and mine and course.lower() != mine.lower():
             self._say(f"Recording for {what} — note this code is for <b>{course}</b>, but your "
-                      f"course is set to <b>{mine}</b>.", bad=True)
+                      f"course is set to <b>{mine}</b>.{due}", bad=True)
         else:
-            self._say(f"Recording for {what}.")
+            self._say(f"Recording for {what}.{due}")
+
+    @staticmethod
+    def _due_phrase(answer: dict) -> str:
+        """When this code stops being accepted, as a sentence to append to the arm message.
+
+        The server has always sent `valid_until` and `session_minutes`, and the strip threw both
+        away — so a student armed a code and was told WHICH lab was being recorded but never WHEN
+        it was due. That was survivable while every lab was a timed attempt, because the answer was
+        "however many minutes the page told you". It stops being survivable now that a duration of
+        0 means the lab is due at a FIXED WALL-CLOCK TIME: the deadline is then the only thing that
+        matters, and nothing in gBuilder said it.
+
+        Returns "" when the lab has no deadline at all — inventing one would be worse than silence.
+        """
+        try:
+            valid_until = float(answer.get("valid_until") or 0)
+        except (TypeError, ValueError):
+            return ""
+        if valid_until <= 0:
+            return ""                                # no vending deadline ⇒ no absolute expiry
+        import datetime as _dt
+        when = _dt.datetime.fromtimestamp(valid_until).strftime("%a %d %b, %H:%M")
+        try:
+            mins = int(float(answer.get("session_minutes") or 0))
+        except (TypeError, ValueError):
+            mins = 0
+        if mins > 0:
+            # A timed attempt: the minutes are what the student acts on, the expiry is the backstop.
+            return f" You have <b>{mins} min</b> — this code expires <b>{when}</b>."
+        # A fixed hand-in time: starting earlier buys nothing, so the moment is the whole story.
+        return f" Due <b>{when}</b>."
 
     def _arm_locally(self, typed: str, keep_hint: bool = False) -> bool:
         ok, message = self.recorder.arm(typed)

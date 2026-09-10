@@ -626,3 +626,57 @@ def test_an_activity_without_a_code_still_vends(store):
     act = an_activity(store)
     assert act.get("release_code", "") == ""
     assert ACT.vending_open(act, NOW)[0]
+
+
+# -- duration 0: the lab is due AT the vending deadline ---------------------------------------- #
+# A lab is run one of two ways, and "minutes per attempt" picks which. Above zero it is a TIMED
+# ATTEMPT. At zero it has a FIXED HAND-IN TIME: everyone is due the moment vending stops, however
+# early they started. Zero used to be impossible — the route refused it, and `or 60` would have
+# turned it into an hour PAST the deadline anyway, the opposite of what it asks for.
+
+def test_zero_minutes_makes_the_deadline_the_due_date(store):
+    """The worked example: it is Wednesday 20:00, vending stops Thursday 21:00, duration 0. A
+    student who takes a code NOW has until Thursday 21:00 — not an hour after it."""
+    wed_2000 = NOW
+    thu_2100 = NOW + 25 * HOUR
+    act = an_activity(store, vend_until=thu_2100, session_minutes=0)
+    row = ACT.mint_code(act, now=wed_2000)
+    assert row["valid_until"] == thu_2100                      # the deadline itself, exactly
+
+
+def test_zero_minutes_gives_everyone_the_same_moment(store):
+    """The point of a fixed hand-in time: starting earlier buys nothing and starting later costs
+    nothing. With a timed attempt the last code out still gets its full window past the deadline."""
+    act = an_activity(store, vend_until=NOW + HOUR, session_minutes=0)
+    early = ACT.mint_code(act, now=NOW)
+    late = ACT.mint_code(act, now=NOW + HOUR - 1)
+    assert early["valid_until"] == late["valid_until"] == NOW + HOUR
+
+
+def test_a_zero_minute_code_works_up_to_the_deadline_and_not_past_it(store):
+    act = an_activity(store, vend_until=NOW + HOUR, session_minutes=0)
+    row = ACT.mint_code(act, now=NOW)
+    assert ACT.check_code(row, act, now=NOW + HOUR - 1)[0] is True     # a minute before: fine
+    assert ACT.check_code(row, act, now=NOW + HOUR)[1] == ACT.EXPIRED  # at the deadline: closed
+
+
+def test_zero_is_a_real_duration_and_only_an_absent_one_defaults():
+    """`or 60` could not tell 0 from unset, and that single character was the whole bug."""
+    assert ACT.session_minutes_for({"session_minutes": 0}) == 0
+    assert ACT.session_minutes_for({"session_minutes": 30}) == 30
+    assert ACT.session_minutes_for({}) == ACT.DEFAULT_SESSION_MINUTES        # absent -> default
+    assert ACT.session_minutes_for({"session_minutes": None}) == ACT.DEFAULT_SESSION_MINUTES
+
+
+def test_zero_minutes_reports_no_per_attempt_overrun(store):
+    """The two readings of 0 must agree: no per-attempt window here, due at the deadline there.
+    A run of any length is inside a window that does not exist."""
+    act = an_activity(store, vend_until=NOW + HOUR, session_minutes=0)
+    assert ACT.within_session({"started": NOW, "finished": NOW + 10 * HOUR}, act) is True
+
+
+def test_a_timed_attempt_is_unchanged(store):
+    """The existing behaviour is load-bearing and must not move: 60 minutes still means the code
+    lives an hour PAST the deadline, so a code taken at the last minute keeps its full session."""
+    act = an_activity(store, vend_until=NOW + HOUR, session_minutes=60)
+    assert ACT.mint_code(act, now=NOW)["valid_until"] == NOW + HOUR + 60 * 60

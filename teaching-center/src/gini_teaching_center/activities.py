@@ -17,6 +17,13 @@ gating issuance alone does not gate use. Every code therefore carries an absolut
 `vend_until + session_minutes`. Hoarding buys nothing, and a code taken one minute before close
 still gets its full session.
 
+**Two ways to run a lab, and the duration picks which.** With `session_minutes > 0` the lab is a
+TIMED ATTEMPT: the student gets that long, and the last code out still gets its full window past
+the deadline. With `session_minutes = 0` the lab has a FIXED HAND-IN TIME: `valid_until` is the
+vending deadline exactly, so everyone is due at the same moment however early they started. Today
+Wednesday 20:00, vending stops Thursday 21:00, duration 0 — a student starting now has until
+Thursday 21:00. Zero is a real value here and is never defaulted away; see `session_minutes_for`.
+
 **Two collision checks, catching two different cheats.** A receipt collision means the same proof
 *file* was handed in twice. An artifact collision means the same *topology* was built under two
 codes — the collusion case a receipt cannot see, because the chain binds the ticket and the
@@ -153,6 +160,27 @@ def vending_open(activity: dict, now: float | None = None, *,
     return True, ""
 
 
+#: What "minutes per attempt" means when a lab never said. A stored row always has a value (the
+#: schema defaults it), so this is for dicts built by hand — tests, and older callers.
+DEFAULT_SESSION_MINUTES = 60
+
+
+def session_minutes_for(activity: dict) -> float:
+    """The per-attempt allowance, in minutes.
+
+    ZERO IS A REAL VALUE and must not be defaulted away: it means "there is no per-attempt window
+    — the lab is simply due at the vending deadline". Only an ABSENT value falls back.
+
+    This existed as `float(activity.get("session_minutes") or 60)` in two places, and `or` cannot
+    tell 0 from unset: a teacher who set the duration to 0 silently got an hour PAST their
+    deadline, which is the opposite of what they asked for.
+    """
+    v = (activity or {}).get("session_minutes")
+    if v is None or v == "":
+        return float(DEFAULT_SESSION_MINUTES)
+    return float(v)
+
+
 def valid_until_for(activity: dict) -> float:
     """When a code issued now stops working.
 
@@ -160,11 +188,17 @@ def valid_until_for(activity: dict) -> float:
     is what makes hoarding pointless: a code taken on day one and a code taken at the last minute
     both die at the same moment, so taking a pile in advance gains nothing. The session clock is
     separate and starts when the student arms (§5.1).
+
+    **Duration 0 means the deadline IS the due date.** With `session_minutes = 0` this returns
+    `vend_until` exactly, so the lab is due when vending stops: today is Wednesday 20:00, vending
+    stops Thursday 21:00, and a student who starts now has until Thursday 21:00 — not an hour
+    after it. That is the natural way to run a lab with a fixed hand-in time rather than a timed
+    attempt, and `within_session()` already reports no per-attempt limit for 0, so the two agree.
     """
     vend_until = float(activity.get("vend_until") or 0)
     if not vend_until:
         return 0.0                                  # no vending deadline ⇒ no absolute expiry
-    return vend_until + float(activity.get("session_minutes") or 60) * 60.0
+    return vend_until + session_minutes_for(activity) * 60.0
 
 
 def mint_code(activity: dict, now: float | None = None) -> dict:
@@ -432,6 +466,11 @@ def within_session(row: dict, activity: dict) -> bool:
     Reported, never enforced here — a run that overran is a fact for the teacher to weigh, not
     grounds for the server to throw away a student's evening.
     """
+    # `or 0` deliberately, NOT session_minutes_for(): 0 and "unset" both mean "no per-attempt
+    # window" HERE, and reporting an overrun against a default nobody chose would invent a fact.
+    # For a duration of 0 the two readings already agree — no limit, and the lab is due at the
+    # vending deadline (valid_until_for). They differ only when the field is absent, where this
+    # side stays silent rather than assuming an hour.
     limit = float(activity.get("session_minutes") or 0) * 60.0
     if not limit or not row.get("started") or not row.get("finished"):
         return True
