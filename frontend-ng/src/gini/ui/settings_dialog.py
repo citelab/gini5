@@ -137,6 +137,21 @@ class SettingsDialog(QDialog):
                               "With this on, GINI builds one the first time you Run without it, "
                               "instead of printing a docker build command and stopping. The first "
                               "build takes a couple of minutes; after that it's instant."))
+        
+        # Container engine selection
+        self.container_engine = QComboBox()
+        self.container_engine.addItems(["Auto-detect", "Docker", "Podman"])
+        cur_engine = getattr(settings, "container_engine", "auto").strip().lower()
+        engine_index = 0  # Default to Auto-detect
+        if cur_engine == "docker":
+            engine_index = 1
+        elif cur_engine == "podman":
+            engine_index = 2
+        self.container_engine.setCurrentIndex(engine_index)
+        netf.addRow("Container engine", self.container_engine)
+        netf.addRow("", _note("Choose which container runtime GINI uses. Auto-detect tries Docker first, "
+                              "then Podman. Podman rootless is recommended for campus machines without "
+                              "sudo access. Changes take effect on next launch."))
 
         # --- GINI AI ------------------------------------------------------ #
         aif = _page(tabs, "GINI AI")
@@ -293,6 +308,7 @@ class SettingsDialog(QDialog):
             "os_hud_scale": int(self.os_scale.currentData() or 0),
             "auto_internet": self.auto_internet.isChecked(),
             "autobuild_images": self.autobuild.isChecked(),
+            "container_engine": ["auto", "docker", "podman"][self.container_engine.currentIndex()],
             "llm_enabled": self.llm_enabled.isChecked(),
             "llm_url": self.llm_url.text().strip() or "http://localhost:11434",
             "llm_model": self.llm_model.text().strip() or "llama3.1",

@@ -154,6 +154,9 @@ class Settings:
     name_prefixes: dict[str, str] = field(default_factory=dict)
     # per-type GINI $/hr rental price overrides for the cost dashboard, e.g. {"database": 20}
     prices: dict[str, float] = field(default_factory=dict)
+    # Container engine preference: "auto" (detect), "docker", or "podman"
+    # Rootless Podman is preferred for campus machines without sudo access
+    container_engine: str = "auto"           # "auto" | "docker" | "podman"
     extra: dict[str, str] = field(default_factory=dict)
 
 

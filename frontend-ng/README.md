@@ -17,7 +17,7 @@ PySide6 and QtWebEngine come with it. **There is no setup command to run** — g
 the machine needs the first time it launches and offers to install the container runtime and pull
 the images. Demo mode works before any of that exists, so the app is useful the moment it opens.
 
-Requires Python 3.10+ and, for live Run, a container runtime (Docker, Colima or Podman).
+Requires Python 3.10+ and, for live Run, a container runtime (Docker, Colima, or Podman). **Podman (rootless) is recommended for campus environments** — see [docs/PODMAN_SETUP.md](../docs/PODMAN_SETUP.md) for detailed setup instructions.
 
 ## What you get
 

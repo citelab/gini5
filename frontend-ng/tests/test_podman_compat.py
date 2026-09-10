@@ -192,3 +192,99 @@ def test_GINI_ENGINE_forces_podman_even_when_docker_answers(monkeypatch):
     assert "docker" not in seen
     assert runtime.compose_available(run=run) is True
     assert seen.count("podman") >= 1
+
+
+def test_settings_prefers_podman_when_configured(monkeypatch, tmp_path):
+    """Settings preference should override auto-detection when no env var is set."""
+    # Clear any GINI_ENGINE to test settings preference
+    monkeypatch.delenv("GINI_ENGINE", raising=False)
+    
+    # Create a temporary config file with podman preference
+    import json
+    from gini.app import paths
+    config_file = tmp_path / "config.json"
+    config_file.write_text(json.dumps({"container_engine": "podman"}))
+    
+    # Monkeypatch the config loading to use our test config
+    def fake_load_config():
+        return json.loads(config_file.read_text())
+    
+    monkeypatch.setattr(paths, "load_config", fake_load_config)
+    
+    seen = []
+
+    def run(cmd, **_k):
+        seen.append(cmd[0])
+        return _ok()
+
+    # Reset cache to force re-detection with new settings
+    runtime._reset_engine_cache()
+    
+    assert runtime.detect_engine(run=run) == "podman"
+    assert runtime.engine_cli(run=run) == ["podman"]
+    assert "docker" not in seen
+
+
+def test_settings_prefers_docker_when_configured(monkeypatch, tmp_path):
+    """Settings preference for Docker should override auto-detection."""
+    monkeypatch.delenv("GINI_ENGINE", raising=False)
+    
+    import json
+    from gini.app import paths
+    config_file = tmp_path / "config.json"
+    config_file.write_text(json.dumps({"container_engine": "docker"}))
+    
+    def fake_load_config():
+        return json.loads(config_file.read_text())
+    
+    monkeypatch.setattr(paths, "load_config", fake_load_config)
+    
+    # Even if podman is available, docker should be chosen
+    def run(cmd, **_k):
+        return _ok()
+
+    runtime._reset_engine_cache()
+    
+    assert runtime.detect_engine(run=run) == "docker"
+    assert runtime.engine_cli(run=run) == ["docker"]
+
+
+def test_settings_auto_allows_normal_detection(monkeypatch, tmp_path):
+    """Settings set to 'auto' should allow normal auto-detection."""
+    monkeypatch.delenv("GINI_ENGINE", raising=False)
+    
+    import json
+    from gini.app import paths
+    config_file = tmp_path / "config.json"
+    config_file.write_text(json.dumps({"container_engine": "auto"}))
+    
+    def fake_load_config():
+        return json.loads(config_file.read_text())
+    
+    monkeypatch.setattr(paths, "load_config", fake_load_config)
+    
+    # Podman only machine should still be detected
+    assert runtime.detect_engine(run=_podman_only) == "podman"
+    assert runtime.engine_cli(run=_podman_only) == ["podman"]
+
+
+def test_rootless_podman_detection():
+    """Test that rootless Podman can be detected from podman info output."""
+    def rootless_run(cmd, **_k):
+        if cmd[:4] == ["podman", "info", "--format", "{{.Host.Security.Rootless}}"]:
+            return types.SimpleNamespace(returncode=0, stdout="true", stderr="")
+        raise AssertionError(cmd)
+    
+    assert runtime._is_rootless_podman(run=rootless_run) is True
+    
+    def rootful_run(cmd, **_k):
+        if cmd[:4] == ["podman", "info", "--format", "{{.Host.Security.Rootless}}"]:
+            return types.SimpleNamespace(returncode=0, stdout="false", stderr="")
+        raise AssertionError(cmd)
+    
+    assert runtime._is_rootless_podman(run=rootful_run) is False
+    
+    def error_run(cmd, **_k):
+        raise FileNotFoundError("podman not found")
+    
+    assert runtime._is_rootless_podman(run=error_run) is False
