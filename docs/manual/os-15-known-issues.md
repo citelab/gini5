@@ -331,6 +331,33 @@ journeys (see `CPU_JOURNEY_CORRECTIONS.md`):
 
 **Read this before adding a background read to any face.**
 
+**Scope, measured rather than assumed (2026-09-09).** Of the instances checked so far, exactly one
+was ever a PRODUCTION crash — the Traps face, where `_retire()` destroyed a dialog with a catch in
+flight, and which is fixed. The others found since are **test-harness artifacts**, and the
+difference was established by experiment, not by reading:
+
+- **SourceBrowser.** Crashed 5/5 when two Qt test modules ran in the wrong order. Give it the shape
+  production uses — parented and kept alive, as `MainWindow` does with `self.source_browser`, which
+  is built once and never destroyed — and the same run is 0/5. It needs `parent=None` and being
+  dropped without closing, which only the tests do.
+- **MachineLab.** Driving the real `_retire_lab()` sequence against a genuinely in-flight read
+  (start a slow `_fetch`, then close + `setParent(None)` + `deleteLater()`) SURVIVED, with no
+  threads leaked. Re-opening the Machine Lab mid-read does not crash gBuilder.
+
+So the pattern is real and worth avoiding, but do not infer a production crash from a test crash:
+check the three ingredients below for the case in front of you. Two things remain true and worth
+fixing at leisure — neither is a user-facing defect:
+
+1. **The suite's green is order-dependent.** Those pairs do not fail occasionally, they fail every
+   time in that order; the full run passes only because pytest's alphabetical collection avoids the
+   sequence. A `release.sh` run can therefore abort on a segfault that has nothing to do with the
+   release. The fix is in the tests: close and delete what a test builds (the snapshot-and-flush
+   fixture in `test_cpu_journey.py` is the pattern).
+2. **MachineLab has no `stop_polling`,** so `_retire_lab()` finds nothing to call and returns
+   immediately instead of waiting for an in-flight read. It survives today because `closeEvent`
+   disconnects `snap_ready`, so a late emit has no receiver — a mitigation standing exactly where
+   `_retire_lab`'s own docstring says a join belongs.
+
 **The pattern, and why it kills.** A face reads off the GUI thread by spawning a raw
 `threading.Thread`, and the worker hands the result back with `signal.emit()`, guarded only by
 `if not self._closed`. Nothing joins the worker on close. That guard is check-then-act: a worker
