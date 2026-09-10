@@ -1,10 +1,19 @@
-"""CPU journey — a step-driven walkthrough of a system call (trap) vs a context switch (swtch).
+"""CPU journey — what the CPU does on each kind of TRAP, one step at a time.
 
-Pick a mode, then Step through the stages. At each stage the view shows the privilege band
-(user/kernel) and process lane the CPU is in, and highlights which save-area is touched — the
-TRAPFRAME (31 user registers + the user pc, on a trap FROM USER MODE) or the CONTEXT (ra, sp,
-s0–s11 — 14 registers, on a swtch). Real register values from the frozen trap, or the running
-process, seed the captions — and with a real capture the lanes show the actual pid, not "process A".
+The modes are the SIX CAUSES the kernel sorts traps into, the same six the Traps & Interrupts Lab
+charts and offers in its catch menu: syscall, pagefault, timer, device, illegal, other. One
+vocabulary for one subject. Every one of them is a trap — in RISC-V and in xv6 `trap` is the
+umbrella, and `scause` bit 63 says whether it was an INTERRUPT (timer, device) or an EXCEPTION
+(the rest).
+
+At each stage the view shows the privilege band and process lane the CPU is in, and which save area
+is touched: the TRAPFRAME (31 user registers plus the user pc, written by uservec on a trap from
+user mode) or the CONTEXT (ra, sp, s0–s11, written by swtch). A kernel-mode trap writes neither,
+and both cards stay dark for it.
+
+With a real capture the CAPTURE picks the path — where the trap was taken, which scause, whether
+the quantum was reached — so a caption never has to hedge about which case it is describing, and
+the lanes show the actual pid rather than "process A".
 """
 from __future__ import annotations
 
@@ -14,8 +23,8 @@ from PySide6.QtWidgets import (
 )
 
 from ..domain.cpu_journey import (
-    JOURNEY_HEADLINE, JOURNEY_SHORT, JOURNEY_TITLES, JOURNEYS, journey_for,
-    preempt_stages,
+    INTERRUPT_MODES, JOURNEY_HEADLINE, JOURNEY_SHORT, JOURNEY_TITLES, JOURNEYS, MODES, mode_for,
+    stages_for,
 )
 from .theme import ThemeManager, icons
 
@@ -51,9 +60,8 @@ class CpuJourney(QDialog):
         self.setStyleSheet(f"QDialog{{background:{t.bg};}}")
         root = QVBoxLayout(self)
 
-        head = QLabel("A system call is a TRAP (same process, user↔kernel, saves the trapframe). "
-                      "A context switch is swtch (a different process, kernel↔kernel, saves the "
-                      "context). Preemption is both. Step through and watch which save-area moves.")
+        head = QLabel("Every one of these is a TRAP; scause bit 63 says which kind. "
+                      "Step through and watch which save-area moves.")
         head.setWordWrap(True); head.setStyleSheet(f"color:{t.muted};font-size:12px;")
         self._head = head                   # retitled per walkthrough in _set_mode
         root.addWidget(head)
@@ -91,7 +99,7 @@ class CpuJourney(QDialog):
         # Every walkthrough, not just the three that existed: a student who caught a device
         # interrupt should be able to read the page-fault story too. Short labels because seven
         # full titles do not fit one row; the full title is the tooltip.
-        for key in ("syscall", "context", "preempt", "device", "pagefault", "fatal", "ktrap"):
+        for key in MODES:
             b = QPushButton(JOURNEY_SHORT.get(key, key))
             b.setToolTip(JOURNEY_TITLES.get(key, key))
             b.setCheckable(True); b.setChecked(key == self._mode)
@@ -157,11 +165,17 @@ class CpuJourney(QDialog):
         """The stage list to show for a mode. Preempt has two paths: the full trap+switch, and the
         short 'quantum not reached -> same process returns' path, chosen from the captured counters.
         Reference mode (no capture) always shows the full canonical path."""
-        if mode == "preempt":
-            fr = self.frame
-            if fr is not None and getattr(fr, "ok", False):
-                return preempt_stages(getattr(fr, "qticks", 0), getattr(fr, "quantum", 0))
-        return JOURNEYS.get(mode) or []          # "" (nothing matches) -> no stages, not a KeyError
+        fr = self.frame
+        if fr is not None and getattr(fr, "ok", False) and mode == mode_for(
+                getattr(fr, "kind", -1)):
+            # This IS the captured trap's own mode, so the capture decides the path: where it was
+            # taken, which scause, whether the quantum was reached. Prose never has to hedge.
+            return stages_for(getattr(fr, "kind", -1),
+                              bool(getattr(fr, "from_user", True)),
+                              getattr(fr, "scause", None),
+                              getattr(fr, "qticks", None), getattr(fr, "quantum", None))
+        # A mode the student picked to read as a reference, or no capture at all.
+        return JOURNEYS.get(mode) or []
 
     def _lane_label(self, slot: str) -> str:
         """A process lane -> display text. With a real capture, lane A is the captured pid; lane B
@@ -187,8 +201,12 @@ class CpuJourney(QDialog):
         self._i = 0
         self._stages = self._resolve_stages(key)
         if getattr(self, "_head", None) is not None:
-            self._head.setText(JOURNEY_HEADLINE.get(key) or
-                               "Pick a walkthrough to read how that kind of trap is handled.")
+            kindword = "INTERRUPT" if key in INTERRUPT_MODES else "EXCEPTION"
+            self._head.setText(
+                (f"<b>{key}</b> — a trap, and an {kindword} (scause bit 63 "
+                 f"{'set' if key in INTERRUPT_MODES else 'clear'}). "
+                 + JOURNEY_HEADLINE.get(key, "")) if key in JOURNEY_HEADLINE else
+                "Pick a walkthrough to read how that kind of trap is handled.")
         for k, b in self._mode_btns.items():
             b.setChecked(k == key)
         # rebuild the stage chips
@@ -227,64 +245,71 @@ class CpuJourney(QDialog):
         """
         if frame is None or not getattr(frame, "ok", False):
             return "syscall"
-        return journey_for(getattr(frame, "kind", 0),
-                           bool(getattr(frame, "from_user", True)),
-                           getattr(frame, "scause", None))
+        return mode_for(getattr(frame, "kind", 0))
+
+    #: Stage titles that open a walkthrough on the instant the trap was taken. The captured CSRs
+    #: belong there, on whichever path the capture chose — a page fault without its stval on screen
+    #: is missing the one number the student came for.
+    _ENTRY_TITLES = frozenset({
+        "ecall", "the access faults", "instruction fetch faults", "timer fires",
+        "timer fires in the kernel", "device fires", "device fires in the kernel",
+        "the instruction traps", "an exception in the kernel",
+    })
 
     def _live_note(self, title) -> str:
-        """The real-values line appended to a trap-entry stage caption. Prefers a frozen trap
-        (TrapFrame) — its actual saved registers and scause — else falls back to the running
-        proc's live registers at the dispatch stage."""
+        """The real-values line appended to a stage caption.
+
+        Everything here comes FROM the capture, never from the mode: the same entry stage serves a
+        user-mode and a kernel-mode path, and the values are whatever was frozen. That is the rule
+        the captions follow too — prose asserts only what is true of every trap routed to it, and
+        anything that varies is read off the frame.
+        """
         fr = self.frame
-        if fr is not None and getattr(fr, "ok", False):
-            r = fr.regs
-            if self._mode == "preempt":
-                if title == "timer trap":
-                    return (f"this tick interrupted user pc sepc={fr.sepc}"
-                            f"   ·   scause={fr.scause} → {fr.kind_name}")
-                if title == "yield()":
-                    n, q = int(getattr(fr, "qticks", 0)) + 1, int(getattr(fr, "quantum", 0) or 0)
-                    if not q:
-                        return ""
-                    if n >= q:
-                        return (f"quantum reached ({n} of {q}) → this tick DID preempt: "
-                                f"yield() → sched() → swtch")
-                    return (f"quantum NOT reached ({n} of {q}) → returned to the SAME process; "
-                            f"no swtch this tick")
-                return ""
-            # The walkthroughs added for B3/B4 each open on the instant the trap was taken, so the
-            # captured CSRs belong on that first stage — a page fault without its stval on screen
-            # is missing the one number the student came for.
-            if self._mode in ("device", "pagefault", "fatal", "ktrap"):
-                if title in ("device fires", "the access faults", "the bad instruction",
-                             "kernel code, interrupts on"):
-                    s = f"scause={fr.scause} → {fr.kind_name}   ·   sepc={fr.sepc}"
-                    if fr.stval and fr.stval not in ("0x0", "0x0000000000000000"):
-                        s += f"   ·   stval (faulting address) = {fr.stval}"
-                    if self._mode == "device" and fr.pid is not None and fr.pid >= 0:
-                        s += (f"   ·   interrupted pid {fr.pid} — a BYSTANDER, not necessarily "
-                              f"whose device this was")
-                    return s
-                if title == "kernelvec":
-                    return "no trapframe was written for this trap — sstatus.SPP was 1 (kernel)"
-                return ""
-            if title == "uservec":
-                parts = [f"{k}={r[k]}" for k in ("ra", "sp", "a0", "a7") if k in r]
-                return ("this trap's user registers, saved into the trapframe:  " + "  ".join(parts)
-                        if parts else "this trap's user registers are saved into the trapframe")
-            if title == "usertrap":
-                s = f"scause={fr.scause} → {fr.kind_name}   ·   sepc={fr.sepc}"
-                if fr.stval and fr.stval not in ("0x0", "0x0000000000000000"):
-                    s += f"   ·   stval (faulting address) = {fr.stval}"
-                return s
-            if title == "syscall()":
-                a7, a0 = r.get("a7", ""), r.get("a0", "")
-                return f"live: a7={a7}  a0={a0}" if (a7 or a0) else ""
+        if fr is None or not getattr(fr, "ok", False):
+            # no frozen trap — seed the dispatch stage from the running proc, as before
+            if title == "syscall()" and self.cpu is not None:
+                return (f"live: a7={self.cpu.key('a7')}  a0={self.cpu.key('a0')}  "
+                        f"pc={self.cpu.key('pc')}")
             return ""
-        # no frozen trap — the original behaviour: seed the dispatch stage from the running proc
-        if title == "syscall()" and self.cpu is not None:
-            return (f"live: a7={self.cpu.key('a7')}  a0={self.cpu.key('a0')}  "
-                    f"pc={self.cpu.key('pc')}")
+        # A capture only describes the walkthrough for its OWN cause. Reading another one as a
+        # reference must not have this trap's numbers pasted into it.
+        if self._mode != mode_for(getattr(fr, "kind", -1)):
+            return ""
+        r = fr.regs
+        if title in self._ENTRY_TITLES:
+            s = f"scause={fr.scause} → {fr.kind_name}   ·   sepc={fr.sepc}"
+            if fr.stval and fr.stval not in ("0x0", "0x0000000000000000"):
+                s += f"   ·   stval (faulting address) = {fr.stval}"
+            if self._mode == "device" and fr.pid is not None and fr.pid >= 0:
+                s += (f"   ·   interrupted pid {fr.pid} — a BYSTANDER, not necessarily whose "
+                      f"device this was")
+            return s
+        if title == "yield()":
+            n, q = int(getattr(fr, "qticks", 0) or 0) + 1, int(getattr(fr, "quantum", 0) or 0)
+            if not q:
+                return ""
+            if n >= q:
+                return (f"quantum reached ({n} of {q}) → this tick DID preempt: "
+                        f"yield() → sched() → swtch")
+            return (f"quantum NOT reached ({n} of {q}) → returned to the SAME process; "
+                    f"no swtch this tick")
+        if title == "yield, or not":
+            who = "no process on this core (pid 0)" if not fr.pid else f"pid {fr.pid}"
+            return f"myproc() at the time: {who}"
+        if title == "kernelvec":
+            return "no trapframe was written for this trap — sstatus.SPP was 1 (kernel)"
+        if title == "uservec":
+            parts = [f"{k}={r[k]}" for k in ("ra", "sp", "a0", "a7") if k in r]
+            return ("this trap's user registers, saved into the trapframe:  " + "  ".join(parts)
+                    if parts else "this trap's user registers are saved into the trapframe")
+        if title == "usertrap":
+            s = f"scause={fr.scause} → {fr.kind_name}   ·   sepc={fr.sepc}"
+            if fr.stval and fr.stval not in ("0x0", "0x0000000000000000"):
+                s += f"   ·   stval (faulting address) = {fr.stval}"
+            return s
+        if title == "syscall()":
+            a7, a0 = r.get("a7", ""), r.get("a0", "")
+            return f"live: a7={a7}  a0={a0}" if (a7 or a0) else ""
         return ""
 
     def _render(self) -> None:
