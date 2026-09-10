@@ -73,6 +73,36 @@ def _reap_windows_between_modules():
 
 
 @pytest.fixture(autouse=True)
+def _pristine_fragment_registry():
+    """Hand every test the fragment registry the process started with.
+
+    `gini.domain.fragments.FRAGMENTS` is a module-level dict built once at import. Tests write to it
+    two ways: directly (`F.FRAGMENTS["campus"] = ...` in test_compose) and by authoring a YAML pack
+    into the user content layer and calling `F.reload()` (test_content_and_forks,
+    test_authoring_build2, test_fragment_terminals). Neither puts it back, so whatever they add is
+    visible to every test that runs afterwards, for the rest of the session.
+
+    That is invisible in a normal run and fatal in an unusual one, because it depends entirely on
+    collection order. Alphabetically `test_catalog` runs before `test_content_and_forks`, so it
+    never sees the leak. Reverse the order — which is a legitimate thing to do, and what a
+    randomising plugin or a hand-picked file list does — and
+    `test_archetypes_reference_real_concepts_and_elements` fails on a fragment authored by a test
+    file it has never heard of, asserting `a.spirit` against `t-lan-fork`, whose spirit is empty
+    because a test never set one. Nothing in that failure points at the cause.
+
+    Restoring is cheap (a dict of ~20 entries) and is done by REBINDING to a copy taken before the
+    test, which undoes an in-place write as well as a `reload()`. `LOAD_WARNINGS` is a list mutated
+    in place, so it is restored in place.
+    """
+    from gini.domain import fragments as _frag
+    saved = dict(_frag.FRAGMENTS)
+    saved_warnings = list(_frag.LOAD_WARNINGS)
+    yield
+    _frag.FRAGMENTS = saved
+    _frag.LOAD_WARNINGS[:] = saved_warnings
+
+
+@pytest.fixture(autouse=True)
 def _ask_gini_offline(monkeypatch):
     try:
         from gini.ui.main_window import MainWindow
