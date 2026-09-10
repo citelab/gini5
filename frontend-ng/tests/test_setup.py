@@ -18,12 +18,16 @@ def test_runtime_plan_is_per_os():
     assert "Docker Desktop" in runtime.runtime_plan("windows")["runtime"]  # no Colima on Windows
 
 
-def test_docker_available_needs_cli_and_daemon(monkeypatch):
-    monkeypatch.setattr(runtime.shutil, "which", lambda _c: None)
-    assert runtime.docker_available() is False                   # no CLI
-    monkeypatch.setattr(runtime.shutil, "which", lambda _c: "/usr/bin/docker")
-    ok = types.SimpleNamespace(returncode=0)
-    bad = types.SimpleNamespace(returncode=1)
+def test_docker_available_needs_cli_and_daemon():
+    """No CLI is now expressed the way the operating system expresses it, through `run`.
+
+    This used to monkeypatch `runtime.shutil.which`, which meant the test only described how
+    `docker_state` happened to be written. `run` is the single seam now, and a missing executable
+    reaches it as FileNotFoundError — so absence is testable without patching anything, and the
+    test says the same thing on a machine with Docker and one without.
+    """
+    ok, bad = types.SimpleNamespace(returncode=0), types.SimpleNamespace(returncode=1)
+    assert runtime.docker_available(run=_no_such_binary) is False        # no CLI
     assert runtime.docker_available(run=lambda *a, **k: ok) is True
     assert runtime.docker_available(run=lambda *a, **k: bad) is False
 
@@ -125,14 +129,37 @@ def test_an_image_that_pulls_but_cannot_be_tagged_counts_as_a_failure():
     assert res["r/gini-xv6:1"] is False
 
 
-def test_docker_state_tells_a_stopped_engine_from_an_absent_one(monkeypatch):
-    ok = types.SimpleNamespace(returncode=0)
-    bad = types.SimpleNamespace(returncode=1)
-    monkeypatch.setattr(runtime.shutil, "which", lambda _c: None)
-    assert runtime.docker_state() == "missing"
-    monkeypatch.setattr(runtime.shutil, "which", lambda _c: "/usr/bin/docker")
+def _no_such_binary(*_a, **_k):
+    """What `subprocess.run` does when the executable is not on PATH."""
+    raise FileNotFoundError(2, "No such file or directory", "docker")
+
+
+def test_docker_state_tells_a_stopped_engine_from_an_absent_one():
+    """The distinction that decides which advice a student is given — and it must not depend on
+    whether the machine running the suite happens to have Docker."""
+    ok, bad = types.SimpleNamespace(returncode=0), types.SimpleNamespace(returncode=1)
+    assert runtime.docker_state(run=_no_such_binary) == "missing"
     assert runtime.docker_state(run=lambda *a, **k: ok) == "ok"
     assert runtime.docker_state(run=lambda *a, **k: bad) == "stopped"   # installed, not answering
+
+
+def test_an_injected_runner_is_the_only_thing_docker_state_consults():
+    """The regression guard for the bug this pair was hiding.
+
+    `docker_state` used to call `shutil.which` before `run`, so an injected runner was overruled by
+    the real machine: five tests in test_bootstrap/test_setup asserted a healthy Docker and passed
+    only on a developer laptop that had one. They all failed the first time the suite ran on a
+    runner. A partial seam is worse than none, because it looks injected.
+    """
+    ok = types.SimpleNamespace(returncode=0)
+    seen = []
+
+    def run(cmd, **_k):
+        seen.append(list(cmd))
+        return ok
+
+    assert runtime.docker_state(run=run) == "ok"
+    assert seen == [["docker", "info"]], "it asked something other than the injected runner"
 
 
 def test_every_os_says_how_to_START_the_runtime_not_only_how_to_install_it():

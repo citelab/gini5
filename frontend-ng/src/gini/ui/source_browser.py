@@ -25,7 +25,6 @@ Revert and a workflow around them.
 from __future__ import annotations
 
 import re
-import threading
 
 from PySide6.QtCore import Qt, Signal
 from PySide6.QtGui import (
@@ -39,6 +38,7 @@ from PySide6.QtWidgets import (
 from ..app.paths import scripts_dir
 from ..domain.kernel_source import files_for, parse_source, safe_rel
 from ..domain.router_scripts import line_count, list_modules, read_module
+from .worker_host import run_off_gui
 
 
 def _scss(s: str) -> str:
@@ -340,7 +340,7 @@ class SourceBrowser(QWidget):
                 names = []
             self.appsListed.emit(list(names))
 
-        threading.Thread(target=work, daemon=True).start()
+        run_off_gui(self, work)
 
     def _on_apps_listed(self, names) -> None:
         if self._mode != "apps":
@@ -386,7 +386,7 @@ class SourceBrowser(QWidget):
                 text = f"// unreadable: {e}"
             self.appLoaded.emit(rel, text)
 
-        threading.Thread(target=work, daemon=True).start()
+        run_off_gui(self, work)
 
     def _on_app_loaded(self, rel: str, text: str) -> None:
         """Content only. The top pane keeps the app list — see the signal declarations."""
@@ -459,7 +459,7 @@ class SourceBrowser(QWidget):
                 text = f"// unreadable: {e}"
             self.loaded.emit(rel, text)
 
-        threading.Thread(target=work, daemon=True).start()
+        run_off_gui(self, work)
 
     # -- internals ---------------------------------------------------------- #
     def _on_file_pick(self, rel: str) -> None:

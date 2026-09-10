@@ -18,6 +18,7 @@ from PySide6.QtWidgets import QWidget
 
 from ..domain.flows import FlowTracker, parse_ss
 from .glass import apply_glass, paint_glass_panel
+from .worker_host import run_off_gui
 
 _CHIP_H = 22
 _WINDOW_S = 60          # the cwnd plot shows only the most recent 60 s (a scrolling window)
@@ -194,7 +195,6 @@ class FlowHudController(QObject):
     def refresh(self) -> None:
         if self._busy:
             return
-        import threading
         import time
 
         # Snapshot the machine list HERE, on the GUI thread. `_machines()` iterates
@@ -221,7 +221,7 @@ class FlowHudController(QObject):
                 self.samples_ready.emit(samples, tnow)
             finally:
                 self._busy = False
-        threading.Thread(target=work, daemon=True).start()
+        run_off_gui(self, work)
 
     def show_topright(self) -> None:
         par = self.hud.parentWidget()

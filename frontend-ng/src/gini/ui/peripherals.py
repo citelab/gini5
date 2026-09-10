@@ -21,6 +21,7 @@ from PySide6.QtWidgets import (
 
 from .theme import ThemeManager
 from .theme.manager import scale_css as _scss
+from .worker_host import run_off_gui
 
 # terminal-side built-ins (handled here, not sent to xv6 sh) and the common real xv6 programs the
 # `help` text advertises — so students know what they can actually run.
@@ -102,8 +103,7 @@ class TerminalView(QDialog):
 
     # -- output --------------------------------------------------------------- #
     def _bg(self, fn):
-        import threading
-        threading.Thread(target=fn, daemon=True).start()
+        run_off_gui(self, fn)
 
     def _refresh(self):
         # Never overlap reads: a slow agent + a fixed timer would stack background reads that all

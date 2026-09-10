@@ -21,14 +21,27 @@ class ControlServer(threading.Thread):
         self.banner = banner
         self._srv: socket.socket | None = None   # held so stop() can break accept()
 
+    #: How long `accept()` waits before looking at `_closed` again. Small enough that `stop()`
+    #: returns promptly — the leak guard in conftest allows a thread 0.5s of grace to die — and
+    #: large enough that an idle node is not spinning.
+    POLL = 0.25
+
     def stop(self) -> None:
         """End the accept loop.
 
-        Unlike a select loop there is no timeout to check a flag on — `accept()` blocks until a
-        connection arrives — so the listening socket is closed underneath it and the resulting
-        OSError ends the thread. Production never calls this: the server belongs to a node that is
-        its own container process. Tests construct nodes in-process, and a thread that cannot be
-        stopped there outlives its test and runs for the rest of the session.
+        Closing the listening socket underneath a blocked `accept()` is what this used to rely on,
+        and that is a BSD behaviour, not a portable one: on macOS the blocked call returns and the
+        thread ends, on Linux it can stay parked in the kernel because the wait was entered before
+        the descriptor went away. The result was a test that leaked two runtime threads on Linux
+        and nowhere else — invisible on the maintainer's machine, caught the first time the suite
+        ran on a runner.
+
+        So the loop now owns a timeout and re-reads `_closed`, which needs no help from the
+        platform. Closing the socket stays, because it also refuses new connections immediately.
+
+        Production never calls this: the server belongs to a node that is its own container
+        process. Tests construct nodes in-process, and a thread that cannot be stopped there
+        outlives its test and runs for the rest of the session.
         """
         self._closed = True
         srv, self._srv = self._srv, None
@@ -46,13 +59,20 @@ class ControlServer(threading.Thread):
         srv = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
         srv.bind(self.path)
         srv.listen()
+        srv.settimeout(self.POLL)                # so the flag below is actually reachable
         self._srv = srv
         while not getattr(self, "_closed", False):
             try:
                 conn, _ = srv.accept()
+            except TimeoutError:
+                continue                         # nobody knocked; go and re-read _closed
             except OSError:
                 break                            # stop() closed it underneath us
-            threading.Thread(target=self._serve, args=(conn,), daemon=True).start()
+            # A socket returned by a listener that has a timeout can carry one too; the console
+            # session must block, not time out mid-command.
+            conn.settimeout(None)
+            threading.Thread(target=self._serve, args=(conn,), daemon=True,
+                             name=f"console-{os.path.basename(self.path)}").start()
 
     def _serve(self, conn: socket.socket) -> None:
         conn.sendall((self.banner + "\ngini> ").encode())

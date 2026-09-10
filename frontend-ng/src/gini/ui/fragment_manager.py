@@ -29,6 +29,7 @@ from ..domain import fragments as _frag
 from ..domain import objectives as _obj
 from ..domain import riders as _riders
 from .theme import icons as _icons
+from .worker_host import run_off_gui
 
 _LEVEL_SHORT = {_obj.PLACEMENT: "L1", _obj.CONNECTION: "L2",
                 _obj.CONTAINMENT: "L3", _obj.LIVE: "L4"}
@@ -309,7 +310,6 @@ exactly what recursion means here.</li>
         d = self._current_dict()
         if d is None:
             return
-        import threading
         self.ctx.log("Certifying (grading the board on the live stack)…", "info")
 
         def work():
@@ -321,7 +321,7 @@ exactly what recursion means here.</li>
                 rep = _certify.CertReport(fragment_id=d.get("id", ""))
                 rep.add(_certify.BLOCK, "error", f"Certify hit an error: {e}")
             self._cert_ready.emit(rep, d)
-        threading.Thread(target=work, daemon=True).start()
+        run_off_gui(self, work)
 
     def _on_cert_ready(self, rep, d) -> None:
         if rep.certified:
@@ -403,7 +403,6 @@ exactly what recursion means here.</li>
                 or not getattr(tc, "is_teacher", lambda: False)()):
             return            # not a teacher, or the shared library is parked (app/features.py):
             #                   authoring and playing fragments locally is unaffected
-        import threading
 
         def work():
             try:
@@ -414,7 +413,7 @@ exactly what recursion means here.</li>
             if isinstance(lib, list):
                 ids = {str(x.get("id", x) if isinstance(x, dict) else x) for x in lib}
             self._tc_index_ready.emit(ids)
-        threading.Thread(target=work, daemon=True).start()
+        run_off_gui(self, work)
 
     def _on_tc_index(self, ids) -> None:
         self._tc_ids = ids
@@ -578,7 +577,6 @@ exactly what recursion means here.</li>
             if QMessageBox.question(self, "Certified with warnings",
                                     self._cert_text(rep) + "\n\nUpload anyway?") != QMessageBox.Yes:
                 return
-        import threading
         yaml_text = _fy.to_yaml(f)
 
         def work():
@@ -589,7 +587,7 @@ exactly what recursion means here.</li>
                          "ok" if res.get("ok") else "error")
             if res.get("ok"):
                 self._refresh_tc_index(force=True)        # the ↑ mark appears without a reopen
-        threading.Thread(target=work, daemon=True).start()
+        run_off_gui(self, work)
         self.ctx.log(f"Uploading '{fid}' to the Teaching Center…", "info")
 
     # ---------------------------------------------------------------- editor

@@ -26,6 +26,7 @@ from PySide6.QtWidgets import (
 from ..domain.xv6 import parse_lock_cpus, parse_locks
 from .theme import ThemeManager, icons
 from .theme.manager import scale_css as _scss
+from .worker_host import run_off_gui
 
 # Above this many spins per acquire a lock is worth splitting — the threshold is a teaching
 # heuristic, not a hard rule, and the panel says which side of it each lock is on.
@@ -171,7 +172,6 @@ class LockLab(QDialog):
         if self._busy or self._closed:
             return
         self._busy = True
-        import threading
 
         def work():
             try:
@@ -180,7 +180,7 @@ class LockLab(QDialog):
                     self.locks_ready.emit(txt)
             finally:
                 self._busy = False
-        threading.Thread(target=work, daemon=True).start()
+        run_off_gui(self, work)
 
     def _on_locks(self, txt: str) -> None:
         if self._closed:

@@ -27,6 +27,7 @@ from ..domain.machine_state import MachineState
 from ..domain.xv6 import DemoScheduler, policy_name, ready_queue, short_pid
 from .theme import ThemeManager, icons
 from .theme.manager import scale_css as _scss
+from .worker_host import run_off_gui
 
 # scheduler policies the selector offers (must match domain POLICY_NAMES / kernel gini_pick)
 _POLICIES = ["round-robin", "priority", "lottery"]
@@ -1047,8 +1048,7 @@ class MachineLab(QDialog):
 
     # -- programs: launch / kill (all off the GUI thread) ----------------- #
     def _bg(self, fn) -> None:
-        import threading
-        threading.Thread(target=fn, daemon=True).start()
+        run_off_gui(self, fn)
 
     def _sync_args_hint(self, prog: str) -> None:
         """Show what this program's argument means, in the box itself. The placeholder is the only
@@ -1484,7 +1484,6 @@ class MachineLab(QDialog):
         if self._busy or self._closed:
             return
         self._busy = True
-        import threading
 
         def work():
             # ALWAYS signal, even on failure. `_busy` is cleared in _on_snap, so a read that
@@ -1512,7 +1511,7 @@ class MachineLab(QDialog):
                     self.snap_ready.emit(err)   # marshal back to the GUI thread — clears _busy
             except RuntimeError:
                 return                          # dialog went away between the check and the emit
-        threading.Thread(target=work, daemon=True).start()
+        run_off_gui(self, work)
 
     def _on_snap(self, err=None) -> None:
         """Always on the GUI thread. `err` is "" for a good read, a message for a failed one, and
@@ -1725,8 +1724,7 @@ class Xv6Console(QDialog):
         self._refresh()
 
     def _bg(self, fn):
-        import threading
-        threading.Thread(target=fn, daemon=True).start()
+        run_off_gui(self, fn)
 
     def _procdump(self):
         # send Ctrl-P (xv6's process dump), then pull the console so it shows up

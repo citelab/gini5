@@ -16,13 +16,13 @@ tests, and the refactor should land where those tests can be run.
 """
 from __future__ import annotations
 
-import threading
 import time
 
 from PySide6.QtCore import QObject, QRectF, QTimer, Qt
 from PySide6.QtGui import QColor, QFont, QPainter, QPen
 
 from .glass import paint_glass_panel
+from .worker_host import run_off_gui
 
 
 class HudHistory:
@@ -208,7 +208,7 @@ class HudController(QObject):
                 pass                       # a failed poll must never kill the timer
             finally:
                 self._busy = False
-        threading.Thread(target=work, daemon=True).start()
+        run_off_gui(self, work)
 
     def start(self) -> None:
         self.refresh()

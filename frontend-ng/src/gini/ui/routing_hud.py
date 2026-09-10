@@ -38,6 +38,7 @@ from ..domain.routing_model import (
     KIND_OVS, RouteHistory, collect_network_data, collect_router_data, decision_kind, trace,
 )
 from .glass import apply_glass, paint_glass_panel
+from .worker_host import run_off_gui
 
 _NODE_R = 16
 _LONGPRESS_MS = 380
@@ -653,7 +654,6 @@ class RoutingHudController(QObject):
         if self._busy:
             return
         self._busy = True
-        import threading
 
         def work():
             try:
@@ -667,7 +667,7 @@ class RoutingHudController(QObject):
                 self.model_ready.emit(None, self._positions_of(), {})
             finally:
                 self._busy = False
-        threading.Thread(target=work, daemon=True).start()
+        run_off_gui(self, work)
 
     def show_topright(self) -> None:
         par = self.hud.parentWidget()
