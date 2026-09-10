@@ -12,7 +12,9 @@ pytest-cache-files-*/
 
 # --- C router build ---
 *.o
-*.zigobj.o
+# `*.zigobj.o` alone did not match the real artifacts, which are `*.zigobj.o.tmpXXXXXXX` — which is
+# how six of them stayed tracked through the Zig removal and were still in the tree afterwards.
+*.zigobj.o*
 config.log
 backend/build/
 # legacy: Zig removed; kept so any stray cache never re-enters git

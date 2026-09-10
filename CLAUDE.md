@@ -365,16 +365,19 @@ The code behind each door still compiles, is still refactored, and is still test
 
 ### Stale artifacts and doc drift (safe, cheap cleanups)
 
-- `ARCHITECTURE.md` still describes the **Zig** build (`build.zig`, "`zig build`", "the gRouter is
-  still being ported to Zig (Z3/Z4)") — Zig was removed on 2026-07-16. It also says the test suite
-  is "35 passing"; it is 2,956. And it describes a `frontend-ng/` layout with a `domain/` inside it,
-  which moved to `core/` on 2026-08-28.
-- `backend/build.zig` still exists (dead), and **6 `*.zigobj.o.tmp*` files are tracked** in
-  `backend/src/grouter/` — `.gitignore` has `*.zigobj.o`, which does not match the `.tmpXXXX` suffix.
+- ~~`ARCHITECTURE.md` describes the Zig build~~ — **rewritten on this branch.** It had drifted
+  badly: `build.zig` / "`zig build`" and "still being ported to Zig (Z3/Z4)" (Zig was removed
+  2026-07-16), "35 passing" tests (2,956), and a `frontend-ng/` layout with `domain/` inside it
+  (moved to `core/` on 2026-08-28). It now covers all three distributions, the four container
+  images, the namespace split and the run pipeline, and every count in it was checked against the
+  tree. The README calls it "the full map", so it is worth keeping honest.
+- ~~`backend/build.zig` and 6 tracked `*.zigobj.o.tmp*` files~~ — **removed on this branch**, along
+  with two stale `frontend-ng/dist/` wheels. The July Zig removal missed them; the `.gitignore`
+  pattern was `*.zigobj.o`, which does not match the real `.tmpXXXXXXX` suffix, so they stayed
+  tracked. Pattern widened to `*.zigobj.o*`. (The tmp files were 1 byte each.)
 - `MIGRATION.md` describes a `frontend-ng` → `gbuilder` rename that **never happened**, and says to
-  delete itself when done.
-- `frontend-ng/dist/` has two tracked v6.0.0 build artifacts despite `dist/` being in `.gitignore`
-  (tracked before the ignore; `git add -A` won't untrack them). Four releases stale.
+  delete itself when done. **Left alone deliberately** — it is a plan the maintainer may still
+  intend, and deleting someone's plan is their call, not a cleanup.
 - `core/src/gini/domain/pricing.py` calls `security_group` a "not-yet-real placeholder", but
   `compiler._build_security_groups()` implements it as real iptables sidecars. `gateway` and
   `block_volume` in that same list do appear to be genuine placeholders.
