@@ -691,6 +691,36 @@ def _grafana_dashboard_json() -> str:
     }, indent=2)
 
 
+def _cadvisor_command() -> list[str]:
+    """cAdvisor flags. ``-docker_only`` is Docker-specific and would hide every container on
+    Podman, so it is omitted there. The rest of the observability stack still starts; Grafana
+    just has no per-container series — a cAdvisor limitation, not something GINI can fix."""
+    cmd = ["-housekeeping_interval=2s"]
+    try:
+        from ..setup.runtime import using_podman
+        podman = using_podman()
+    except Exception:                            # noqa: BLE001
+        podman = False
+    if not podman:
+        cmd.append("-docker_only=true")
+    return cmd
+
+
+def _cadvisor_volumes() -> list[str]:
+    vols = ["/:/rootfs:ro", "/var/run:/var/run:ro", "/sys:/sys:ro",
+            "/dev/disk/:/dev/disk:ro"]
+    try:
+        from ..setup.runtime import using_podman
+        podman = using_podman()
+    except Exception:                            # noqa: BLE001
+        podman = False
+    if podman:
+        vols.append("/var/lib/containers/:/var/lib/containers:ro")
+    else:
+        vols.append("/var/lib/docker/:/var/lib/docker:ro")
+    return vols
+
+
 class RuntimeCompiler:
     def compile(self, topo: Topology) -> RuntimeConfig:
         cfg = RuntimeConfig()
@@ -1686,10 +1716,9 @@ class RuntimeCompiler:
             name="cAdvisor", type_key="_cadvisor",
             image="gcr.io/cadvisor/cadvisor:v0.49.1",
             summary="Per-container CPU / memory / network metrics for the whole lab.",
-            command=["-housekeeping_interval=2s", "-docker_only=true"],   # fresher data
+            command=_cadvisor_command(),
             ports=[{"container": 8080, "host": host_port, "label": "cadvisor", "web": True}],
-            volumes=["/:/rootfs:ro", "/var/run:/var/run:ro", "/sys:/sys:ro",
-                     "/var/lib/docker/:/var/lib/docker:ro", "/dev/disk/:/dev/disk:ro"],
+            volumes=_cadvisor_volumes(),
             privileged=True))
         host_port += 1
 

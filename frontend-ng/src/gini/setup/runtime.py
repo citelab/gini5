@@ -1,12 +1,122 @@
 """Container-runtime detection + per-OS install guidance.
 
 The runtime can't be bundled, and it differs per OS (Colima is macOS/Linux only; Windows uses Docker
-Desktop/Podman). We detect a working Docker socket and, where we can, offer the auto-install commands
-— but only after the user consents (we never silently run privileged installers)."""
+Desktop/Podman). We detect a working Docker-compatible CLI and, where we can, offer the auto-install
+commands — but only after the user consents (we never silently run privileged installers).
+
+Podman compatibility
+--------------------
+GINI talks to the container engine ONLY through the CLI — never through a socket, never through a
+Python SDK. That makes engine support a pure string question: which binary sits at the front of
+every ``subprocess.run`` call. The answer is resolved ONCE by ``detect_engine``, cached in the
+module, and consumed everywhere through ``engine_cli()`` and ``compose_cli()``. No abstraction
+layer, no strategy pattern — just a prefix list that is ``["docker"]`` on one machine and
+``["podman"]`` on another.
+
+The detection order is deliberate: Docker first, because it is the documented path for every
+platform except the Trottier lab machines and similar Podman-only environments. When a machine has
+BOTH, Docker wins — Podman's ``docker`` compatibility shim (``podman-docker``) makes this the same
+either way, and if they genuinely coexist (rare), Docker is the one with known-good compose
+support.
+"""
 from __future__ import annotations
 
 import platform
 import subprocess
+
+# ---------------------------------------------------------------------------
+# Engine detection — which container CLI does this machine actually have?
+# ---------------------------------------------------------------------------
+# Cached after the first call.  Every call site reads the result through
+# ``engine_cli()`` / ``compose_cli()`` rather than re-probing, so a detection
+# that contacts the daemon once at startup is tolerable and a detection that
+# contacts it once per compose call would not be.
+_ENGINE: str | None = None      # "docker" | "podman" | "missing"
+
+
+def _probe_binary(binary: str, run) -> str | None:
+    """``"ok"``, ``"stopped"``, or ``None`` if ``binary`` is not on PATH.
+
+    ``None`` is FileNotFoundError only. A non-zero ``info`` (daemon down) is ``stopped``: the
+    binary is here, and falling through to the other engine would send a student with a stopped
+    Docker off to install Podman.
+    """
+    try:
+        r = run([binary, "info"], capture_output=True, timeout=15)
+    except FileNotFoundError:
+        return None
+    except Exception:                        # noqa: BLE001 — timeout / wedged daemon
+        return "stopped"
+    return "ok" if r.returncode == 0 else "stopped"
+
+
+def detect_engine(run=subprocess.run) -> str:
+    """``"docker"`` | ``"podman"`` | ``"missing"`` — which container CLI is here.
+
+    Docker is tried first because it is the recommended runtime on every platform. Podman is
+    tried only when there is no ``docker`` binary at all, so a Podman-only machine (no
+    ``podman-docker`` symlink) is still detected rather than reported as missing.
+
+    A custom ``run`` (tests) is never cached: the cache is for the real process-wide probe.
+    Call ``_reset_engine_cache()`` in tests that need to re-probe the default runner.
+    """
+    global _ENGINE  # noqa: PLW0603 — one write, at startup; every later read is fast
+    use_cache = run is subprocess.run
+    if use_cache and _ENGINE is not None:
+        return _ENGINE
+    docker = _probe_binary("docker", run)
+    if docker is not None:
+        result = "docker"
+    else:
+        podman = _probe_binary("podman", run)
+        result = "podman" if podman is not None else "missing"
+    if use_cache:
+        _ENGINE = result
+    return result
+
+
+def _reset_engine_cache() -> None:
+    """For tests only — forget the cached engine so the next call re-probes."""
+    global _ENGINE  # noqa: PLW0603
+    _ENGINE = None
+
+
+def engine_cli(run=subprocess.run) -> list[str]:
+    """The CLI prefix for container commands: ``["docker"]`` or ``["podman"]``.
+
+    Falls back to ``["docker"]`` when nothing is detected, so error messages still name a
+    binary the user can look up.
+    """
+    e = detect_engine(run=run)
+    return ["podman"] if e == "podman" else ["docker"]
+
+
+def compose_cli(run=subprocess.run) -> list[str]:
+    """The CLI prefix for compose commands: ``["docker", "compose"]`` or ``["podman", "compose"]``.
+
+    Podman 4+ ships ``podman compose`` as a pass-through to an external compose provider
+    (either the official Docker Compose v2 binary or ``podman-compose``). This is the
+    recommended path and the one tested in the Trottier lab.
+    """
+    e = detect_engine(run=run)
+    if e == "podman":
+        return ["podman", "compose"]
+    return ["docker", "compose"]
+
+
+def engine_name(run=subprocess.run) -> str:
+    """Human-readable name of the detected engine: ``"Docker"`` or ``"Podman"``.
+
+    Used in user-facing messages where saying "Docker" when the machine has Podman would be
+    confusing.
+    """
+    e = detect_engine(run=run)
+    return "Podman" if e == "podman" else "Docker"
+
+
+def using_podman(run=subprocess.run) -> bool:
+    """True only after a probe (or test cache) has named Podman."""
+    return detect_engine(run=run) == "podman"
 
 
 def detect_os() -> str:
@@ -22,48 +132,69 @@ def docker_state(run=subprocess.run) -> str:
     Docker to install it again sends them off to fix the wrong thing, and never mentions the one
     action that would work.
 
-    Absence is read from `run` itself rather than from `shutil.which`, so that `run` is the ONLY
-    thing this function touches. It used to check `which` first, which is not injectable — so a
-    caller that injected a perfectly healthy fake still got "missing" on a machine with no docker
-    binary, and five tests in test_bootstrap/test_setup passed only because the developer happened
-    to have Docker installed. They failed the moment the suite ran anywhere else. A missing
-    executable already announces itself precisely, and from inside the seam:
-    `subprocess.run` raises FileNotFoundError.
+    Now tries both ``docker`` and ``podman``, in that order. A machine with only Podman (no
+    ``docker`` symlink) is detected rather than reported as missing — which was the whole reason
+    the Trottier lab machines could not run GINI.
+
+    Absence is read from ``run`` itself rather than from ``shutil.which``, so that ``run`` is the
+    ONLY thing this function touches. It used to check ``which`` first, which is not injectable —
+    so a caller that injected a perfectly healthy fake still got "missing" on a machine with no
+    docker binary, and five tests in test_bootstrap/test_setup passed only because the developer
+    happened to have Docker installed. They failed the moment the suite ran anywhere else. A
+    missing executable already announces itself precisely, and from inside the seam:
+    ``subprocess.run`` raises FileNotFoundError.
     """
-    try:
-        r = run(["docker", "info"], capture_output=True, timeout=15)
-    except FileNotFoundError:    # no docker on PATH at all — nothing to start
-        return "missing"
-    except Exception:            # a timeout is a daemon that is starting or wedged, not an absent one
-        return "stopped"
-    return "ok" if r.returncode == 0 else "stopped"
+    docker = _probe_binary("docker", run)
+    if docker is not None:
+        return docker
+    podman = _probe_binary("podman", run)
+    if podman is not None:
+        return podman
+    return "missing"
 
 
 def compose_available(run=subprocess.run) -> bool:
-    """Is `docker compose` (the v2 plugin) here? Asked SEPARATELY from the daemon, on purpose.
+    """Is compose (the v2 plugin or ``podman compose``) here?
 
-    They fail independently, and on Linux they constantly do: `apt install docker.io` gives a
-    working engine and CLI with NO compose plugin. `docker info` then answers happily, preflight
+    Asked SEPARATELY from the daemon, on purpose.
+
+    They fail independently, and on Linux they constantly do: ``apt install docker.io`` gives a
+    working engine and CLI with NO compose plugin. ``docker info`` then answers happily, preflight
     declares the machine ready, a student draws a topology, presses Run — and gets
 
         Run failed: unknown flag: --build
         Usage:  docker [OPTIONS] COMMAND [ARG...]
 
-    because `docker compose up --build -d` reaches a CLI with no `compose` subcommand, and the
+    because ``docker compose up --build -d`` reaches a CLI with no ``compose`` subcommand, and the
     top-level parser rejects the first flag it does not know. Nothing in that names the cause,
     and nobody would guess "install a plugin" from it.
 
     Invisible on macOS, which is why it lasted: Docker Desktop and Colima both bundle compose v2.
     """
+    # Docker compose first, and only FileNotFoundError (no docker binary) falls through to
+    # Podman. A docker CLI that exists but has no compose plugin must NOT be reported as
+    # "compose available" just because `podman compose` happens to work — those are two
+    # engines, and the rest of GINI will talk to the one detect_engine picked.
     try:
         return (run(["docker", "compose", "version"],
                     capture_output=True, timeout=15).returncode == 0)
-    except Exception:            # noqa: BLE001 — no CLI, no plugin; either way it cannot run
+    except FileNotFoundError:
+        pass
+    except Exception:            # noqa: BLE001 — no plugin; it cannot run
+        return False
+    try:
+        return (run(["podman", "compose", "version"],
+                    capture_output=True, timeout=15).returncode == 0)
+    except Exception:            # noqa: BLE001
         return False
 
 
 def docker_available(run=subprocess.run) -> bool:
-    """True if a Docker-compatible CLI is present AND a daemon answers (Colima/Desktop/Engine/Podman)."""
+    """True if a Docker-compatible CLI is present AND a daemon answers.
+
+    Works for Docker (Docker Desktop / Colima / Docker Engine) and Podman alike — detection
+    of which binary to use is handled by ``detect_engine``.
+    """
     return docker_state(run=run) == "ok"
 
 
@@ -85,20 +216,28 @@ _PLANS = {
                     "normally include it already."),
     },
     "linux": {
-        "runtime": "Docker Engine",
+        "runtime": "Docker Engine or Podman",
         "auto": [],   # distro-specific + needs sudo -> we guide rather than run
         "needs": "sudo / your package manager",
         "manual": ("Install Docker Engine for your distro "
                    "(https://docs.docker.com/engine/install/) and add your user to the 'docker' "
-                   "group:  sudo usermod -aG docker $USER  (then log out/in). Podman also works."),
-        "start": "sudo systemctl start docker",
+                   "group:  sudo usermod -aG docker $USER  (then log out/in).\n\n"
+                   "Alternatively, install Podman:\n"
+                   "    sudo apt install podman              # Debian/Ubuntu\n"
+                   "    sudo dnf install podman              # Fedora/RHEL\n"
+                   "then enable its socket:\n"
+                   "    systemctl --user enable --now podman.socket\n"
+                   "and install a Compose provider:\n"
+                   "    sudo apt install podman-compose      # or docker-compose-v2"),
+        "start": "sudo systemctl start docker\n(or, for Podman: systemctl --user start podman.socket)",
         # The common one. Ubuntu's own `docker.io` package does NOT carry compose, and Docker's
         # repo splits it into its own package, so a perfectly working Docker often has no compose.
-        "compose": ("Install the Compose plugin, then log out and back in if needed:\n"
+        "compose": ("Install a Compose provider, then log out and back in if needed:\n"
                     "    sudo apt install docker-compose-plugin    # Docker's own apt repo\n"
                     "    sudo apt install docker-compose-v2        # Ubuntu's docker.io package\n"
+                    "    sudo apt install podman-compose           # for Podman\n"
                     "(Fedora/RHEL: sudo dnf install docker-compose-plugin)\n\n"
-                    "Check it with:  docker compose version"),
+                    "Check it with:  docker compose version   (or: podman compose version)"),
     },
     "windows": {
         "runtime": "Docker Desktop (or Podman Desktop)",
@@ -115,7 +254,7 @@ _PLANS = {
 
 def runtime_plan(os_name: str) -> dict:
     return _PLANS.get(os_name, {"runtime": "a Docker-compatible runtime", "auto": [], "needs": "",
-                                "manual": "Install Docker or a compatible runtime and start it.",
+                                "manual": "Install Docker or Podman and start it.",
                                 "start": "Start your container runtime, then launch gBuilder again."})
 
 

@@ -462,19 +462,34 @@ class MainWindow(QMainWindow):
         force = self._force_new_signin           # one-shot: force the dialog (sign in as someone else)
         self._force_new_signin = False
         s = self.ctx.settings
-        if not (s.tc_url and s.tc_course):
-            self.ctx.log("Teaching Center: set the course server and course in Settings first.",
-                         "info")
-            self._open_settings()
-            return
-        if not s.tc_student and not force:
+        # Three ways this used to end with nothing on screen. Sign in is an explicit act — the
+        # person clicked a menu item and is waiting — so every exit from it has to answer, in a
+        # dialog rather than in the console dock behind the canvas. Reported as sign-in being
+        # "partially working": Settings would open with no reason given, or nothing happened.
+        missing = [n for n, v in (("course server", s.tc_url), ("course", s.tc_course),
+                                  ("student id", s.tc_student)) if not v]
+        if missing and not (force and missing == ["student id"]):
+            QMessageBox.information(
+                self, "Not enrolled yet",
+                "Signing in needs " + ", ".join(missing) + ".\n\nSettings is opening at the "
+                "Teaching Center section — fill those in, then try Sign in again.")
             self._open_settings()
             return
 
         tc = self.ctx.connect_teaching_center()
         if tc is None:
+            QMessageBox.warning(
+                self, "Could not reach the course",
+                f"The Teaching Center client could not be built for {s.tc_url or 'this course'}.\n\n"
+                "Check the course server address in Settings. The console log has the detail.")
             return
-        if not self._force_new_signin and tc.signed_in():   # a live session — nothing to ask
+        # `force`, the LOCAL captured above — not `self._force_new_signin`, which line 2 of this
+        # method has already set False, making the attribute test here always true. That is why
+        # "Sign in as another user" appeared to half-work: _sign_in_as writes the new username into
+        # Settings and asks for a fresh dialog, this branch resumed the OLD session instead, and
+        # the log then said "resuming your session as <the new name>" while the session, the
+        # submissions and the receipts all still belonged to the previous account.
+        if not force and tc.signed_in():                   # a live session — nothing to ask
             self.ctx.log(f"Teaching Center: resuming your session as {s.tc_student}…", "info")
             self._connect_teaching_center()
             return
@@ -1500,7 +1515,15 @@ class MainWindow(QMainWindow):
 
     def closeEvent(self, e) -> None:
         if self.containers_busy():           # don't quit out from under a live topology
-            self.ctx.log(self._busy_quit_message(), "error")
+            msg = self._busy_quit_message()
+            self.ctx.log(msg, "error")
+            # …and say it where the person who just clicked the close button is looking. The log
+            # line alone was the whole answer, and the console dock is not where anyone looks when
+            # a window refuses to shut: from outside, pressing close and having nothing happen is
+            # indistinguishable from a frozen app. Reported by a user as "closing does nothing"
+            # — the guard was working perfectly and saying so into a panel behind the canvas.
+            from PySide6.QtWidgets import QMessageBox
+            QMessageBox.warning(self, "The lab is still running", msg)
             e.ignore()
             return
         self._persist_current_project()      # never lose the active project's work / chat
@@ -2731,7 +2754,10 @@ class MainWindow(QMainWindow):
         addressing = getattr(self.ctx, "addressing", {}) or {}
         if len(overlay_host_lines(addressing)) < 2:
             return
-        dc = list(getattr(orch, "_dc", ["docker", "compose"]))
+        dc = list(getattr(orch, "_dc", None) or [])
+        if not dc:
+            from ..setup.runtime import compose_cli
+            dc = list(compose_cli())
         wd = getattr(orch, "workdir", None)
         devs = [d for d in self.ctx.topology.devices.values()
                 if _role(d.type_key) in ("machine", "router", "compute")]
@@ -3365,6 +3391,18 @@ class MainWindow(QMainWindow):
         self.ctx.warnings = warnings
         self.ctx.bus.warnings_changed.emit()
 
+    def _compose_argv(self) -> list[str]:
+        """``docker compose`` or ``podman compose``, plus ``-p`` when the stack is namespaced.
+
+        Probe/rider exec goes through ``orch._dc`` already. These one-shot UI execs used to
+        hardcode ``docker compose`` and would miss the running project on a Podman lab machine.
+        """
+        orch = getattr(self._gloader, "orchestrator", None) or getattr(self.ctx, "orchestrator", None)
+        if orch is not None:
+            return list(getattr(orch, "_dc", []))
+        from ..setup.runtime import compose_cli
+        return list(compose_cli())
+
     def element_query(self, device_name: str, command: str) -> str:
         """Run a one-shot console command against a network element (needs Docker up)."""
         if not self._workdir:
@@ -3384,11 +3422,11 @@ class MainWindow(QMainWindow):
             # wedge the serial rctl server: dead console + empty HUD queries).
             if is_router:
                 # the real C gRouter: run one CLI command over its control socket
-                cmd = ["docker", "compose", "exec", "-T", svc, "timeout", "12",
+                cmd = [*self._compose_argv(), "exec", "-T", svc, "timeout", "12",
                        "python3", "/build/grouter-build/grconsole.py",
                        f"/run/{svc}.ctl", "--once", command]
             else:
-                cmd = ["docker", "compose", "exec", "-T", "fabric", "timeout", "12",
+                cmd = [*self._compose_argv(), "exec", "-T", "fabric", "timeout", "12",
                        "python", "-m", "dataplane.console", svc, command]
             r = subprocess.run(cmd, cwd=self._workdir, capture_output=True,
                                text=True, encoding="utf-8", errors="replace", timeout=15)
@@ -3408,7 +3446,7 @@ class MainWindow(QMainWindow):
         from ..services.compiler import _svc
         try:
             svc = _svc(device_name)
-            r = subprocess.run(["docker", "compose", "exec", "-T", svc, "sh", "-c", command],
+            r = subprocess.run([*self._compose_argv(), "exec", "-T", svc, "sh", "-c", command],
                                cwd=self._workdir, capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=8)
             return r.stdout or ""
         except Exception:
@@ -3462,7 +3500,7 @@ class MainWindow(QMainWindow):
         fn = _svc(dev.name)
 
         def work():
-            cmd = ["docker", "compose", "exec", "-T",
+            cmd = [*self._compose_argv(), "exec", "-T",
                    "-e", f"GINI_FN={fn}", "-e", f"GINI_METHOD={method}",
                    "-e", f"GINI_BODY={body}", "faas", "python", "-c", _FAAS_INVOKE]
             try:

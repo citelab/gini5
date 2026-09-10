@@ -22,6 +22,7 @@ import subprocess
 from pathlib import Path
 
 from ..setup import images, marker, runtime
+from ..setup.runtime import compose_cli, engine_cli, engine_name
 
 # What each state means for the user, in one sentence. The UI shows exactly these.
 READY = "ready"                  # nothing to do
@@ -68,8 +69,8 @@ def plan(app_version: str | None, *, run=subprocess.run, backend_hint: str | Non
     if rt_state == "no_compose":
         rp = runtime.runtime_plan(os_name)
         state, why = NEEDS_RUNTIME, (
-            "Docker is installed and running, but the Compose plugin it needs is missing — so "
-            "nothing can be started. `docker compose version` fails on this machine.\n\n"
+            f"{engine_name(run=run)} is installed and running, but the Compose plugin it needs is missing — so "
+            f"nothing can be started. `{' '.join(compose_cli(run=run))} version` fails on this machine.\n\n"
             f"{rp.get('compose', '')}\n\nBuilding and reading topologies works meanwhile; Run "
             f"does not.")
     elif rt_state == "stopped":
@@ -78,14 +79,14 @@ def plan(app_version: str | None, *, run=subprocess.run, backend_hint: str | Non
         # fix the wrong thing, and never names the one action that works.
         rp = runtime.runtime_plan(os_name)
         state, why = NEEDS_RUNTIME, (
-            f"{rp.get('runtime', 'Docker')} is installed on this machine, but its engine is not "
+            f"{rp.get('runtime', engine_name(run=run))} is installed on this machine, but its engine is not "
             f"running — so nothing can be downloaded or started yet. Start it, then launch "
             f"gBuilder again:\n\n    {rp.get('start', '')}\n\nBuilding and reading topologies "
             f"works meanwhile; Run does not.")
     elif not have_docker:
         state, why = NEEDS_RUNTIME, (
             f"GINI runs each device in a container, and no container runtime was found. "
-            f"{runtime.runtime_plan(os_name).get('runtime', 'Docker')} needs to be installed "
+            f"{runtime.runtime_plan(os_name).get('runtime', engine_name(run=run))} needs to be installed "
             f"first — the app works for building and reading topologies until then, but Run "
             f"will not start anything.")
     elif backend is not None and not done:
@@ -203,8 +204,8 @@ def _outcome(state: str, done: list, failed: list, p: dict, reasons: dict | None
         verb = "build" if state == BUILD else "download"
         because = f"\n\n{said}" if said else (
             "" if state == BUILD else
-            f"\n\nNo reason was reported. Check that Docker is running, then try "
-            f"`docker pull {failed[0]}` in a terminal — whatever that prints is the cause.")
+            f"\n\nNo reason was reported. Check that {engine_name()} is running, then try "
+            f"`{engine_cli()[0]} pull {failed[0]}` in a terminal — whatever that prints is the cause.")
         return (f"None of the images could be {verb}ed.{because}\n\nYou can keep building and "
                 f"reading topologies; Run will not start until they are here.")
     return (f"{len(done)} ready, {len(failed)} could not be fetched: "

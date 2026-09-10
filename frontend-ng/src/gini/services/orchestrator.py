@@ -19,6 +19,19 @@ from pathlib import Path
 from ..runtime import HostSim, Router, make_switch
 from .compiler import RuntimeConfig
 
+
+def _engine_argv() -> list[str]:
+    """``["docker"]`` or ``["podman"]`` — resolved once per process by setup.runtime."""
+    try:
+        from ..setup.runtime import engine_cli
+        return list(engine_cli())
+    except Exception:                            # noqa: BLE001 — never block a Run on detection
+        return ["docker"]
+
+
+def _engine_bin() -> str:
+    return _engine_argv()[0]
+
 # The real C gRouter runs as its own container from this prebuilt image
 # (built once: `cd backend && docker build -f grouter-build/Dockerfile -t gini-grouter .`).
 # Override with GINI_GROUTER_IMAGE.
@@ -1158,7 +1171,9 @@ def _cap_service_logs(lines: list[str]) -> list[str]:
     """Insert a json-file log cap into every service block (right after its `image:` or
     `build:` line — each service has exactly one, at 4-space indent). Without caps,
     Docker keeps EVERY log line forever; chatty containers (per-packet router logging)
-    poured unbounded logs into the VM and fed the OOM pressure that killed a lab."""
+    poured unbounded logs into the VM and fed the OOM pressure that killed a lab.
+    Podman 4+ honors the json-file driver under `podman compose`; leaving this in place
+    is what keeps a chatty gRouter from filling the disk on the lab machines too."""
     cap = ["    logging:",
            "      driver: json-file",
            '      options: {max-size: "5m", max-file: "2"}']
@@ -1227,7 +1242,12 @@ class Orchestrator:
     def _dc(self) -> list:
         """`docker compose` (+ `-p <project>` when namespaced). Use for EVERY compose call
         so read-backs hit the same project the stack was launched under."""
-        return ["docker", "compose"] + (["-p", self.project] if self.project else [])
+        try:
+            from ..setup.runtime import compose_cli
+            prefix = list(compose_cli())
+        except Exception:                        # noqa: BLE001
+            prefix = ["docker", "compose"]
+        return prefix + (["-p", self.project] if self.project else [])
 
     def up(self, config: RuntimeConfig, workdir: str | Path,
            auto_internet: bool = True, laptop_id: str = "") -> tuple[bool, str]:
@@ -1338,7 +1358,7 @@ class Orchestrator:
         which is the worst way for it to be wrong.
         """
         for attempt in range(max(1, tries)):
-            r = subprocess.run(["docker", "image", "inspect", name],
+            r = subprocess.run([*_engine_argv(), "image", "inspect", name],
                                capture_output=True, text=True, encoding="utf-8",
                                errors="replace")
             if r.returncode == 0:
@@ -1384,8 +1404,8 @@ class Orchestrator:
                 f"Fetch the lab images once:\n  gini-setup\n"
                 f"…then press Run again.")
 
-    def _docker_not_ready(self) -> str:
-        """"" when Docker can serve a lab, otherwise what is wrong with it.
+    def _engine_not_ready(self) -> str:
+        """"" when the container engine can serve a lab, otherwise what is wrong with it.
 
         Checked only on the failure path, and only to tell two different problems apart: a daemon
         that is down needs starting, and a missing image needs fetching. The same distinction
@@ -1393,17 +1413,20 @@ class Orchestrator:
         Docker to install Docker sends them off to fix the wrong thing.
         """
         try:
-            from ..setup.runtime import docker_state
+            from ..setup.runtime import docker_state, engine_name
             state = docker_state()
+            name = engine_name()
         except Exception:                                # noqa: BLE001
             return ""
         if state == "missing":
-            return "docker not found — is Docker installed?"
+            return f"{_engine_bin()} not found — is {name} installed?"
         if state == "stopped":
-            return ("Docker is installed but its engine is not answering.\n"
-                    "Start Docker Desktop (or `colima start`), give it a moment, and press Run "
-                    "again.")
+            return (f"{name} is installed but its engine is not answering.\n"
+                    "Start Docker Desktop, `colima start`, or the Podman service, give it a "
+                    "moment, and press Run again.")
         return ""
+
+    _docker_not_ready = _engine_not_ready   # name the tests still call
 
     def _ensure_compose(self) -> tuple[bool, str]:
         """Compose is what actually launches a topology, and it goes missing far more often than
@@ -1423,35 +1446,37 @@ class Orchestrator:
         Checked here as well as at first run because Docker can change underneath an install, and
         this is where it actually bites.
         """
-        from ..setup.runtime import compose_available, detect_os, runtime_plan
+        from ..setup.runtime import compose_available, compose_cli, detect_os, engine_name, runtime_plan
         if compose_available():
             return True, ""
         rp = runtime_plan(detect_os())
-        return False, ("Docker is running, but `docker compose` is not available on this machine, "
+        cc = " ".join(compose_cli())
+        return False, (f"{engine_name()} is running, but `{cc}` is not available on this machine, "
                        "so nothing can be started.\n\n" + rp.get("compose", "")
-                       + "\n\nCheck it with:  docker compose version")
+                       + f"\n\nCheck it with:  {cc} version")
 
     def _ensure_grouter_image(self) -> tuple[bool, str]:
         """The real gRouter runs from a locally-built image. Check it exists and, if we
         can find the backend, offer to build it — otherwise return the exact command."""
-        if shutil.which("docker") is None:
-            return False, "docker not found — is Docker installed and running?"
+        bin_ = _engine_bin()
+        if shutil.which(bin_) is None:
+            return False, f"{bin_} not found — is the container engine installed and running?"
         if self._image_present(GROUTER_IMAGE):
             return True, "image present"
         # locate the backend (repo_root/backend) relative to this file
         backend = Path(__file__).resolve().parents[4] / "backend"
         dockerfile = backend / "grouter-build" / "Dockerfile"
-        build_cmd = (f"cd {backend} && docker build -f grouter-build/Dockerfile "
+        build_cmd = (f"cd {backend} && {bin_} build -f grouter-build/Dockerfile "
                      f"-t {GROUTER_IMAGE} .")
         # Asked only now that the image looks absent, because a daemon that cannot answer looks
         # exactly like one that has nothing — and the two need opposite advice.
-        down = self._docker_not_ready()
+        down = self._engine_not_ready()
         if down:
             return False, down
         if not dockerfile.exists() or not self._autobuild_enabled("GROUTER"):
             return False, self._no_image_advice(GROUTER_IMAGE, build_cmd, dockerfile.exists())
         # opt-in auto-build
-        b = subprocess.run(["docker", "build", "-f", "grouter-build/Dockerfile",
+        b = subprocess.run([*_engine_argv(), "build", "-f", "grouter-build/Dockerfile",
                             "-t", GROUTER_IMAGE, "."], cwd=str(backend),
                            capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=1800)
         if b.returncode != 0:
@@ -1460,18 +1485,19 @@ class Orchestrator:
 
     def _ensure_pox_image(self) -> tuple[bool, str]:
         """The SDN controller runs from a locally-built POX image."""
-        if shutil.which("docker") is None:
-            return False, "docker not found — is Docker installed and running?"
+        bin_ = _engine_bin()
+        if shutil.which(bin_) is None:
+            return False, f"{bin_} not found — is the container engine installed and running?"
         if self._image_present(POX_IMAGE):
             return True, "image present"
         sdn = Path(__file__).resolve().parents[4] / "backend" / "sdn"
-        build_cmd = f"cd {sdn} && docker build -t {POX_IMAGE} ."
-        down = self._docker_not_ready()
+        build_cmd = f"cd {sdn} && {bin_} build -t {POX_IMAGE} ."
+        down = self._engine_not_ready()
         if down:
             return False, down
         if not (sdn / "Dockerfile").exists() or not self._autobuild_enabled("POX"):
             return False, self._no_image_advice(POX_IMAGE, build_cmd, (sdn / "Dockerfile").exists())
-        b = subprocess.run(["docker", "build", "-t", POX_IMAGE, "."], cwd=str(sdn),
+        b = subprocess.run([*_engine_argv(), "build", "-t", POX_IMAGE, "."], cwd=str(sdn),
                            capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=1800)
         if b.returncode != 0:
             return False, f"Building {POX_IMAGE} failed:\n{(b.stderr or b.stdout)[-800:]}"
@@ -1574,13 +1600,17 @@ class Orchestrator:
             ids = (r.stdout or "").strip().splitlines()
             if not ids or not ids[0]:
                 return False, f"{service}: no running container"
-            u = subprocess.run(["docker", "update", "--cpus", f"{cpus:g}", ids[0]],
+            u = subprocess.run([*_engine_argv(), "update", "--cpus", f"{cpus:g}", ids[0]],
                                capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=20)
-            return u.returncode == 0, (u.stderr or u.stdout).strip()
+            if u.returncode != 0:
+                why = (u.stderr or u.stdout).strip() or (
+                    f"{_engine_bin()} update --cpus is not supported on this engine")
+                return False, why
+            return True, (u.stderr or u.stdout).strip()
         except FileNotFoundError:
-            return False, "docker not found — is Docker installed and running?"
+            return False, f"{_engine_bin()} not found — is the container engine installed and running?"
         except subprocess.TimeoutExpired:
-            return False, "docker update timed out"
+            return False, f"{_engine_bin()} update timed out"
 
     def stats(self, service: str, workdir: str | Path | None = None) -> dict | None:
         """One cheap sample of a running container's CPU% and memory (MiB) via
@@ -1595,7 +1625,7 @@ class Orchestrator:
             if not ids or not ids[0]:
                 return None
             s = subprocess.run(
-                ["docker", "stats", "--no-stream", "--format",
+                [*_engine_argv(), "stats", "--no-stream", "--format",
                  "{{.CPUPerc}}|{{.MemUsage}}|{{.NetIO}}", ids[0]],
                 capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=15)
             line = (s.stdout or "").strip()
@@ -1756,7 +1786,7 @@ class Orchestrator:
             return {}
         try:
             s = subprocess.run(
-                ["docker", "stats", "--no-stream", "--format",
+                [*_engine_argv(), "stats", "--no-stream", "--format",
                  "{{.Name}}|{{.CPUPerc}}|{{.MemUsage}}|{{.NetIO}}"],
                 cwd=str(wd), capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=20)
         except (FileNotFoundError, subprocess.TimeoutExpired):
@@ -1790,11 +1820,15 @@ class Orchestrator:
         if Orchestrator._vm_mem_mib is not None:
             return Orchestrator._vm_mem_mib
         try:
-            r = subprocess.run(["docker", "info", "--format", "{{.MemTotal}}"],
-                               capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=15)
-            if r.returncode == 0 and r.stdout.strip().isdigit():
-                Orchestrator._vm_mem_mib = int(r.stdout.strip()) / (1024 * 1024)
-                return Orchestrator._vm_mem_mib
+            # Docker: {{.MemTotal}}. Podman: {{.Host.MemTotal}} (the Docker key is empty).
+            for fmt in ("{{.MemTotal}}", "{{.Host.MemTotal}}"):
+                r = subprocess.run([*_engine_argv(), "info", "--format", fmt],
+                                   capture_output=True, text=True, encoding="utf-8",
+                                   errors="replace", timeout=15)
+                raw = (r.stdout or "").strip()
+                if r.returncode == 0 and raw.isdigit():
+                    Orchestrator._vm_mem_mib = int(raw) / (1024 * 1024)
+                    return Orchestrator._vm_mem_mib
         except (FileNotFoundError, subprocess.TimeoutExpired):
             pass
         return None
@@ -1804,7 +1838,11 @@ class Orchestrator:
         (e.g. 'kata'). Used to gate the Kata Instance element + warn on Run."""
         wd = workdir or self.workdir
         try:
-            r = subprocess.run(["docker", "info", "--format", "{{json .Runtimes}}"],
+            from ..setup.runtime import using_podman
+            # Podman has no Docker-style Runtimes map; Kata instances need Docker anyway.
+            if using_podman():
+                return False
+            r = subprocess.run([*_engine_argv(), "info", "--format", "{{json .Runtimes}}"],
                                cwd=(str(wd) if wd else None),
                                capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=15)
             if r.returncode != 0:
@@ -1827,7 +1865,7 @@ class Orchestrator:
             if not ids:
                 return {}
             r = subprocess.run(
-                ["docker", "inspect", "--format",
+                [*_engine_argv(), "inspect", "--format",
                  "{{.Name}}\t{{.Created}}\t{{.State.StartedAt}}", *ids],
                 cwd=str(wd), capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=20)
         except (FileNotFoundError, subprocess.TimeoutExpired):

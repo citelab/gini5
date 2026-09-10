@@ -27,6 +27,22 @@ def _pill():
 def _kinds(p):
     return {k: (text, w) for k, text, _c, w in p._pills()}
 
+import pytest
+
+
+@pytest.fixture(autouse=True)
+def _no_blocking_modals(monkeypatch):
+    """Sign-in now ANSWERS on every exit, and an unanswered modal blocks a headless run for ever.
+
+    Only `information` and `warning` are muted — they are statements, and dropping one changes
+    nothing but the pixels. `question` is deliberately left alone: its return value picks a branch,
+    so silencing it would quietly rewrite what the code under test does. A test that wants to
+    assert on the text monkeypatches over this again; the later setattr wins.
+    """
+    from PySide6.QtWidgets import QMessageBox
+    monkeypatch.setattr(QMessageBox, "information", staticmethod(lambda *a, **k: None))
+    monkeypatch.setattr(QMessageBox, "warning", staticmethod(lambda *a, **k: None))
+
 
 def test_signed_out_is_calm_not_an_error():
     p = _pill()
@@ -251,3 +267,68 @@ def test_the_conversation_ribbon_scrolls_instead_of_widening_the_panel():
     assert a._convo_scroll.isVisibleTo(w)
     assert a._convo_scroll.minimumWidth() <= 200       # a small floor — never demands to be wide
     assert a._convo_scroll.height() == 40              # fixed strip, horizontal scroll
+
+
+# --------------------------------------------------------------------------- #
+# Reported by a user: "Log in not working as the user — partially working", and
+# "click on the xv6 machine, options are not working".
+# --------------------------------------------------------------------------- #
+
+def test_signing_in_as_someone_else_does_not_resume_the_previous_session(monkeypatch):
+    """The half-working sign-in.
+
+    `_sign_in` captures `force` into a local and then immediately clears the attribute, so the
+    later `if not self._force_new_signin` was ALWAYS true and the live-session shortcut won. The
+    visible result: type a colleague's username, and gBuilder logs "resuming your session as
+    <them>" while the session, and therefore every submission and receipt, is still yours.
+    """
+    from PySide6.QtWidgets import QMessageBox
+    app = _app()
+    w = MainWindow(app)
+    monkeypatch.setattr(QMessageBox, "information", staticmethod(lambda *a, **k: None))
+    monkeypatch.setattr(QMessageBox, "warning", staticmethod(lambda *a, **k: None))
+    s = w.ctx.settings
+    s.tc_url, s.tc_course, s.tc_student = "https://c.example.edu", "cs4480", "someone-else"
+
+    class _LiveSession:
+        def signed_in(self): return True          # a cached session for the PREVIOUS account
+    monkeypatch.setattr(w.ctx, "connect_teaching_center", lambda: _LiveSession())
+
+    resumed = []
+    monkeypatch.setattr(w, "_connect_teaching_center", lambda: resumed.append(1))
+    shown = []
+    monkeypatch.setattr("gini.ui.signin_dialog.SignInDialog",
+                        lambda *a, **k: type("D", (), {"exec": lambda self: shown.append(1) or 0})())
+
+    w._force_new_signin = True                    # what _sign_in_as sets
+    w._sign_in()
+    assert resumed == [], "it resumed the old session instead of asking who you are"
+    assert shown == [1], "switching identity has to ask for the new credentials"
+
+
+def test_a_half_configured_course_says_what_is_missing(monkeypatch):
+    """It used to open Settings with no explanation, or return with nothing on screen at all."""
+    from PySide6.QtWidgets import QMessageBox
+    app = _app()
+    w = MainWindow(app)
+    told = []
+    monkeypatch.setattr(QMessageBox, "information",
+                        staticmethod(lambda *a, **k: told.append(a[2])))
+    monkeypatch.setattr(w, "_open_settings", lambda: None)
+    s = w.ctx.settings
+    s.tc_url, s.tc_course, s.tc_student = "https://c.example.edu", "", ""
+    w._sign_in()
+    assert told, "sign-in ended with nothing on screen"
+    assert "course" in told[0] and "student id" in told[0], "it must name the missing fields"
+
+
+def test_an_element_with_no_web_ui_does_not_offer_open_console():
+    """`Open console` was enabled on an xv6 Machine as soon as the lab ran, then did nothing."""
+    from gini.services.cloud_catalog import has_web_console
+    from gini.ui.canvas import NodeItem
+    assert has_web_console("xv6") is False and has_web_console("host") is False
+    assert has_web_console("dashboard") is True and has_web_console("object_store") is True
+    running_xv6 = NodeItem.action_gates(running=True, is_router=False, has_console=False)
+    assert running_xv6["console"] is False, "an element with no web UI must not offer one"
+    assert running_xv6["logs"] is True and running_xv6["login"] is True   # these do work on xv6
+    assert NodeItem.action_gates(running=True, is_router=False, has_console=True)["console"] is True
