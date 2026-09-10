@@ -21,6 +21,7 @@ support.
 """
 from __future__ import annotations
 
+import os
 import platform
 import subprocess
 
@@ -50,6 +51,17 @@ def _probe_binary(binary: str, run) -> str | None:
     return "ok" if r.returncode == 0 else "stopped"
 
 
+def _forced_engine() -> str | None:
+    """``GINI_ENGINE=podman`` or ``docker`` — an explicit choice, not a probe.
+
+    A developer Mac often has both Docker Desktop and a Podman machine. Detection then always
+    picks Docker, which makes it look like the Podman path is dead. The lab machines will not
+    need this (they have no docker binary); it exists so we can test the path they will take.
+    """
+    raw = (os.environ.get("GINI_ENGINE") or "").strip().lower()
+    return raw if raw in ("podman", "docker") else None
+
+
 def detect_engine(run=subprocess.run) -> str:
     """``"docker"`` | ``"podman"`` | ``"missing"`` — which container CLI is here.
 
@@ -57,11 +69,19 @@ def detect_engine(run=subprocess.run) -> str:
     tried only when there is no ``docker`` binary at all, so a Podman-only machine (no
     ``podman-docker`` symlink) is still detected rather than reported as missing.
 
-    A custom ``run`` (tests) is never cached: the cache is for the real process-wide probe.
-    Call ``_reset_engine_cache()`` in tests that need to re-probe the default runner.
+    ``GINI_ENGINE`` overrides the probe. A custom ``run`` (tests) is never cached: the cache is
+    for the real process-wide probe. Call ``_reset_engine_cache()`` in tests that need to re-probe
+    the default runner.
     """
     global _ENGINE  # noqa: PLW0603 — one write, at startup; every later read is fast
     use_cache = run is subprocess.run
+    forced = _forced_engine()
+    if forced:
+        probe = _probe_binary(forced, run)
+        result = forced if probe is not None else "missing"
+        if use_cache:
+            _ENGINE = result
+        return result
     if use_cache and _ENGINE is not None:
         return _ENGINE
     docker = _probe_binary("docker", run)
@@ -144,6 +164,11 @@ def docker_state(run=subprocess.run) -> str:
     missing executable already announces itself precisely, and from inside the seam:
     ``subprocess.run`` raises FileNotFoundError.
     """
+    # An explicit GINI_ENGINE=podman must not be overruled by a docker binary that happens
+    # to be on PATH (the developer-Mac case).
+    if _forced_engine() == "podman":
+        state = _probe_binary("podman", run)
+        return state if state is not None else "missing"
     docker = _probe_binary("docker", run)
     if docker is not None:
         return docker
@@ -175,15 +200,20 @@ def compose_available(run=subprocess.run) -> bool:
     # Podman. A docker CLI that exists but has no compose plugin must NOT be reported as
     # "compose available" just because `podman compose` happens to work — those are two
     # engines, and the rest of GINI will talk to the one detect_engine picked.
+    # GINI_ENGINE=podman skips the docker compose probe entirely.
+    first, fallback = (["podman", "compose"], None) if _forced_engine() == "podman" else (
+        ["docker", "compose"], ["podman", "compose"])
     try:
-        return (run(["docker", "compose", "version"],
+        return (run([*first, "version"],
                     capture_output=True, timeout=15).returncode == 0)
     except FileNotFoundError:
         pass
     except Exception:            # noqa: BLE001 — no plugin; it cannot run
         return False
+    if fallback is None:
+        return False
     try:
-        return (run(["podman", "compose", "version"],
+        return (run([*fallback, "version"],
                     capture_output=True, timeout=15).returncode == 0)
     except Exception:            # noqa: BLE001
         return False

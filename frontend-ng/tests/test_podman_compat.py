@@ -175,3 +175,20 @@ def test_image_commands_use_the_podman_prefix():
     images.missing_locally(["ghcr.io/gini-toolkit/gini-xv6:6.1.0"], run=run)
     assert seen and seen[0][0] == "podman"
     assert seen[0][1:3] == ["image", "inspect"]
+
+
+def test_GINI_ENGINE_forces_podman_even_when_docker_answers(monkeypatch):
+    """A Mac with Docker Desktop AND a Podman machine must still be able to take the lab path."""
+    monkeypatch.setenv("GINI_ENGINE", "podman")
+    seen = []
+
+    def run(cmd, **_k):
+        seen.append(cmd[0])
+        return _ok()
+
+    assert runtime.detect_engine(run=run) == "podman"
+    assert runtime.engine_cli(run=run) == ["podman"]
+    assert runtime.docker_state(run=run) == "ok"
+    assert "docker" not in seen
+    assert runtime.compose_available(run=run) is True
+    assert seen.count("podman") >= 1
