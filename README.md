@@ -58,8 +58,9 @@ It's designed to anchor three courses:
 - **Python 3.10+** (3.12 recommended). The Qt 6 GUI — **PySide6** plus **QtWebEngine** (for the
   embedded Desktop / OS-Zoo screens) — installs **automatically** as a dependency; you never install
   Qt separately, whichever install route you pick.
-- A **container runtime** — Docker, or **Colima**/**Podman** (gBuilder detects it at launch and can help
+- A **container runtime** — Docker, Colima, or **Podman** (gBuilder detects it at launch and can help
   install it) — needed to *Run* topologies. You can explore fully in **Demo mode** without one.
+  **Podman (rootless) is recommended for campus environments** where users lack sudo access.
 - Works on **macOS, Linux, and Windows**. *Optional:* a local **[Ollama](https://ollama.com)** model
   for richer GINI AI answers.
 
@@ -131,7 +132,16 @@ brew install colima docker
 colima start --cpu 2 --memory 4 --disk 30
 ```
 
-If Docker Desktop (or Colima) is already running, it detects that and just pulls the images.
+**Podman is also supported** on macOS (rootless mode recommended):
+
+```bash
+brew install podman
+podman machine init --cpus 2 --memory 4096 --disk 30
+podman machine start
+```
+
+If Docker Desktop (or Colima/Podman) is already running, it detects that and just pulls the images.
+You can also set your preferred engine in **Settings → Networking → Container engine** (Auto-detect, Docker, or Podman). The environment variable `GINI_ENGINE=podman` or `GINI_ENGINE=docker` overrides this.
 </details>
 
 <details>
@@ -144,7 +154,23 @@ Install **Docker Engine** first — it needs `sudo`, so gBuilder guides rather t
 sudo usermod -aG docker $USER      # log out / back in afterwards
 ```
 
-Podman works too. Then launch gBuilder and accept the setup it offers.
+**Podman (rootless) is recommended for campus machines** where users lack sudo access:
+
+```bash
+# Install Podman (no sudo needed for the package itself on most distros)
+sudo apt install podman              # Debian/Ubuntu
+sudo dnf install podman              # Fedora/RHEL
+
+# Enable rootless Podman socket (no sudo needed, runs as your user)
+systemctl --user enable --now podman.socket
+
+# Install a Compose provider
+sudo apt install podman-compose      # or docker-compose-v2
+```
+
+Then launch gBuilder. You can also set your preferred engine in **Settings → Networking → Container engine** (Auto-detect, Docker, or Podman). The environment variable `GINI_ENGINE=podman` or `GINI_ENGINE=docker` overrides this.
+
+See [docs/PODMAN_SETUP.md](docs/PODMAN_SETUP.md) for detailed Podman setup instructions, troubleshooting, and best practices.
 </details>
 
 <details>
@@ -154,10 +180,11 @@ Colima isn't available on Windows — use **Docker Desktop** or **Podman Desktop
 
 ```powershell
 winget install -e --id Docker.DockerDesktop
+# or
+winget install -e --id RedHat.Podman-Desktop
 ```
 
-Start it, then launch gBuilder. (Live-Run networking on Windows is still being validated;
-Demo mode works fully.)
+Start it, then launch gBuilder. You can also set your preferred engine in **Settings → Networking → Container engine** (Auto-detect, Docker, or Podman). The environment variable `GINI_ENGINE=podman` or `GINI_ENGINE=docker` overrides this. (Live-Run networking on Windows is still being validated; Demo mode works fully.)
 </details>
 
 <details>
@@ -293,11 +320,12 @@ backend/
   src/grouter/      the real C gRouter (~20k lines) incl. OpenFlow/SDN mode
   grouter-build/      C build + Dockerfile (gini-grouter) + e2e forwarding tests
   sdn/              POX (gar) controller + Dockerfile (gini-pox)
+docs/               design docs, OS manual, and Podman setup guide
 legacy/             the original Python 2.7 / PyQt4 GINI, kept for reference
 ARCHITECTURE.md     what's active vs legacy, and how it fits together
 ```
 
-See **[ARCHITECTURE.md](ARCHITECTURE.md)** for the full map.
+See **[ARCHITECTURE.md](ARCHITECTURE.md)** for the full map, and **[docs/PODMAN_SETUP.md](docs/PODMAN_SETUP.md)** for detailed Podman configuration.
 
 ---
 

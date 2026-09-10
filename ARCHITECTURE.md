@@ -28,9 +28,9 @@ frontend-ng/                 gBuilder 6 — PySide6 / Qt 6 / Python 3.10+ (PyPI:
     agent/                   GiniAPI + tool registry + Ollama loop + the Reasoning Twin +
                              an MCP server, so external agents can drive GINI too
     runtime/                 the portable user-space data plane (Ethernet-in-UDP)
-    services/                compiler (topology→wiring), orchestrator (Docker), persistence
+    services/                compiler (topology→wiring), orchestrator (Docker/Podman), persistence
     server/                  optional: run a lab on a remote Docker/Kata host
-    setup/                   first-run runtime detection and image pull/build
+    setup/                   first-run runtime detection (Docker/Podman/Colima) and image pull/build
   tests/                     the pytest suite — 3,389 tests, Qt included
 
 teaching-center/             the course server — no Qt (PyPI: gini-teaching-center)
@@ -38,8 +38,8 @@ teaching-center/             the course server — no Qt (PyPI: gini-teaching-ce
                              materials, staff accounts. HTTPS only; there is no HTTP mode.
 
 scripts/                     dev.sh (install/test/check) · release.sh · images.sh
-docs/                        design docs, and docs/manual/ — 17 pages on the xv6 integration,
-                             including os-15-known-issues.md, which is kept honest
+docs/                        design docs, docs/manual/ (17 pages on xv6 integration),
+                             and PODMAN_SETUP.md (rootless Podman for campus environments)
 .github/workflows/           three publish workflows (one per distribution) + tests.yml
 ```
 

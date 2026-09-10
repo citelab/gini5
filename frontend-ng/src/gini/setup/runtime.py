@@ -13,11 +13,25 @@ module, and consumed everywhere through ``engine_cli()`` and ``compose_cli()``. 
 layer, no strategy pattern — just a prefix list that is ``["docker"]`` on one machine and
 ``["podman"]`` on another.
 
-The detection order is deliberate: Docker first, because it is the documented path for every
+Detection priority
+------------------
+The engine is chosen in this order:
+1. ``GINI_ENGINE`` environment variable (highest priority, for development/testing)
+2. Settings preference from ``~/.gini/config.json`` (user's chosen engine in the UI)
+3. Auto-detection: Docker first, then Podman (for Podman-only lab machines)
+
+The auto-detection order is deliberate: Docker first, because it is the documented path for every
 platform except the Trottier lab machines and similar Podman-only environments. When a machine has
 BOTH, Docker wins — Podman's ``docker`` compatibility shim (``podman-docker``) makes this the same
 either way, and if they genuinely coexist (rare), Docker is the one with known-good compose
 support.
+
+Rootless Podman
+---------------
+For campus environments where users lack sudo access, rootless Podman is the recommended choice.
+The ``_is_rootless_podman()`` function detects whether Podman is running in rootless mode by
+checking ``podman info --format {{.Host.Security.Rootless}}``. Users can set their preferred
+engine in Settings → Networking → Container engine, choosing between Auto-detect, Docker, or Podman.
 """
 from __future__ import annotations
 
@@ -51,6 +65,22 @@ def _probe_binary(binary: str, run) -> str | None:
     return "ok" if r.returncode == 0 else "stopped"
 
 
+def _is_rootless_podman(run=subprocess.run) -> bool:
+    """Detect if Podman is running in rootless mode.
+
+    Rootless Podman is the preferred mode for campus machines where users lack sudo access.
+    This checks the output of `podman info` for the rootless indicator.
+    """
+    try:
+        r = run(["podman", "info", "--format", "{{.Host.Security.Rootless}}"], 
+                capture_output=True, timeout=15, text=True)
+        if r.returncode == 0:
+            return "true" in r.stdout.lower().strip()
+    except Exception:  # noqa: BLE001
+        pass
+    return False
+
+
 def _forced_engine() -> str | None:
     """``GINI_ENGINE=podman`` or ``docker`` — an explicit choice, not a probe.
 
@@ -62,19 +92,40 @@ def _forced_engine() -> str | None:
     return raw if raw in ("podman", "docker") else None
 
 
+def _settings_engine() -> str | None:
+    """Read container engine preference from settings if available.
+
+    Returns "docker", "podman", or None if not set or set to "auto".
+    This allows users to persist their engine choice in the UI settings dialog.
+    """
+    try:
+        from gini.app.paths import load_config
+        config = load_config()
+        engine = config.get("container_engine", "auto").strip().lower()
+        return engine if engine in ("podman", "docker") else None
+    except Exception:  # noqa: BLE001
+        return None
+
+
 def detect_engine(run=subprocess.run) -> str:
     """``"docker"`` | ``"podman"`` | ``"missing"`` — which container CLI is here.
 
-    Docker is tried first because it is the recommended runtime on every platform. Podman is
-    tried only when there is no ``docker`` binary at all, so a Podman-only machine (no
+    Detection priority:
+    1. GINI_ENGINE environment variable (highest priority for development/testing)
+    2. Settings preference (from ~/.gini/config.json)
+    3. Auto-detection (Docker first, then Podman)
+
+    Docker is tried first in auto-detection because it is the recommended runtime on every platform.
+    Podman is tried only when there is no ``docker`` binary at all, so a Podman-only machine (no
     ``podman-docker`` symlink) is still detected rather than reported as missing.
 
-    ``GINI_ENGINE`` overrides the probe. A custom ``run`` (tests) is never cached: the cache is
-    for the real process-wide probe. Call ``_reset_engine_cache()`` in tests that need to re-probe
-    the default runner.
+    A custom ``run`` (tests) is never cached: the cache is for the real process-wide probe.
+    Call ``_reset_engine_cache()`` in tests that need to re-probe the default runner.
     """
     global _ENGINE  # noqa: PLW0603 — one write, at startup; every later read is fast
     use_cache = run is subprocess.run
+    
+    # Environment variable takes highest priority
     forced = _forced_engine()
     if forced:
         probe = _probe_binary(forced, run)
@@ -82,6 +133,17 @@ def detect_engine(run=subprocess.run) -> str:
         if use_cache:
             _ENGINE = result
         return result
+    
+    # Settings preference takes second priority
+    settings_pref = _settings_engine()
+    if settings_pref:
+        probe = _probe_binary(settings_pref, run)
+        result = settings_pref if probe is not None else "missing"
+        if use_cache:
+            _ENGINE = result
+        return result
+    
+    # Auto-detection as fallback
     if use_cache and _ENGINE is not None:
         return _ENGINE
     docker = _probe_binary("docker", run)
@@ -246,20 +308,20 @@ _PLANS = {
                     "normally include it already."),
     },
     "linux": {
-        "runtime": "Docker Engine or Podman",
+        "runtime": "Docker Engine or Podman (rootless recommended)",
         "auto": [],   # distro-specific + needs sudo -> we guide rather than run
         "needs": "sudo / your package manager",
         "manual": ("Install Docker Engine for your distro "
                    "(https://docs.docker.com/engine/install/) and add your user to the 'docker' "
                    "group:  sudo usermod -aG docker $USER  (then log out/in).\n\n"
-                   "Alternatively, install Podman:\n"
+                   "Alternatively, install Podman (rootless recommended for campus machines):\n"
                    "    sudo apt install podman              # Debian/Ubuntu\n"
                    "    sudo dnf install podman              # Fedora/RHEL\n"
-                   "then enable its socket:\n"
+                   "then enable the rootless socket:\n"
                    "    systemctl --user enable --now podman.socket\n"
                    "and install a Compose provider:\n"
                    "    sudo apt install podman-compose      # or docker-compose-v2"),
-        "start": "sudo systemctl start docker\n(or, for Podman: systemctl --user start podman.socket)",
+        "start": "sudo systemctl start docker\n(or, for rootless Podman: systemctl --user start podman.socket)",
         # The common one. Ubuntu's own `docker.io` package does NOT carry compose, and Docker's
         # repo splits it into its own package, so a perfectly working Docker often has no compose.
         "compose": ("Install a Compose provider, then log out and back in if needed:\n"

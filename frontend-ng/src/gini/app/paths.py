@@ -123,6 +123,7 @@ PERSISTED_KEYS = (
     "os_hud_scale",                     # OS HUD type size (percent; 0 = follow Text size)
     "backend", "gini_server_host", "gini_server_port", "gini_server_user",
     "show_help_on_launch",
+    "container_engine",                # Container engine preference: auto | docker | podman
     "tc_url", "tc_course", "tc_student", "tc_token",   # Teaching Center enrolment
     # GINI32 hardware. `laptop_id` must be stable or every claimed board orphans at
     # once; `claimed_boards` is a property of this laptop, never of a topology, so a
