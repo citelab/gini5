@@ -601,10 +601,20 @@ class NodeItem(QGraphicsObject):
         e.accept()
 
     @staticmethod
-    def action_gates(running: bool, is_router: bool) -> dict:
-        """Which run-dependent menu actions are enabled. Console/logs need the lab up;
-        Log in does too, except a Router (its Router Lab opens offline)."""
-        return {"console": running, "logs": running, "login": running or is_router}
+    def action_gates(running: bool, is_router: bool, has_console: bool = True) -> dict:
+        """Which menu actions are enabled. Console/logs need the lab up; Log in does too, except a
+        Router (its Router Lab opens offline).
+
+        `has_console` is the per-TYPE question — can this kind of element ever serve a browser UI
+        (`cloud_catalog.has_web_console`). It defaults True so the old two-argument call still
+        means what it did. Without it, "Open console" was enabled on an xv6 Machine, a host and a
+        router the moment the lab came up, then did nothing when clicked because there is no web
+        port to open; the explanation went to the console dock. An action that CANNOT work should
+        never look available.
+        """
+        return {"console": running and has_console,
+                "logs": running,
+                "login": running or is_router}
 
     def popup_menu(self, screen_pos) -> None:
         """Build + show this node's action menu. Reused by the view's right-click handler
@@ -622,12 +632,18 @@ class NodeItem(QGraphicsObject):
         a_del = menu.addAction("Delete")
         # these talk to live containers, so gate them on the lab being up. A Router is the
         # exception for Log in — its Router Lab opens offline (with the local trace).
+        from ..services.cloud_catalog import has_web_console
         running = getattr(self._scene, "running", False)
-        gates = self.action_gates(running, _role(self.inst.type_key) == "router")
+        has_console = has_web_console(self.inst.type_key)
+        gates = self.action_gates(running, _role(self.inst.type_key) == "router", has_console)
         for act, key in ((a_console, "console"), (a_login, "login"), (a_logs, "logs")):
             act.setEnabled(gates[key])
             if not gates[key]:
-                act.setToolTip("Run the topology first")
+                # Say which of the two reasons it is. "Run the topology first" on an element that
+                # will never have a console is advice that cannot be taken.
+                act.setToolTip("This element has no web console — use Log in"
+                               if key == "console" and not has_console
+                               else "Run the topology first")
         chosen = menu.exec(screen_pos)
         bus = self._scene.ctx.bus
         if chosen == a_console:

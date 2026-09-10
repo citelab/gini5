@@ -141,3 +141,31 @@ def is_service(type_key: str) -> bool:
 
 def service_for(type_key: str) -> CloudService | None:
     return CATALOG.get(type_key)
+
+
+#: Element types that publish a browser console without being in CATALOG above. The OS Zoo guests
+#: and the headful Desktop both serve their screen over noVNC, which the compiler wires by hand
+#: (`compiler.py`, the oszoo and desktop branches) rather than from a CloudService entry.
+_WEB_OUTSIDE_THE_CATALOG = frozenset({
+    "freedos", "kolibri", "menuet", "msdos", "mac7", "win31", "oszoo_byo",   # OS Zoo, noVNC
+    "desktop",                                                              # headful X, noVNC
+})
+
+
+def has_web_console(type_key: str) -> bool:
+    """Can this KIND of element ever have a web console? Static, so the canvas can ask before Run.
+
+    The right-click menu offered "Open console" on everything and only ever disabled it for a lab
+    that was not running. On an element that has no browser UI at all — an xv6 Machine, a host, a
+    router — the item was therefore enabled the moment you pressed Run, did nothing when clicked,
+    and wrote its reason to the console dock, which is not where the person who just clicked is
+    looking. Reported as "click on the xv6 machine, options are not working".
+
+    A per-instance answer (does THIS container publish a web port?) needs a running lab and lives
+    in `_last_services`; this is the per-TYPE answer, which is what a menu needs, and it is
+    available with nothing running.
+    """
+    if type_key in _WEB_OUTSIDE_THE_CATALOG:
+        return True
+    svc = service_for(type_key)
+    return bool(svc and any(p.web for p in svc.ports))

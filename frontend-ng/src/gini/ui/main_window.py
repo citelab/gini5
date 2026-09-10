@@ -462,19 +462,34 @@ class MainWindow(QMainWindow):
         force = self._force_new_signin           # one-shot: force the dialog (sign in as someone else)
         self._force_new_signin = False
         s = self.ctx.settings
-        if not (s.tc_url and s.tc_course):
-            self.ctx.log("Teaching Center: set the course server and course in Settings first.",
-                         "info")
-            self._open_settings()
-            return
-        if not s.tc_student and not force:
+        # Three ways this used to end with nothing on screen. Sign in is an explicit act — the
+        # person clicked a menu item and is waiting — so every exit from it has to answer, in a
+        # dialog rather than in the console dock behind the canvas. Reported as sign-in being
+        # "partially working": Settings would open with no reason given, or nothing happened.
+        missing = [n for n, v in (("course server", s.tc_url), ("course", s.tc_course),
+                                  ("student id", s.tc_student)) if not v]
+        if missing and not (force and missing == ["student id"]):
+            QMessageBox.information(
+                self, "Not enrolled yet",
+                "Signing in needs " + ", ".join(missing) + ".\n\nSettings is opening at the "
+                "Teaching Center section — fill those in, then try Sign in again.")
             self._open_settings()
             return
 
         tc = self.ctx.connect_teaching_center()
         if tc is None:
+            QMessageBox.warning(
+                self, "Could not reach the course",
+                f"The Teaching Center client could not be built for {s.tc_url or 'this course'}.\n\n"
+                "Check the course server address in Settings. The console log has the detail.")
             return
-        if not self._force_new_signin and tc.signed_in():   # a live session — nothing to ask
+        # `force`, the LOCAL captured above — not `self._force_new_signin`, which line 2 of this
+        # method has already set False, making the attribute test here always true. That is why
+        # "Sign in as another user" appeared to half-work: _sign_in_as writes the new username into
+        # Settings and asks for a fresh dialog, this branch resumed the OLD session instead, and
+        # the log then said "resuming your session as <the new name>" while the session, the
+        # submissions and the receipts all still belonged to the previous account.
+        if not force and tc.signed_in():                   # a live session — nothing to ask
             self.ctx.log(f"Teaching Center: resuming your session as {s.tc_student}…", "info")
             self._connect_teaching_center()
             return
