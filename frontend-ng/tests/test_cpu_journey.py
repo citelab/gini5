@@ -119,13 +119,18 @@ def test_the_timer_trap_stage_shows_the_real_interrupted_pc(app):
     j.close()
 
 
-def test_a_caught_pagefault_says_no_walkthrough_yet_rather_than_lying(app):
-    """No dedicated journey for pagefault yet (B3). The banner tells the truth instead of the
-    syscall reference pretending to be this trap."""
+def test_a_caught_pagefault_opens_the_pagefault_walkthrough(app):
+    """This used to assert the OPPOSITE — that the banner admitted there was no walkthrough for a
+    page fault — because there wasn't one (B3). There is now, so the honest answer changed from
+    "we cannot tell you" to telling you. What must never come back is the third option: narrating
+    the syscall reference as though it were this trap."""
     from gini.ui.cpu_journey import CpuJourney
     j = CpuJourney(None, _theme(app), frame=_frame(kind=1, scause="0xf",
                                                    kind_name="store page fault"))
-    assert "no step-by-step for this kind yet" in j._live.text()
+    assert j._mode == "pagefault"
+    j._render()
+    assert "ecall" not in j._caption.text().lower()
+    assert "no step-by-step" not in j._live.text()
     j.close()
 
 
@@ -219,4 +224,140 @@ def test_kernel_mode_capture_lights_no_save_card(app):
         assert "(writing)" not in j._ctx._title.text()      # context card dark
         assert "KERNEL" in j._band.text()
         j._step(1)
+    j.close()
+
+
+# -- B3/B4: a walkthrough per trap class, and NO substitution ----------------------------------- #
+# The reported bug: a captured DEVICE interrupt (scause 0x…09, pid 4 running spin) opened the
+# SYSTEM CALL journey and told the student "pid 4 (spin) puts the syscall number in a7 … executes
+# ecall". Nothing of the sort happened. Root cause was a dict lookup with a wrong default —
+# {0:"syscall", 2:"preempt"}.get(kind, "syscall") — so four of six kinds narrated a fabricated
+# ecall, and the real-pid work made it name a real process while doing it.
+from gini.domain.cpu_journey import JOURNEY_HEADLINE, journey_for
+
+
+def test_a_device_interrupt_is_not_a_system_call():
+    """THE bug, at the routing level."""
+    assert journey_for(3, True, "0x8000000000000009") == "device"
+
+
+def test_every_trap_class_routes_to_its_own_walkthrough():
+    assert journey_for(0, True, "0x8") == "syscall"
+    assert journey_for(2, True, "0x8000000000000005") == "preempt"
+    assert journey_for(3, True, "0x8000000000000009") == "device"
+    assert journey_for(1, True, "0xd") == "pagefault"        # load fault  — vmfault handles it
+    assert journey_for(1, True, "0xf") == "pagefault"        # store fault — vmfault handles it
+    assert journey_for(4, True, "0x2") == "fatal"            # illegal instruction
+    assert journey_for(5, True, "0x7") == "fatal"            # anything else unhandled
+
+
+def test_an_instruction_page_fault_is_fatal_not_a_page_fault():
+    """scause 12 is a page fault by KIND, but this kernel asks vmfault about 13 and 15 only, so 12
+    falls through to the else and kills the process. Routing on kind alone would narrate a page
+    being mapped in when the process was actually killed."""
+    assert journey_for(1, True, "0xc") == "fatal"
+
+
+def test_any_kernel_mode_trap_is_the_kernel_walkthrough():
+    """from_user picks the VECTOR. A kernel-mode trap went through kernelvec, wrote no trapframe
+    and crossed no privilege boundary, whatever caused it — so none of the user-mode stories apply."""
+    for kind, scause in ((3, "0x8000000000000009"), (2, "0x8000000000000005"), (1, "0xd")):
+        assert journey_for(kind, False, scause) == "ktrap"
+
+
+def test_an_unknown_kind_opens_nothing_rather_than_lying():
+    """The heart of the fix: no walkthrough is better than the wrong one."""
+    assert journey_for(99, True, "0x0") == ""
+    assert journey_for("nonsense", True, None) == ""
+
+
+def test_every_journey_has_a_headline_and_a_title():
+    from gini.domain.cpu_journey import JOURNEY_SHORT, JOURNEY_TITLES
+    assert set(JOURNEY_HEADLINE) == set(JOURNEYS) == set(JOURNEY_TITLES) == set(JOURNEY_SHORT)
+
+
+def test_no_new_walkthrough_claims_an_ecall_happened():
+    """A regression guard shaped like the bug: only the syscall walkthrough may mention ecall."""
+    for name in ("device", "pagefault", "fatal", "ktrap", "context"):
+        joined = " ".join(s.caption for s in JOURNEYS[name]).lower()
+        assert "syscall number" not in joined, f"{name} narrates a syscall"
+        if name != "pagefault":                     # pagefault contrasts itself WITH the ecall case
+            assert "executes `ecall`" not in joined, f"{name} narrates an ecall"
+
+
+def test_the_kernel_walkthrough_writes_to_no_save_area():
+    """XV6_TRAP_SEQUENCES §4 B2: no uservec, so no trapframe; no swtch here either. Both cards
+    must stay dark, and the stage data is where that starts."""
+    assert all(s.save == "" for s in JOURNEYS["ktrap"])
+    assert all(s.band == "kernel" for s in JOURNEYS["ktrap"])       # S→S throughout
+
+
+def test_the_fatal_walkthrough_never_returns_to_user():
+    """The exception that proves the pattern: there is no sret, so it must not end in user mode."""
+    assert JOURNEYS["fatal"][-1].band == "kernel"
+    assert "no sret" in " ".join(s.caption for s in JOURNEYS["fatal"]).lower()
+
+
+# -- Qt: the captured device interrupt end to end ------------------------------------------------ #
+def _device_frame(**kw):
+    from gini.domain.xv6 import TrapFrame
+    d = dict(scause="0x8000000000000009", sepc="0x0000000000000006", stval="0x0", pid=4, ok=True,
+             kind=3, kind_name="supervisor external interrupt (device)", from_user=True, regs={})
+    d.update(kw)
+    return TrapFrame(**d)
+
+
+def test_a_caught_device_interrupt_opens_the_device_journey(app):
+    from gini.ui.cpu_journey import CpuJourney
+    j = CpuJourney(None, _theme(app), frame=_device_frame(),
+                   procs=[type("P", (), {"pid": 4, "name": "spin"})()])
+    assert j._mode == "device"
+    j._render()
+    cap = j._caption.text().lower()
+    assert "ecall" not in cap, "the reported bug is back"
+    assert "syscall number" not in cap
+    assert "pid 4 (spin)" in j._band.text()          # the real pid, on the RIGHT story
+    j.close()
+
+
+def test_the_device_stage_names_the_pid_as_a_bystander(app):
+    """Showing a real pid on a device trap without this clause teaches the wrong thing: the pid is
+    whoever was on the core, not whose device it was."""
+    from gini.ui.cpu_journey import CpuJourney
+    j = CpuJourney(None, _theme(app), frame=_device_frame())
+    j._render()
+    assert "BYSTANDER" in j._caption.text()
+    j.close()
+
+
+def test_a_kernel_mode_capture_opens_the_kernel_walkthrough(app):
+    from gini.ui.cpu_journey import CpuJourney
+    j = CpuJourney(None, _theme(app), frame=_device_frame(from_user=False, pid=0))
+    assert j._mode == "ktrap"
+    for _ in range(len(j._stages)):
+        j._render()
+        assert "(writing)" not in j._tf._title.text()      # no trapframe for a kernel trap
+        assert "(writing)" not in j._ctx._title.text()
+        j._step(1)
+    j.close()
+
+
+def test_an_unroutable_capture_shows_no_walkthrough_at_all(app):
+    from gini.ui.cpu_journey import CpuJourney
+    j = CpuJourney(None, _theme(app), frame=_device_frame(kind=99, kind_name="something new"))
+    assert j._mode == ""
+    assert j._stages == []
+    assert "No step-by-step walkthrough matches" in j._caption.text()
+    assert "no step-by-step matches this trap" in j._live.text()
+    assert not j._next.isEnabled() and not j._prev.isEnabled()
+    j.close()
+
+
+def test_the_headline_follows_the_walkthrough(app):
+    """It was a fixed sentence about system calls sitting above a captured page fault."""
+    from gini.ui.cpu_journey import CpuJourney
+    j = CpuJourney(None, _theme(app), frame=_device_frame())
+    assert "OPPOSITE of a system call" in j._head.text()
+    j._set_mode("pagefault")
+    assert "sepc is NOT advanced" in j._head.text()
     j.close()

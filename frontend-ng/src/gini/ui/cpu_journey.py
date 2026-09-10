@@ -13,7 +13,10 @@ from PySide6.QtWidgets import (
     QButtonGroup, QDialog, QFrame, QHBoxLayout, QLabel, QPushButton, QVBoxLayout, QWidget,
 )
 
-from ..domain.cpu_journey import JOURNEY_TITLES, JOURNEYS, preempt_stages
+from ..domain.cpu_journey import (
+    JOURNEY_HEADLINE, JOURNEY_SHORT, JOURNEY_TITLES, JOURNEYS, journey_for,
+    preempt_stages,
+)
 from .theme import ThemeManager, icons
 
 
@@ -52,6 +55,7 @@ class CpuJourney(QDialog):
                       "A context switch is swtch (a different process, kernel↔kernel, saves the "
                       "context). Preemption is both. Step through and watch which save-area moves.")
         head.setWordWrap(True); head.setStyleSheet(f"color:{t.muted};font-size:12px;")
+        self._head = head                   # retitled per walkthrough in _set_mode
         root.addWidget(head)
 
         # a live banner when we froze a real trap (Phase 2): its actual scause/sepc/stval
@@ -69,11 +73,11 @@ class CpuJourney(QDialog):
                 msg += f" · pid {frame.pid}"
             if not getattr(frame, "from_user", True):
                 msg += "  ·  from KERNEL mode (no trapframe written)"
-            if getattr(frame, "kind", 0) not in self._KIND_JOURNEY:
-                # We caught it and the banner is true, but there is no step-by-step for this kind
-                # yet (pagefault/device/illegal walkthroughs are still to come). Say so rather than
-                # narrate the syscall reference as if it were this trap.
-                msg += "  —  no step-by-step for this kind yet; the values above are the real trap"
+            if not self._mode:
+                # Nothing describes this trap. Say so — and, critically, open NOTHING. Substituting
+                # a walkthrough here is what told a student that pid 4 executed an `ecall` when a
+                # device had interrupted it.
+                msg += "  —  no step-by-step matches this trap; the values above are the real trap"
             self._live.setText(msg)
         elif frame is not None:
             self._live.setStyleSheet(f"color:{t.faint};font-size:12px;")
@@ -84,8 +88,12 @@ class CpuJourney(QDialog):
         modes = QHBoxLayout()
         self._mode_group = QButtonGroup(self); self._mode_group.setExclusive(True)
         self._mode_btns = {}
-        for key in ("syscall", "context", "preempt"):
-            b = QPushButton(JOURNEY_TITLES[key])
+        # Every walkthrough, not just the three that existed: a student who caught a device
+        # interrupt should be able to read the page-fault story too. Short labels because seven
+        # full titles do not fit one row; the full title is the tooltip.
+        for key in ("syscall", "context", "preempt", "device", "pagefault", "fatal", "ktrap"):
+            b = QPushButton(JOURNEY_SHORT.get(key, key))
+            b.setToolTip(JOURNEY_TITLES.get(key, key))
             b.setCheckable(True); b.setChecked(key == self._mode)
             b.setStyleSheet(self._btn_css())
             b.clicked.connect(lambda _c=False, k=key: self._set_mode(k))
@@ -153,7 +161,7 @@ class CpuJourney(QDialog):
             fr = self.frame
             if fr is not None and getattr(fr, "ok", False):
                 return preempt_stages(getattr(fr, "qticks", 0), getattr(fr, "quantum", 0))
-        return JOURNEYS[mode]
+        return JOURNEYS.get(mode) or []          # "" (nothing matches) -> no stages, not a KeyError
 
     def _lane_label(self, slot: str) -> str:
         """A process lane -> display text. With a real capture, lane A is the captured pid; lane B
@@ -178,6 +186,9 @@ class CpuJourney(QDialog):
         self._mode = key
         self._i = 0
         self._stages = self._resolve_stages(key)
+        if getattr(self, "_head", None) is not None:
+            self._head.setText(JOURNEY_HEADLINE.get(key) or
+                               "Pick a walkthrough to read how that kind of trap is handled.")
         for k, b in self._mode_btns.items():
             b.setChecked(k == key)
         # rebuild the stage chips
@@ -202,16 +213,23 @@ class CpuJourney(QDialog):
         self._i = max(0, min(len(stages) - 1, self._i + d))
         self._render()
 
-    #: Kinds with a dedicated walkthrough today. Others fall back to the reference and say so
-    #: in the banner (the pagefault/device/illegal/ktrap journeys are the next piece — §11.5 B3/B4).
-    _KIND_JOURNEY = {0: "syscall", 2: "preempt"}
-
     def _mode_for(self, frame) -> str:
-        """Which journey to open for a caught trap. Falls back to the syscall reference for a
-        timed-out catch or a kind that has no walkthrough yet (flagged in the banner)."""
+        """Which journey to open for a caught trap.
+
+        Delegates to the domain's `journey_for`, which decides on the kind, `from_user` AND the
+        scause. With no capture at all (reference mode, or a catch that timed out) the system-call
+        walkthrough is the honest default: there is no real trap for it to contradict.
+
+        What this must never do again is substitute a walkthrough for a trap it does not describe.
+        A captured device interrupt used to open the SYSTEM CALL journey and tell the student that
+        pid 4 executed an `ecall` — with the real pid attached, under a banner that said the
+        opposite. `journey_for` returns "" when nothing fits, and `_render` says so.
+        """
         if frame is None or not getattr(frame, "ok", False):
             return "syscall"
-        return self._KIND_JOURNEY.get(getattr(frame, "kind", 0), "syscall")
+        return journey_for(getattr(frame, "kind", 0),
+                           bool(getattr(frame, "from_user", True)),
+                           getattr(frame, "scause", None))
 
     def _live_note(self, title) -> str:
         """The real-values line appended to a trap-entry stage caption. Prefers a frozen trap
@@ -233,6 +251,22 @@ class CpuJourney(QDialog):
                                 f"yield() → sched() → swtch")
                     return (f"quantum NOT reached ({n} of {q}) → returned to the SAME process; "
                             f"no swtch this tick")
+                return ""
+            # The walkthroughs added for B3/B4 each open on the instant the trap was taken, so the
+            # captured CSRs belong on that first stage — a page fault without its stval on screen
+            # is missing the one number the student came for.
+            if self._mode in ("device", "pagefault", "fatal", "ktrap"):
+                if title in ("device fires", "the access faults", "the bad instruction",
+                             "kernel code, interrupts on"):
+                    s = f"scause={fr.scause} → {fr.kind_name}   ·   sepc={fr.sepc}"
+                    if fr.stval and fr.stval not in ("0x0", "0x0000000000000000"):
+                        s += f"   ·   stval (faulting address) = {fr.stval}"
+                    if self._mode == "device" and fr.pid is not None and fr.pid >= 0:
+                        s += (f"   ·   interrupted pid {fr.pid} — a BYSTANDER, not necessarily "
+                              f"whose device this was")
+                    return s
+                if title == "kernelvec":
+                    return "no trapframe was written for this trap — sstatus.SPP was 1 (kernel)"
                 return ""
             if title == "uservec":
                 parts = [f"{k}={r[k]}" for k in ("ra", "sp", "a0", "a7") if k in r]
@@ -256,6 +290,22 @@ class CpuJourney(QDialog):
     def _render(self) -> None:
         t = self.theme.theme
         stages = self._stages
+        if not stages:
+            # Nothing describes this trap (see _mode_for). An empty pane that says why beats a
+            # confident walkthrough of something that did not happen — the banner above carries the
+            # REAL captured values, and the buttons stay live so a reference can be read on purpose.
+            self._band.setText("")
+            self._caption.setText(
+                "No step-by-step walkthrough matches this trap.\n\n"
+                "The banner above shows what was actually captured — that part is real. Pick a "
+                "walkthrough above to read it as a reference; it will describe that kind of trap, "
+                "not this one.")
+            for card, kind in ((self._tf, "trapframe"), (self._ctx, "context")):
+                card._title.setText(kind)
+            self._pos.setText("")
+            self._prev.setEnabled(False)
+            self._next.setEnabled(False)
+            return
         s = stages[self._i]
         for idx, c in enumerate(self._chips):
             active = idx == self._i

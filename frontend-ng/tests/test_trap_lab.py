@@ -106,16 +106,20 @@ def test_trap_lab_step_without_catch_opens_authored(app):
 
 
 def test_journey_seeded_frame_shows_live_banner_and_scause(app):
-    from gini.domain.cpu_journey import JOURNEYS
+    """A store page fault used to open the SYSTEM CALL walkthrough (this test indexed into it),
+    which is the bug B3 fixed: it now opens the page-fault walkthrough. The intent here is
+    unchanged — the captured scause must reach the caption, not just the banner."""
     from gini.domain.xv6 import DemoScheduler
     from gini.ui.cpu_journey import CpuJourney
     fr = DemoScheduler().catch_trap()                      # a real-looking store page fault
     j = CpuJourney(None, _theme(app), _Dev(), frame=fr)
     assert "store page fault" in j._live.text() and "stval" in j._live.text()   # live banner
-    # at the usertrap stage the caption carries the REAL decoded scause, not just the template
-    j._i = next(i for i, s in enumerate(JOURNEYS["syscall"]) if s.title == "usertrap")
+    assert j._mode == "pagefault"                          # routed on scause 15, not defaulted
+    # the entry stage carries the REAL decoded scause and the faulting address
+    j._i = next(i for i, s in enumerate(j._stages) if s.title == "the access faults")
     j._render()
     assert "scause" in j._caption.text() and "store page fault" in j._caption.text()
+    assert "stval" in j._caption.text()                    # the number the student came for
     j.close()
 
 

@@ -134,12 +134,222 @@ PREEMPT_NOSWITCH = [
           "send the CPU straight back to {a}, at the instruction the timer interrupted."),
 ]
 
-JOURNEYS = {"syscall": SYSCALL, "context": CONTEXT, "preempt": PREEMPT}
+# A DEVICE interrupt taken from user mode (scause 0x…09). The opposite of a syscall on every axis
+# that matters: asynchronous, not deliberate, and it is not this process's business at all.
+DEVICE = [
+    Stage("device fires", "user", "A", "trapframe",
+          "A device pulled a wire — the PLIC raised a supervisor external interrupt while {a} was "
+          "running. scause bit 63 is SET, so this is an INTERRUPT, not an exception: nothing {a} "
+          "did caused it, and the instruction at sepc did nothing wrong. uservec still saves {a}'s "
+          "31 registers into its trapframe, exactly as a syscall would."),
+    Stage("usertrap", "kernel", "A", "",
+          "usertrap() saves the user pc (trapframe->epc = sepc) and does NOT advance it — {a} has "
+          "an instruction still to run. scause is not 8, so this is not a system call; the dispatch "
+          "falls through to devintr()."),
+    Stage("devintr()", "kernel", "A", "",
+          "devintr() asks the PLIC which device interrupted: plic_claim() returns the irq, the "
+          "matching handler runs (uartintr() for the console, virtio_disk_intr() for the disk), "
+          "then plic_complete(irq) tells the PLIC it is done. It returns 1 — a device — NOT 2, "
+          "which is the timer. That difference is the whole story: only 2 yields."),
+    Stage("wakeup (maybe)", "kernel", "A", "",
+          "A disk completion calls wakeup(chan), which marks whichever process was waiting on that "
+          "device RUNNABLE — usually NOT {a}. That process does not run now; it runs later, when "
+          "the scheduler reaches it. This is why the pid on a device trap is a BYSTANDER: it is "
+          "whoever happened to be on this core, not whoever the interrupt concerns."),
+    Stage("prepare_return", "kernel", "A", "",
+          "prepare_return(): intr_off(), stvec back to uservec, the trapframe's kernel_* fields "
+          "refilled, SPP cleared and SPIE set, and sepc loaded from the saved — NOT advanced — "
+          "trapframe->epc."),
+    Stage("resume", "user", "A", "",
+          "{a} resumes at the very instruction it was about to run, none the wiser. which_dev was "
+          "1, so usertrap never called yield(): no context switch, no other process ran. {a} lost "
+          "a few microseconds and nothing else."),
+]
+
+# A PAGE FAULT that vmfault can satisfy (scause 13 load / 15 store). The defining contrast with a
+# syscall is that sepc is NOT advanced, because the faulting instruction never completed.
+PAGEFAULT = [
+    Stage("the access faults", "user", "A", "trapframe",
+          "{a} executed a load or a store to an address with no mapping. scause is 13 (load) or 15 "
+          "(store) — bit 63 CLEAR, so this is an EXCEPTION: this very instruction caused it, "
+          "synchronously. stval holds the faulting virtual address."),
+    Stage("uservec", "kernel", "A", "trapframe",
+          "Hardware jumps to uservec in the trampoline page. Still on {a}'s USER page table it "
+          "saves the 31 registers into {a}'s trapframe, then switches satp to the kernel page "
+          "table — the trampoline is mapped at the same address in both, which is the only reason "
+          "that switch does not pull the ground out from under the instruction stream."),
+    Stage("usertrap", "kernel", "A", "",
+          "usertrap() saves the user pc and leaves it ALONE. A syscall does epc += 4 because the "
+          "ecall completed and we want the next instruction. This instruction never completed, so "
+          "it must run again. Same mechanism, opposite treatment of the program counter — this is "
+          "the one thing to take away from this walkthrough."),
+    Stage("vmfault()", "kernel", "A", "",
+          "scause is not 8 and devintr() returned 0, so the dispatch reaches vmfault(): is the "
+          "address below p->sz, i.e. actually {a}'s? is it already mapped? If it is a genuine "
+          "miss, kalloc() a fresh page, zero it, and mappages() it at PGROUNDDOWN(va) with "
+          "PTE_W|PTE_U|PTE_R. The mapping now exists."),
+    Stage("userret", "kernel", "A", "trapframe",
+          "prepare_return() then userret: satp back to {a}'s USER page table FIRST, then the 31 "
+          "registers restored from the trapframe, then sret — pc ← sepc, the address of the "
+          "instruction that faulted."),
+    Stage("re-execute", "user", "A", "",
+          "{a} RE-EXECUTES the very same instruction, and this time it succeeds, because the page "
+          "it wanted is mapped now. Nothing in {a} knows this happened. (An INSTRUCTION page fault "
+          "— scause 12 — is not handled here: vmfault is only asked about 13 and 15, so 12 falls "
+          "through and kills the process.)"),
+]
+
+# An exception from user mode that nothing handles: illegal instruction (2), an instruction page
+# fault (12), or any other exception vmfault is not asked about. The process dies.
+FATAL = [
+    Stage("the bad instruction", "user", "A", "trapframe",
+          "{a} executed something the hardware refused: an illegal instruction (scause 2), a jump "
+          "into a page with no execute permission (scause 12), or another exception this kernel "
+          "does not handle. Bit 63 is CLEAR — an exception, caused by this instruction."),
+    Stage("uservec", "kernel", "A", "trapframe",
+          "uservec saves {a}'s 31 registers into its trapframe and switches to the kernel page "
+          "table, exactly as it would for a syscall. Nothing has gone wrong with the MECHANISM — "
+          "the trap is taken perfectly normally."),
+    Stage("usertrap", "kernel", "A", "",
+          "The dispatch runs out of options: scause is not 8, so not a syscall; devintr() returns "
+          "0, so no device; and it is not a 13 or 15 that vmfault is asked about. Control reaches "
+          "the final else."),
+    Stage("setkilled", "kernel", "A", "",
+          "The kernel prints what it saw — \"usertrap(): unexpected scause 0x… pid=…\" and then "
+          "the sepc and stval — and calls setkilled(p). Look for those two lines in the console: "
+          "they are the kernel telling you exactly which instruction and which address."),
+    Stage("kexit(-1)", "kernel", "A", "",
+          "if(killed(p)) kexit(-1). THERE IS NO sret. Every other walkthrough here ends by "
+          "returning to the interrupted code; this one never returns at all — {a} is gone, and the "
+          "scheduler picks somebody else. That is what makes this the exception that proves the "
+          "pattern."),
+]
+
+# A trap taken while the CPU was already in the KERNEL (SPP == 1): a device or timer interrupt
+# arriving in kernel code. Different vector, different save area, no privilege change.
+KTRAP = [
+    Stage("kernel code, interrupts on", "kernel", "A", "",
+          "The CPU was running KERNEL code with interrupts enabled when a device pulled a wire. "
+          "sstatus.SPP is 1, which is how the kernel knows where it came from. On a busy machine "
+          "this is the common case, not the rare one."),
+    Stage("kernelvec", "kernel", "A", "",
+          "stvec points at kernelvec, not uservec — usertrap() set it on the way in. kernelvec "
+          "does addi sp,sp,-256 and saves the caller-saved registers ON THE CURRENT KERNEL STACK. "
+          "NO trapframe is written, and there is NO page-table switch: the kernel page table is "
+          "already installed. Both save-area cards stay dark for this trap, and they are right to."),
+    Stage("kerneltrap", "kernel", "A", "",
+          "kerneltrap() panics unless SPP is 1 and interrupts are off, then calls devintr(). It "
+          "can handle INTERRUPTS ONLY: if devintr() returns 0 — any exception in supervisor mode, "
+          "a bad pointer in a student's shadow function — it prints scause/sepc/stval and panics "
+          "the whole machine. You are reading this, so that did not happen."),
+    Stage("no yield", "kernel", "A", "",
+          "which_dev is 1 for a device, so no yield. Even a TIMER here (which_dev 2) yields only "
+          "if myproc() is not 0 — a tick that lands while this core is idle in the scheduler "
+          "preempts nothing, because there is nothing to preempt."),
+    Stage("kernelvec returns", "kernel", "A", "",
+          "kerneltrap restores sepc and sstatus — the yield() it may have done could itself have "
+          "trapped — then kernelvec restores the registers from the kernel stack, adds 256 back to "
+          "sp, and sret. Privilege was S the whole way through: there was no user/kernel crossing "
+          "to make."),
+    Stage("kernel resumes", "kernel", "A", "",
+          "The kernel picks up exactly where it was. Nothing was written to any trapframe or "
+          "context, and no process changed state. The trapframe belonging to the process on this "
+          "core still holds ITS last USER trap — which is why showing it here would be a quiet lie."),
+]
+
+JOURNEYS = {"syscall": SYSCALL, "context": CONTEXT, "preempt": PREEMPT,
+            "device": DEVICE, "pagefault": PAGEFAULT, "fatal": FATAL, "ktrap": KTRAP}
 JOURNEY_TITLES = {
     "syscall": "System call (trap · same process)",
     "context": "Context switch (swtch · different process)",
     "preempt": "Preemption (trap + context switch)",
+    "device": "Device interrupt (asynchronous · a bystander)",
+    "pagefault": "Page fault (exception · re-executes)",
+    "fatal": "Unhandled exception (the process is killed)",
+    "ktrap": "Kernel-mode trap (kernelvec · no trapframe)",
 }
+#: The one-line frame above the stages. It used to be a FIXED sentence about system calls and
+#: context switches — two of the seven stories — sitting above a captured page fault and quietly
+#: framing it as something it was not (XV6_TRAP_SEQUENCES §9.5). It follows the walkthrough now.
+JOURNEY_HEADLINE = {
+    "syscall": "A system call is a TRAP the program ASKED for: same process, user↔kernel, saves "
+               "the trapframe, and sepc is advanced past the ecall.",
+    "context": "A context switch is swtch: a different process, kernel↔kernel, saves the context. "
+               "It is NOT a trap, so no capture can land here — this is a reference walkthrough.",
+    "preempt": "Preemption is both at once: a timer TRAP (trapframe) wrapping a context SWITCH "
+               "(context). Two save areas, one event — and only when the quantum is reached.",
+    "device": "A device interrupt is the OPPOSITE of a system call: asynchronous, nothing the "
+              "program asked for, and usually not even its business. Watch what does NOT happen.",
+    "pagefault": "A page fault is an EXCEPTION — this instruction caused it. The defining "
+                 "difference from a syscall: sepc is NOT advanced, so the instruction runs again.",
+    "fatal": "The exception that proves the pattern: nothing handles it, so there is no sret and "
+             "the process never resumes. Every other walkthrough here ends by going back.",
+    "ktrap": "A trap taken while already in the KERNEL: kernelvec, not uservec. No trapframe, no "
+             "page-table switch, no privilege change — the absences ARE the lesson.",
+}
+#: Short labels for the mode buttons — seven full titles do not fit one row.
+JOURNEY_SHORT = {
+    "syscall": "System call",
+    "context": "Context switch",
+    "preempt": "Preemption",
+    "device": "Device",
+    "pagefault": "Page fault",
+    "fatal": "Fatal",
+    "ktrap": "Kernel trap",
+}
+
+#: Trap kinds, as the kernel's gini_kind() numbers them (see gini_patch.py / TRAP_KINDS).
+K_SYSCALL, K_PAGEFAULT, K_TIMER, K_DEVICE, K_ILLEGAL, K_OTHER = range(6)
+
+
+def journey_for(kind, from_user: bool = True, scause=None) -> str:
+    """Which walkthrough describes THIS captured trap. "" when none does.
+
+    Returning "" matters as much as the mapping. The old code was
+    `{0: "syscall", 2: "preempt"}.get(kind, "syscall")` — a dict lookup with a WRONG default — so
+    four of the six kinds silently opened the system-call walkthrough and narrated an `ecall` that
+    never happened, naming the real pid while doing it. A missing walkthrough must say it is
+    missing, not substitute a confident lie.
+
+    The kind alone is not enough to decide, and that is the other half of the fix:
+
+    * `from_user` picks the vector. A trap taken in KERNEL mode went through kernelvec, wrote no
+      trapframe and crossed no privilege boundary, whatever caused it — so every kernel-mode trap
+      is the same story (KTRAP) and none of the user-mode ones apply.
+    * `scause` splits the page faults. This kernel asks vmfault about 13 and 15 ONLY, so an
+      instruction page fault (12) falls through to the else and kills the process: it is FATAL,
+      not PAGEFAULT, even though both are `K_PAGEFAULT`.
+    """
+    if not from_user:
+        return "ktrap"
+    try:
+        k = int(kind)
+    except (TypeError, ValueError):
+        return ""
+    if k == K_SYSCALL:
+        return "syscall"
+    if k == K_TIMER:
+        return "preempt"
+    if k == K_DEVICE:
+        return "device"
+    if k == K_PAGEFAULT:
+        return "pagefault" if _scause_code(scause) in (13, 15) else "fatal"
+    if k in (K_ILLEGAL, K_OTHER):
+        return "fatal"
+    return ""                                    # an unknown kind: say so, never substitute
+
+
+def _scause_code(scause) -> int:
+    """The low bits of an scause, from a hex string or an int. -1 when unreadable — which routes a
+    page fault to FATAL, the safe side: claiming a page was mapped when it was not is the error
+    that costs a student an evening."""
+    if scause is None:
+        return -1
+    try:
+        v = int(scause, 16) if isinstance(scause, str) else int(scause)
+    except (TypeError, ValueError):
+        return -1
+    return int(v & 0xFF)
 
 
 def preempt_stages(qticks, quantum):
