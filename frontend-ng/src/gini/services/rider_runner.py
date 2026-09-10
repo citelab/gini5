@@ -89,7 +89,7 @@ class RiderRunner:
             # visible (missing tool, unresolved target, timeout, wrong donor service, …)
             hint = "timed out" if code == 124 else f"exit {code}"
             raw = (f"(no output — {hint})\n"
-                   f"$ docker compose exec {service} {' '.join(argv)}")
+                   f"$ {' '.join(self.orch._dc)} exec {service} {' '.join(argv)}")
         m = _riders.parse_measurement(rider.type_key, raw)
         return {"ok": True, "code": code, "raw": raw, "measurement": m,
                 "summary": _riders.summarize(rider.type_key, m), "donor": donor.name,

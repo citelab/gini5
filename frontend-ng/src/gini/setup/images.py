@@ -7,6 +7,7 @@ import subprocess
 from pathlib import Path
 
 from . import IMAGES, REGISTRY
+from .runtime import engine_cli
 
 
 def image_tag(version: str | None) -> str:
@@ -57,7 +58,7 @@ def repair_tag(name: str, run=None) -> bool:
     run = run or subprocess.run
     want = name if ":" in name.rsplit("/", 1)[-1] else f"{name}:latest"
     try:
-        listed = run(["docker", "images", "--no-trunc", "--format",
+        listed = run([*engine_cli(), "images", "--no-trunc", "--format",
                       "{{.ID}} {{.Repository}}:{{.Tag}}"],
                      capture_output=True, text=True, encoding="utf-8", errors="replace",
                      timeout=60)
@@ -67,10 +68,10 @@ def repair_tag(name: str, run=None) -> bool:
             image_id, _, ref = line.strip().partition(" ")
             if ref != want or not image_id:
                 continue
-            if run(["docker", "tag", image_id, want], capture_output=True, text=True,
+            if run([*engine_cli(), "tag", image_id, want], capture_output=True, text=True,
                    encoding="utf-8", errors="replace", timeout=60).returncode != 0:
                 return False
-            return run(["docker", "image", "inspect", "--format", "{{.Id}}", want],
+            return run([*engine_cli(), "image", "inspect", "--format", "{{.Id}}", want],
                        capture_output=True, timeout=60).returncode == 0
     except Exception:                          # noqa: BLE001 — a repair must not raise
         return False
@@ -111,7 +112,7 @@ def missing_locally(refs, run=subprocess.run) -> list[str]:
         # Both halves in ONE call: what each version wants, then what each plain name resolves to.
         # The common case — everything current — still answers here, in a single docker invocation
         # on a path that runs at every launch.
-        r = run(["docker", "image", "inspect", "--format", "{{.Id}}", *refs, *names],
+        r = run([*engine_cli(), "image", "inspect", "--format", "{{.Id}}", *refs, *names],
                 capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=30)
         if r.returncode == 0:
             ids = (r.stdout or "").split()
@@ -146,7 +147,7 @@ def missing_locally(refs, run=subprocess.run) -> list[str]:
 def _image_id(name: str, run=subprocess.run) -> str | None:
     """Docker's id for `name`, or None if it does not resolve. Never raises."""
     try:
-        r = run(["docker", "image", "inspect", "--format", "{{.Id}}", name],
+        r = run([*engine_cli(), "image", "inspect", "--format", "{{.Id}}", name],
                 capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=15)
         return (r.stdout or "").strip() or None if r.returncode == 0 else None
     except Exception:                      # noqa: BLE001
@@ -163,7 +164,7 @@ def _retag_from_local(ref: str, name: str, run=subprocess.run) -> bool:
     the failure this whole change exists to end.
     """
     try:
-        if run(["docker", "tag", ref, name], capture_output=True, text=True, encoding="utf-8",
+        if run([*engine_cli(), "tag", ref, name], capture_output=True, text=True, encoding="utf-8",
                errors="replace", timeout=60).returncode != 0:
             return False
     except Exception:                      # noqa: BLE001
@@ -174,6 +175,8 @@ def _retag_from_local(ref: str, name: str, run=subprocess.run) -> bool:
 
 #: A layer's line in `docker pull` output: "5711127a7748: Pull complete".
 _LAYER = re.compile(r"^([0-9a-f]{8,}): (.+?)\s*$")
+_PODMAN_LAYER = re.compile(
+    r"^(?:Copying blob|Copying config) (?:sha256:)?([0-9a-f]{8,})", re.I)
 
 
 class PullProgress:
@@ -193,15 +196,35 @@ class PullProgress:
 
     So the bar moves in layer-sized steps rather than smoothly, which is honest — the wait really
     is lumpy — and it moves, which the indeterminate one never did.
+
+    Podman speaks a different dialect (``Copying blob <id>`` / ``Copying blob <id> done``). Those
+    lines are counted the same way so a lab-machine pull is not an indeterminate spinner.
     """
 
     def __init__(self) -> None:
         self.total = 0
         self.done = 0
+        self._podman_seen: set[str] = set()
+        self._podman_done: set[str] = set()
 
     def feed(self, line: str) -> bool:
         """Take one line; True when the counts moved and the caller should redraw."""
-        m = _LAYER.match((line or "").strip())
+        line = (line or "").strip()
+        pm = _PODMAN_LAYER.match(line)
+        if pm:
+            blob = pm.group(1)
+            moved = False
+            if blob not in self._podman_seen:
+                self._podman_seen.add(blob)
+                self.total += 1
+                moved = True
+            if "done" in line.lower() and blob not in self._podman_done:
+                self._podman_done.add(blob)
+                self.done += 1
+                moved = True
+            return moved
+
+        m = _LAYER.match(line)
         if not m:
             return False
         what = m.group(2).lower()
@@ -250,7 +273,7 @@ def pull_one(ref: str, on_progress=None, run=None, why=None) -> bool:
     tell = why or (lambda _t: None)
     if on_progress is None:
         try:
-            r = (run or subprocess.run)(["docker", "pull", ref], capture_output=True, text=True,
+            r = (run or subprocess.run)([*engine_cli(), "pull", ref], capture_output=True, text=True,
                                         encoding="utf-8", errors="replace", timeout=1800)
         except Exception as e:                 # noqa: BLE001
             tell(f"{type(e).__name__}: {e}")
@@ -260,18 +283,18 @@ def pull_one(ref: str, on_progress=None, run=None, why=None) -> bool:
         return r.returncode == 0
     seen = PullProgress()
     try:
-        proc = subprocess.Popen(["docker", "pull", ref], stdout=subprocess.PIPE,
+        proc = subprocess.Popen([*engine_cli(), "pull", ref], stdout=subprocess.PIPE,
                                 stderr=subprocess.STDOUT, text=True, encoding="utf-8",
                                 errors="replace")
     except FileNotFoundError:
         # The macOS one: a GUI app launched from the Dock inherits /usr/bin:/bin:/usr/sbin:/sbin,
         # which is not where Docker Desktop puts `docker`. From a terminal the same build works.
-        tell("docker was not found on PATH. If gBuilder was launched from the Dock or Finder, "
+        tell(f"{engine_cli()[0]} was not found on PATH. If gBuilder was launched from the Dock or Finder, "
              "macOS gives it a minimal PATH that excludes /opt/homebrew/bin and /usr/local/bin — "
              "launching it from a terminal is the quickest check.")
         return False
     except Exception as e:                     # noqa: BLE001
-        tell(f"could not start docker: {type(e).__name__}: {e}")
+        tell(f"could not start {engine_cli()[0]}: {type(e).__name__}: {e}")
         return False
     tail: list[str] = []
     try:
@@ -330,7 +353,7 @@ def pull_images(refs, run=subprocess.run, on_progress=None, on_error=None
             fail = (lambda text, _r=ref: on_error(_r, text)) if on_error else None
             ok = pull_one(ref, on_progress=on_progress, run=run, why=fail)
             if ok:
-                t = run(["docker", "tag", ref, name], timeout=60)
+                t = run([*engine_cli(), "tag", ref, name], timeout=60)
                 ok = t.returncode == 0
                 if not ok and fail:
                     fail("the image downloaded but could not be tagged with the name the "
@@ -349,7 +372,7 @@ def pull_images(refs, run=subprocess.run, on_progress=None, on_error=None
                 want = _image_id(ref, run=run)
                 ok = want is not None and _image_id(name, run=run) == want
                 if not ok and fail:
-                    fail(f"docker reported success but {name} does not resolve to the image "
+                    fail(f"{engine_cli()[0]} reported success but {name} does not resolve to the image "
                          f"just pulled")
             out.append((ref, ok))
         except Exception:
@@ -402,7 +425,7 @@ def build_images(backend: Path, names=None, run=subprocess.run) -> list[tuple[st
             continue
         ctx = backend / ctx_rel
         try:
-            r = run(["docker", "build", "-f", str(ctx / dockerfile), "-t", name, str(ctx)],
+            r = run([*engine_cli(), "build", "-f", str(ctx / dockerfile), "-t", name, str(ctx)],
                     timeout=3600)
             out.append((name, r.returncode == 0))
         except Exception:

@@ -2754,7 +2754,10 @@ class MainWindow(QMainWindow):
         addressing = getattr(self.ctx, "addressing", {}) or {}
         if len(overlay_host_lines(addressing)) < 2:
             return
-        dc = list(getattr(orch, "_dc", ["docker", "compose"]))
+        dc = list(getattr(orch, "_dc", None) or [])
+        if not dc:
+            from ..setup.runtime import compose_cli
+            dc = list(compose_cli())
         wd = getattr(orch, "workdir", None)
         devs = [d for d in self.ctx.topology.devices.values()
                 if _role(d.type_key) in ("machine", "router", "compute")]
@@ -3388,6 +3391,18 @@ class MainWindow(QMainWindow):
         self.ctx.warnings = warnings
         self.ctx.bus.warnings_changed.emit()
 
+    def _compose_argv(self) -> list[str]:
+        """``docker compose`` or ``podman compose``, plus ``-p`` when the stack is namespaced.
+
+        Probe/rider exec goes through ``orch._dc`` already. These one-shot UI execs used to
+        hardcode ``docker compose`` and would miss the running project on a Podman lab machine.
+        """
+        orch = getattr(self._gloader, "orchestrator", None) or getattr(self.ctx, "orchestrator", None)
+        if orch is not None:
+            return list(getattr(orch, "_dc", []))
+        from ..setup.runtime import compose_cli
+        return list(compose_cli())
+
     def element_query(self, device_name: str, command: str) -> str:
         """Run a one-shot console command against a network element (needs Docker up)."""
         if not self._workdir:
@@ -3407,11 +3422,11 @@ class MainWindow(QMainWindow):
             # wedge the serial rctl server: dead console + empty HUD queries).
             if is_router:
                 # the real C gRouter: run one CLI command over its control socket
-                cmd = ["docker", "compose", "exec", "-T", svc, "timeout", "12",
+                cmd = [*self._compose_argv(), "exec", "-T", svc, "timeout", "12",
                        "python3", "/build/grouter-build/grconsole.py",
                        f"/run/{svc}.ctl", "--once", command]
             else:
-                cmd = ["docker", "compose", "exec", "-T", "fabric", "timeout", "12",
+                cmd = [*self._compose_argv(), "exec", "-T", "fabric", "timeout", "12",
                        "python", "-m", "dataplane.console", svc, command]
             r = subprocess.run(cmd, cwd=self._workdir, capture_output=True,
                                text=True, encoding="utf-8", errors="replace", timeout=15)
@@ -3431,7 +3446,7 @@ class MainWindow(QMainWindow):
         from ..services.compiler import _svc
         try:
             svc = _svc(device_name)
-            r = subprocess.run(["docker", "compose", "exec", "-T", svc, "sh", "-c", command],
+            r = subprocess.run([*self._compose_argv(), "exec", "-T", svc, "sh", "-c", command],
                                cwd=self._workdir, capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=8)
             return r.stdout or ""
         except Exception:
@@ -3485,7 +3500,7 @@ class MainWindow(QMainWindow):
         fn = _svc(dev.name)
 
         def work():
-            cmd = ["docker", "compose", "exec", "-T",
+            cmd = [*self._compose_argv(), "exec", "-T",
                    "-e", f"GINI_FN={fn}", "-e", f"GINI_METHOD={method}",
                    "-e", f"GINI_BODY={body}", "faas", "python", "-c", _FAAS_INVOKE]
             try:

@@ -38,7 +38,10 @@ def _app_version() -> str:
 
 def _do_check(os_name: str) -> int:
     print(f"gini-toolkit {_app_version()}  ·  {os_name}")
-    print("  runtime:", "available" if runtime.docker_available() else "NOT found")
+    eng = runtime.detect_engine()
+    avail = runtime.docker_available()
+    label = runtime.engine_name() if eng != "missing" else "none"
+    print("  runtime:", f"{'available' if avail else 'NOT found'} ({label})")
     if marker.is_setup_done():
         print(f"  setup:   done (version {marker.setup_version()})")
         if marker.needs_update(_app_version()):
@@ -123,7 +126,7 @@ def _build(os_name: str, source: str | None) -> int:
                          "tag": "source", "images": ok, "built_from": str(backend)})
     print("\nRecorded", marker.marker_path())
     if bad:
-        print("\nSome images failed to build — scroll up for the docker build error. "
+        print("\nSome images failed to build — scroll up for the container-build error. "
               "Re-run `gini-setup --build` after fixing; successful images are kept.")
         return 2
     print("\nSetup complete (source build). Launch the app with:  gbuilder")
@@ -137,7 +140,7 @@ def main(argv=None) -> int:
     ap.add_argument("--update", action="store_true", help="re-pull images for the current version")
     ap.add_argument("--yes", "-y", action="store_true", help="run auto-install steps without asking")
     ap.add_argument("--build", action="store_true",
-                    help="source install: docker-build all images locally from the backend/ tree")
+                    help="source install: container-build all images locally from the backend/ tree")
     ap.add_argument("--source", metavar="PATH", default=None,
                     help="path to the backend/ source tree (with --build; else auto-detected)")
     args = ap.parse_args(argv)

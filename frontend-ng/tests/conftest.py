@@ -13,6 +13,21 @@ import pytest
 
 
 @pytest.fixture(autouse=True)
+def _container_engine_is_docker_in_tests():
+    """Pin the CLI prefix to Docker for the suite.
+
+    ``detect_engine`` caches the real probe. Without this, the first test that compiled a
+    topology would call ``docker info``, and a Podman-only machine would make every existing
+    fake (which answers ``docker …``) miss. Tests that exercise Podman reset the cache
+    themselves.
+    """
+    from gini.setup import runtime
+    runtime._ENGINE = "docker"
+    yield
+    runtime._ENGINE = None
+
+
+@pytest.fixture(autouse=True)
 def _isolated_gini_home(tmp_path, monkeypatch):
     """Never let the DEVELOPER'S OWN GINI state decide whether the suite passes.
 
