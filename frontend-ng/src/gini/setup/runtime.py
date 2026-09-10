@@ -6,7 +6,6 @@ Desktop/Podman). We detect a working Docker socket and, where we can, offer the 
 from __future__ import annotations
 
 import platform
-import shutil
 import subprocess
 
 
@@ -22,14 +21,22 @@ def docker_state(run=subprocess.run) -> str:
     engine is not running" produced the same message: install it. Telling somebody who already has
     Docker to install it again sends them off to fix the wrong thing, and never mentions the one
     action that would work.
+
+    Absence is read from `run` itself rather than from `shutil.which`, so that `run` is the ONLY
+    thing this function touches. It used to check `which` first, which is not injectable — so a
+    caller that injected a perfectly healthy fake still got "missing" on a machine with no docker
+    binary, and five tests in test_bootstrap/test_setup passed only because the developer happened
+    to have Docker installed. They failed the moment the suite ran anywhere else. A missing
+    executable already announces itself precisely, and from inside the seam:
+    `subprocess.run` raises FileNotFoundError.
     """
-    if not shutil.which("docker"):
-        return "missing"
     try:
         r = run(["docker", "info"], capture_output=True, timeout=15)
-        return "ok" if r.returncode == 0 else "stopped"
+    except FileNotFoundError:    # no docker on PATH at all — nothing to start
+        return "missing"
     except Exception:            # a timeout is a daemon that is starting or wedged, not an absent one
         return "stopped"
+    return "ok" if r.returncode == 0 else "stopped"
 
 
 def compose_available(run=subprocess.run) -> bool:
