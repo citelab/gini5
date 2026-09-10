@@ -619,8 +619,6 @@ class Handler(BaseHTTPRequestHandler):
         if path == "/health":
             # carries the wedge verdict so the Lab can tell the student to reboot (we never do)
             self._send({"ok": True, "wedge": _WEDGE.state()})
-        elif path == "/programs":
-            self._send({"programs": PROGRAMS})
         elif path == "/procs":                       # fast, NO-halt process table (Ctrl-P)
             txt = _SERIAL.procdump()
             _WEDGE.note_dump(txt)                    # the liveness heartbeat (~2/s)

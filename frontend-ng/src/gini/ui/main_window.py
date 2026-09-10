@@ -3352,7 +3352,12 @@ class MainWindow(QMainWindow):
             if _role(tk) == "router":
                 sb.show_scripts(dev.name)
             elif tk == "xv6":
-                pass          # its source is the kernel board's to open; leave that view alone
+                # Point it at the machine's APPS — the programs a student launches — the same way
+                # selecting a router points it at that router's Lua modules. The KERNEL source is
+                # still the board's to open (double-click a block), which overrides this; that is
+                # the right precedence, because opening a block is a deliberate act and selecting
+                # the machine is not.
+                sb.show_apps(dev.name)
             else:
                 # anything else has no source yet. Clear, so the pane never keeps showing the
                 # last router's module as though it belonged to what was just clicked.
