@@ -1500,7 +1500,15 @@ class MainWindow(QMainWindow):
 
     def closeEvent(self, e) -> None:
         if self.containers_busy():           # don't quit out from under a live topology
-            self.ctx.log(self._busy_quit_message(), "error")
+            msg = self._busy_quit_message()
+            self.ctx.log(msg, "error")
+            # …and say it where the person who just clicked the close button is looking. The log
+            # line alone was the whole answer, and the console dock is not where anyone looks when
+            # a window refuses to shut: from outside, pressing close and having nothing happen is
+            # indistinguishable from a frozen app. Reported by a user as "closing does nothing"
+            # — the guard was working perfectly and saying so into a panel behind the canvas.
+            from PySide6.QtWidgets import QMessageBox
+            QMessageBox.warning(self, "The lab is still running", msg)
             e.ignore()
             return
         self._persist_current_project()      # never lose the active project's work / chat

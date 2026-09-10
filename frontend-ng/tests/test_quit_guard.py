@@ -18,7 +18,21 @@ def _win():
     return app, MainWindow(app)
 
 
-def test_close_is_blocked_while_running():
+def _mute_modals(monkeypatch):
+    """closeEvent now WARNS as well as refusing, and a modal in a headless test blocks for ever.
+
+    Recording the calls rather than dropping them: "it refused" and "it said so" are two different
+    assertions, and the second is the one a user filed a bug about.
+    """
+    from PySide6.QtWidgets import QMessageBox
+    shown = []
+    monkeypatch.setattr(QMessageBox, "warning",
+                        staticmethod(lambda *a, **k: shown.append(a[1:3])))
+    return shown
+
+
+def test_close_is_blocked_while_running(monkeypatch):
+    _mute_modals(monkeypatch)
     app, w = _win()
     logs = []
     w.ctx.bus.log.connect(lambda lvl, msg: logs.append(msg))
@@ -30,7 +44,8 @@ def test_close_is_blocked_while_running():
     w.close  # noqa: B018
 
 
-def test_close_proceeds_when_idle():
+def test_close_proceeds_when_idle(monkeypatch):
+    _mute_modals(monkeypatch)
     app, w = _win()
     w._running = False
     ev = QCloseEvent(); ev.accept()
@@ -47,7 +62,7 @@ def test_the_guard_blocks_app_quit_while_running():
 
 
 # -- the window where the app is gone and the lab is not ------------------------ #
-def test_quitting_is_blocked_while_a_launch_is_still_in_flight():
+def test_quitting_is_blocked_while_a_launch_is_still_in_flight(monkeypatch):
     """THE one that looks like a crash.
 
     `_running` only becomes true once `up` REPORTS success, but `docker compose up` on a real
@@ -56,6 +71,7 @@ def test_quitting_is_blocked_while_a_launch_is_still_in_flight():
     from a crash — no traceback, no crash report, just an app that is gone and containers that
     are not.
     """
+    _mute_modals(monkeypatch)
     app, w = _win()
     logs = []
     w.ctx.bus.log.connect(lambda lvl, msg: logs.append(msg))
@@ -156,3 +172,34 @@ def test_main_window_installs_no_application_wide_event_filter():
                    for n in ast.walk(tree)), (
         "MainWindow defines eventFilter again — if it is installed on the application this "
         "reintroduces the QWebEngineView segfault.")
+
+
+def test_refusing_to_close_says_so_on_screen(monkeypatch):
+    """The bug a user reported as "closing does nothing".
+
+    The guard was never broken — it refused correctly and wrote the reason to `ctx.log`, which
+    paints in the console dock behind the canvas. Someone who presses the window close button and
+    sees nothing move has no way to tell a guard from a hang, and the obvious next move is to kill
+    the process, which is exactly what the guard exists to prevent.
+    """
+    shown = _mute_modals(monkeypatch)
+    app, w = _win()
+    w._running = True
+    ev = QCloseEvent(); ev.accept()
+    w.closeEvent(ev)
+    assert not ev.isAccepted()                       # still refused …
+    assert shown, "it refused the close without telling anyone on screen"
+    title, body = shown[0]
+    assert "running" in (title + body).lower()
+    assert "Stop" in body, "the message has to name the way out, not just the problem"
+
+
+def test_an_idle_window_closes_without_a_dialog_in_the_way(monkeypatch):
+    """The other half: the prompt must never appear when there is nothing to protect."""
+    shown = _mute_modals(monkeypatch)
+    app, w = _win()
+    w._running = w._launching = w._orphaned = w._stopping = False
+    ev = QCloseEvent(); ev.accept()
+    w.closeEvent(ev)
+    assert ev.isAccepted()
+    assert shown == [], "nothing was running; nothing to warn about"
