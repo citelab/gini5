@@ -77,7 +77,7 @@ def test_patcher_applies_and_is_idempotent(tmp_path):
     assert "gini_ut++;" in trap                              # user-mode timer tick
     assert "if (myproc() == 0) gini_it++; else gini_kt++;" in trap   # idle vs kernel tick
     # gini_dump emits the counters + this hart's control CSRs (trap vector, interrupt config, cause)
-    assert "MODETIME user %d kernel %d idle %d" in proc
+    assert "MODETIME user %lu kernel %lu idle %lu" in proc   # #3: 64-bit, no (int)-wrap drop
     assert "CSR sstatus %p sie %p sip %p stvec %p scause %p sepc %p" in proc
     assert "extern uint64 gini_ut, gini_kt, gini_it;" in proc
     assert "w_stimecmp(r_time() + 5000000);" in trap    # ~0.5s tick, semicolon intact
@@ -96,7 +96,13 @@ def test_patcher_applies_and_is_idempotent(tmp_path):
     assert "gini_dump();" in con and "gini_vmdump();" in con and "gini_fsdump();" in con
     assert "gini_vmdump_all();" in con and "gini_faultdump();" in con
     assert "case C('A')" in con and "case C('E')" in con
-    assert "case C('W')" in con and "gini_shadowdump();" in con   # the shadow manifest dump
+    # Ctrl-W is now the command-mux PREFIX (§4f5), NOT a switch case; shadowdump moved to the
+    # self-escape Ctrl-W Ctrl-W and is reachable from the mux block instead.
+    assert "case C('W')" not in con, "Ctrl-W is the mux prefix now, not a switch case"
+    assert "gini_shadowdump();" in con                            # still reachable (mux self-escape)
+    assert "if(c == C('W')){ gini_mux = 1;" in con               # Ctrl-W is the mux prefix
+    assert "gini_catch_kind = (gini_mux_arg == 9)" in con         # arm-trap wired through the mux
+    assert "if(c == 'r'){ gini_boardreset();" in con              # #4 boardreset homed on the mux
     assert "case C('L')" in con and "gini_lockdump();" in con     # lock contention (Lock Lab)
     # Every bracketed dump must be BALANCED — an unmatched 30/31 would corrupt the frame the
     # agent splits on, so compare the counts to each other rather than to a magic number.
@@ -149,6 +155,19 @@ def test_patcher_applies_and_is_idempotent(tmp_path):
     assert "extern uint64   gini_trapcount[6];" in defs
     assert "struct gini_trap { int pid; int kind;" in defs
 
+    # one-shot trap capture (xv6-rebuild-batch §11.2): the slot, the CAS-claimed single-writer
+    # capture (NOT a naive `= *e`, which the ring race #9 could tear), the release fence before
+    # ready, the CATCH dump line, and the defs.h externs.
+    assert "gini_catch_kind" in trap and "struct gini_trap gini_catch;" in trap
+    assert "__sync_bool_compare_and_swap(&gini_catch_kind," in trap   # single-writer claim
+    assert "__sync_synchronize();" in trap                            # publish frame before ready
+    assert '("CATCH %d %d %d' in trap                                 # the dump line (PRINTF->printk)
+    assert "gini_catch_user = ((gini_catch.sstatus & SSTATUS_SPP) == 0);" in trap  # user vs kernel
+    # the capture reads LOCALS/CSRs, not the shared ring slot, so it survives the ring race
+    assert "gini_catch = *e" not in trap, "capture must not copy the tearable ring slot"
+    assert "#define GINI_CATCH_ANY (-2)" in defs
+    assert "extern int      gini_catch_kind;" in defs
+
     # Phase 4: kerneltrap also records (device interrupts), anchored on kerneltrap's `scause`; the
     # REGS dump gains s0 (the frame pointer, for the backtrace lab).
     assert "gini_traprec(); // GINI-xv6: record kernel-mode traps" in trap
@@ -161,6 +180,31 @@ def test_patcher_applies_and_is_idempotent(tmp_path):
     assert "gini_alarm_on" in proch
     assert "p->gini_alarm_handler = 0;" in proc                 # zeroed in allocproc
     assert "ALARM %d %d %d %p %d" in proc                       # the dump line the strip reads
+
+    # #1 — scheduler POLICY is a terminated digit-entry (Ctrl-B <digits> \n), NOT the old
+    # N×Ctrl-G, which collided with the shadow-index prefix and silently toggled a shadow
+    # (known issue #1). The two dead switch cases are gone; the shadow-index (Ctrl-G) machine
+    # is untouched so shadows still work.
+    assert "static int gini_polidx = -1;" in con
+    assert "if(c == C('B')){ gini_polidx = 0;" in con
+    assert "if(gini_polidx < GINI_NPOLICY) sched_policy = gini_polidx;" in con
+    assert "case C('G'): if(sched_policy" not in con, "the dead policy-up case must be gone"
+    assert "case C('B'): sched_policy = 0" not in con, "the dead policy-reset case must be gone"
+    assert "if(c == C('G')){ gini_shidx = 0;" in con, "shadow-index (Ctrl-G) must be untouched"
+
+    # §4 (B3 Option 2) — gini_vmdump reports the break + the fixed VAs (the VR line) so the region
+    # map rests on reported truth rather than an inference from the last mapped page.
+    assert "VR %p %p %p" in proc and "(void*)p->sz" in proc
+
+    # #3 — every counter/seq that can exceed 2^31 prints 64-bit (%lu + (uint64)); no surviving
+    # (int) cast on such a field, so the board/ring parsers (which read (\d+)) no longer drop the
+    # row once the value wraps past two billion.
+    assert "FLT %d %lu %p %p %lu" in trap                        # fault ring: scause + seq widened
+    assert "MODETIME user %lu kernel %lu idle %lu" in proc       # mode-time counters widened
+    assert "TC %d %s %lu" in trap                                # trap histogram
+    assert "BSUB %d %s %lu" in trap and "(uint64)gini_resid[i]" in trap
+    assert "(int)gini_resid" not in trap and "(int)gini_trapcount" not in trap
+    assert "(int)e->seq" not in trap                             # TR seq widened
 
     # spin/busy take an optional seconds argument (launch via the Keyboard, e.g. `spin 10 &`)
     spin = (tmp_path / "user" / "spin.c").read_text()
@@ -175,3 +219,30 @@ def test_patcher_applies_and_is_idempotent(tmp_path):
     assert trap2.count("record the trap into the taxonomy ring") == 1      # usertrap hook once
     assert trap2.count("record kernel-mode traps") == 1                    # kerneltrap hook once
     assert (k / "proc.h").read_text().count("gini_alarm_handler;") == 1    # alarm fields once
+
+
+# -- the upstream kernel is PINNED ------------------------------------------- #
+#
+# gini_patch.py anchors on specific xv6 source text and, by design, SILENTLY SKIPS a moved anchor
+# (it never fails the build). So the one thing that keeps the patch honest is that the tree it
+# patches never moves underneath it. The Dockerfile clones mit-pdos/xv6-riscv, an ACTIVE branch —
+# a floating clone would let upstream drift break the patch invisibly, and would let a two-machine
+# build stamp two arches of one release with different kernels. This test fails if the pin is ever
+# removed or reverted to a floating clone.
+DOCKERFILE = Path(__file__).resolve().parents[2] / "backend" / "xv6" / "Dockerfile"
+
+
+@pytest.mark.skipif(not DOCKERFILE.exists(), reason="backend/xv6 not checked out")
+def test_the_xv6_checkout_is_pinned_to_a_commit():
+    import re
+    text = DOCKERFILE.read_text(encoding="utf-8")
+    assert "mit-pdos/xv6-riscv" in text, "the xv6 clone line moved or vanished"
+    # A full 40-hex commit must be checked out. A tag or branch name is NOT a pin — those move.
+    assert re.search(r"git checkout[^\n]*\b[0-9a-f]{40}\b", text) \
+        or re.search(r"XV6_COMMIT=[0-9a-f]{40}\b", text), \
+        "xv6 is not pinned to a 40-hex commit — a floating clone can ship a broken kernel"
+    # `--depth 1` cannot check out an arbitrary commit, so a shallow clone here means the pin is a
+    # lie: git would clone HEAD and the checkout would fail or be ignored.
+    clone = next(l for l in text.splitlines() if "git clone" in l and "xv6-riscv" in l)
+    assert "--depth 1" not in clone, \
+        "a shallow clone cannot check out the pinned commit — drop --depth 1"

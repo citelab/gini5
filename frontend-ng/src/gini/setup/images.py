@@ -2,6 +2,7 @@
 locally from a source checkout (`gini-setup --build`, for source-based installs)."""
 from __future__ import annotations
 
+import re
 import subprocess
 from pathlib import Path
 
@@ -31,6 +32,51 @@ def local_name(ref: str) -> str:
     return ref.rsplit("/", 1)[-1].split(":", 1)[0] + ":latest"
 
 
+def repair_tag(name: str, run=None) -> bool:
+    """Re-apply a tag Docker has stopped resolving. True when the image is really here.
+
+    Docker's name index can lose a tag the image itself still claims. Seen on Docker Desktop 27.4.0
+    straight after `docker pull` + `docker tag` of an image already present under another tag —
+    which is precisely what `pull_images` does on every upgrade:
+
+        docker images gini-grouter        -> gini-grouter latest 57b66b555d00 154MB
+        docker image inspect gini-grouter -> No such image: gini-grouter
+        docker image inspect 57b66b555d00 -> RepoTags: [gini-grouter:latest, ...]
+
+    Three answers about one image, and the wrong one is the one everything asks. It cost twice:
+    Run refused to start a topology, and `missing_locally` — which asks the same question — decided
+    the images were gone and re-downloaded all four on every launch.
+
+    The repair is CONFIRMED, never assumed. A `docker tag` that returns 0 without fixing the index
+    would otherwise turn a visible failure into a download that changes nothing, or a Run that
+    fails deeper in where the message is far less legible.
+    """
+    # Resolved HERE rather than as a default argument. `run=subprocess.run` in the signature binds
+    # at import, so a caller that patches this module's `subprocess` — which is how anything tests
+    # a docker interaction — would be silently ignored and reach the real daemon instead.
+    run = run or subprocess.run
+    want = name if ":" in name.rsplit("/", 1)[-1] else f"{name}:latest"
+    try:
+        listed = run(["docker", "images", "--no-trunc", "--format",
+                      "{{.ID}} {{.Repository}}:{{.Tag}}"],
+                     capture_output=True, text=True, encoding="utf-8", errors="replace",
+                     timeout=60)
+        if listed.returncode != 0:
+            return False
+        for line in (listed.stdout or "").splitlines():
+            image_id, _, ref = line.strip().partition(" ")
+            if ref != want or not image_id:
+                continue
+            if run(["docker", "tag", image_id, want], capture_output=True, text=True,
+                   encoding="utf-8", errors="replace", timeout=60).returncode != 0:
+                return False
+            return run(["docker", "image", "inspect", "--format", "{{.Id}}", want],
+                       capture_output=True, timeout=60).returncode == 0
+    except Exception:                          # noqa: BLE001 — a repair must not raise
+        return False
+    return False
+
+
 def missing_locally(refs, run=subprocess.run) -> list[str]:
     """Which of these images are NOT on this machine, by the name the runtime resolves.
 
@@ -43,6 +89,17 @@ def missing_locally(refs, run=subprocess.run) -> list[str]:
     A marker is a cache. This is its invalidation: cheap, local, and the same question the
     orchestrator will ask at Run time.
 
+    MISSING MEANS "NOT THE IMAGE THIS VERSION WANTS", not "no image of that name". The two are not
+    the same, and taking them for the same hid a three-week regression: a machine that installed
+    6.0.0 in August still had `gini-xv6:latest` pointing at 6.0.0's kernel, so every check said
+    "present", `needs_update` believed a marker that claimed 6.6.0, and the panel never appeared.
+    Six releases of kernel work never arrived, and the first thing loud enough to notice was the
+    OS HUD reporting "this kernel has no board support" — during a class demo.
+
+    `local_name()` throws the version away by design (the runtime resolves `gini-xv6:latest`, and
+    the compose file names it that way), so the ONLY thing that can tell a current image from a
+    stale one is its id. Compare ids.
+
     An unreachable Docker returns [] rather than "everything is missing": that machine is already
     heading for NEEDS_RUNTIME, and guessing here would put a download in front of somebody whose
     engine is simply stopped.
@@ -51,25 +108,204 @@ def missing_locally(refs, run=subprocess.run) -> list[str]:
     if not names:
         return []
     try:
-        r = run(["docker", "image", "inspect", "--format", "{{.Id}}", *names],
-                capture_output=True, timeout=30)
+        # Both halves in ONE call: what each version wants, then what each plain name resolves to.
+        # The common case — everything current — still answers here, in a single docker invocation
+        # on a path that runs at every launch.
+        r = run(["docker", "image", "inspect", "--format", "{{.Id}}", *refs, *names],
+                capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=30)
         if r.returncode == 0:
-            return []                      # one call, and the common case answers here
+            ids = (r.stdout or "").split()
+            if len(ids) == len(refs) + len(names) and ids[:len(refs)] == ids[len(refs):]:
+                return []                  # each name resolves to the very image it should
     except Exception:                      # noqa: BLE001 — cannot ask; claim nothing
         return []
     missing = []
-    for ref, name in zip(refs, names):     # only when something IS missing, to say which
+    for ref, name in zip(refs, names):     # only when something is wrong, to say which
         try:
-            one = run(["docker", "image", "inspect", "--format", "{{.Id}}", name],
-                      capture_output=True, timeout=15)
-            if one.returncode != 0:
-                missing.append(ref)
+            want = _image_id(ref, run=run)
+            have = _image_id(name, run=run)
+            if want and have == want:
+                continue                   # current
+            if have is None and repair_tag(name, run=run):
+                # Not absent, merely UNNAMED — Docker can lose a tag the image itself still
+                # claims. A `docker tag` costs nothing; a needless four-image download costs a
+                # gigabyte and a student's afternoon.
+                if _image_id(name, run=run) == want:
+                    continue
+            if want and _retag_from_local(ref, name, run=run):
+                # The wanted image IS here under its registry name; only the plain name points
+                # somewhere else. That is a rename, not a download — and it is exactly the state
+                # a half-finished upgrade leaves behind.
+                continue
+            missing.append(ref)
         except Exception:                  # noqa: BLE001
             missing.append(ref)
     return missing
 
 
-def pull_images(refs, run=subprocess.run) -> list[tuple[str, bool]]:
+def _image_id(name: str, run=subprocess.run) -> str | None:
+    """Docker's id for `name`, or None if it does not resolve. Never raises."""
+    try:
+        r = run(["docker", "image", "inspect", "--format", "{{.Id}}", name],
+                capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=15)
+        return (r.stdout or "").strip() or None if r.returncode == 0 else None
+    except Exception:                      # noqa: BLE001
+        return None
+
+
+def _retag_from_local(ref: str, name: str, run=subprocess.run) -> bool:
+    """Point `name` at `ref`, when `ref` is already on this machine. True once it really does.
+
+    The cheap half of "stale": the version's own image was pulled at some point but the plain
+    name was left pointing at an older one. Re-tagging is instant where a re-pull is a gigabyte,
+    and it is CONFIRMED afterwards rather than assumed — a `docker tag` that returns 0 without
+    moving the name would otherwise turn a visible problem into a silent wrong version, which is
+    the failure this whole change exists to end.
+    """
+    try:
+        if run(["docker", "tag", ref, name], capture_output=True, text=True, encoding="utf-8",
+               errors="replace", timeout=60).returncode != 0:
+            return False
+    except Exception:                      # noqa: BLE001
+        return False
+    want = _image_id(ref, run=run)
+    return want is not None and _image_id(name, run=run) == want
+
+
+#: A layer's line in `docker pull` output: "5711127a7748: Pull complete".
+_LAYER = re.compile(r"^([0-9a-f]{8,}): (.+?)\s*$")
+
+
+class PullProgress:
+    """How far a `docker pull` has got, from the only signal Docker actually gives.
+
+    There is no percentage. `docker pull` into a PIPE emits no byte counts at all — the
+    "Downloading [===>   ] 12MB/50MB" redraws are a TTY affectation, and a 20 MB image with seven
+    layers produced none of them. That is what the progress bar's old "docker gives us no usable
+    percentage" was reacting to, and it was half right: there is no percentage, but there IS a
+    count. Each layer announces itself and then reports finishing:
+
+        7x  Pulling fs layer      <- the denominator, announced up front
+        7x  Verifying Checksum
+        7x  Download complete
+        7x  Pull complete         <- the numerator
+        1x  Already exists        <- a layer shared with an image already here: done on arrival
+
+    So the bar moves in layer-sized steps rather than smoothly, which is honest — the wait really
+    is lumpy — and it moves, which the indeterminate one never did.
+    """
+
+    def __init__(self) -> None:
+        self.total = 0
+        self.done = 0
+
+    def feed(self, line: str) -> bool:
+        """Take one line; True when the counts moved and the caller should redraw."""
+        m = _LAYER.match((line or "").strip())
+        if not m:
+            return False
+        what = m.group(2).lower()
+        if what.startswith("pulling fs layer"):
+            self.total += 1
+            return True
+        if what.startswith("already exists"):
+            # Already on the machine, shared with another image. It counts on BOTH sides, or a
+            # pull that is mostly cached would report a total it never reaches.
+            self.total += 1
+            self.done += 1
+            return True
+        if what.startswith("pull complete"):
+            self.done += 1
+            return True
+        return False
+
+    @property
+    def fraction(self) -> float:
+        return min(1.0, self.done / self.total) if self.total else 0.0
+
+
+def pull_one(ref: str, on_progress=None, run=None, why=None) -> bool:
+    """Pull a single ref, reporting layer progress as it goes. True when it landed.
+
+    Streamed rather than waited on, because a pull is minutes long and the whole point is to say
+    something during it. Falls back to `run` (the plain, waited form) when no progress is wanted,
+    which is what keeps `pull_images` testable with a fake that never spawns anything.
+
+    `why(text)` receives the REASON a pull failed. It exists because this function used to end
+    `except Exception: return False`, and that discarded the only evidence there was: a student on
+    an M3 hit "Get images" on three separate versions and each time got "None of the images could
+    be downloaded. If this version was never published for arm64, that is the likely reason." —
+    a guess, and a wrong one, since arm64 was published and pulled fine elsewhere.
+
+    It turned out to be Docker's CREDENTIAL HELPER, which fails like this:
+
+        error getting credentials - err: exec: "docker-credential-desktop": executable file not
+        found in $PATH, out: ``
+
+    Nothing to do with GINI, and it says so plainly the moment anyone can read it — which is the
+    whole point. Note what the old code cost: the machine printed the answer on the first attempt,
+    and three versions were installed chasing a message that named the wrong thing. A reason we
+    cannot interpret is still worth every guess we could compose.
+    """
+    tell = why or (lambda _t: None)
+    if on_progress is None:
+        try:
+            r = (run or subprocess.run)(["docker", "pull", ref], capture_output=True, text=True,
+                                        encoding="utf-8", errors="replace", timeout=1800)
+        except Exception as e:                 # noqa: BLE001
+            tell(f"{type(e).__name__}: {e}")
+            return False
+        if r.returncode != 0:
+            tell(_last_line(getattr(r, "stderr", "") or getattr(r, "stdout", "")))
+        return r.returncode == 0
+    seen = PullProgress()
+    try:
+        proc = subprocess.Popen(["docker", "pull", ref], stdout=subprocess.PIPE,
+                                stderr=subprocess.STDOUT, text=True, encoding="utf-8",
+                                errors="replace")
+    except FileNotFoundError:
+        # The macOS one: a GUI app launched from the Dock inherits /usr/bin:/bin:/usr/sbin:/sbin,
+        # which is not where Docker Desktop puts `docker`. From a terminal the same build works.
+        tell("docker was not found on PATH. If gBuilder was launched from the Dock or Finder, "
+             "macOS gives it a minimal PATH that excludes /opt/homebrew/bin and /usr/local/bin — "
+             "launching it from a terminal is the quickest check.")
+        return False
+    except Exception as e:                     # noqa: BLE001
+        tell(f"could not start docker: {type(e).__name__}: {e}")
+        return False
+    tail: list[str] = []
+    try:
+        for line in proc.stdout:               # universal newlines: CRLF is already \n here
+            tail.append(line.rstrip())
+            del tail[:-6]                      # keep only what a failure would need
+            if seen.feed(line):
+                on_progress(seen.done, seen.total)
+        if proc.wait(timeout=1800) == 0:
+            return True
+        tell(_last_line("\n".join(tail)))
+        return False
+    except Exception as e:                     # noqa: BLE001
+        proc.kill()
+        tell(f"{type(e).__name__}: {e}")
+        return False
+
+
+def _last_line(text: str) -> str:
+    """The most specific line docker printed — its last non-empty one.
+
+    Docker puts the useful part at the end ("denied", "no such host", "no space left on device")
+    after a preamble that says nothing. Truncated, because this lands in a dialog.
+    """
+    lines = [ln.strip() for ln in (text or "").splitlines() if ln.strip()]
+    # "" when docker said nothing, NOT a sentence saying so. A reason-shaped non-reason
+    # ("docker failed without saying why") reads as an explanation and, worse, satisfies the
+    # caller's `if reason:` — suppressing the one genuinely useful thing left to offer, which is
+    # the command whose output would be the answer.
+    return lines[-1][:300] if lines else ""
+
+
+def pull_images(refs, run=subprocess.run, on_progress=None, on_error=None
+                ) -> list[tuple[str, bool]]:
     """Pull each ref AND give it the plain local name; return [(ref, ok)].
 
     The tag is not cosmetic, and leaving it out made every pip install unable to Run anything.
@@ -90,11 +326,31 @@ def pull_images(refs, run=subprocess.run) -> list[tuple[str, bool]]:
     out = []
     for ref in refs:
         try:
-            r = run(["docker", "pull", ref], timeout=1800)
-            ok = r.returncode == 0
+            name = local_name(ref)
+            fail = (lambda text, _r=ref: on_error(_r, text)) if on_error else None
+            ok = pull_one(ref, on_progress=on_progress, run=run, why=fail)
             if ok:
-                t = run(["docker", "tag", ref, local_name(ref)], timeout=60)
+                t = run(["docker", "tag", ref, name], timeout=60)
                 ok = t.returncode == 0
+                if not ok and fail:
+                    fail("the image downloaded but could not be tagged with the name the "
+                         "runtime resolves")
+            if ok:
+                # VERIFIED, not assumed. Two exit codes of 0 were the whole of the evidence here,
+                # and they were not enough: a machine wrote a marker recording four successful
+                # 6.6.0 pulls while none of the four images were on disk and every plain name
+                # still pointed at August's 6.0.0. Docker had reported success for a pull that
+                # left nothing behind.
+                #
+                # A marker is believed for weeks afterwards — `needs_update` only compares its
+                # version string — so a false success here is not one bad launch, it is every
+                # launch until somebody notices a kernel is three weeks stale. Asking Docker what
+                # the name resolves to costs one call per image at the end of a gigabyte download.
+                want = _image_id(ref, run=run)
+                ok = want is not None and _image_id(name, run=run) == want
+                if not ok and fail:
+                    fail(f"docker reported success but {name} does not resolve to the image "
+                         f"just pulled")
             out.append((ref, ok))
         except Exception:
             out.append((ref, False))

@@ -8,7 +8,7 @@ injected provider (offline DemoDisk here; a GDB-backed reader on the Mac later).
 """
 from __future__ import annotations
 
-from PySide6.QtCore import QRectF, Qt
+from PySide6.QtCore import QRectF, Qt, Signal
 from PySide6.QtGui import QColor, QFont, QPainter, QPen
 from PySide6.QtWidgets import (
     QDialog, QFrame, QGridLayout, QHBoxLayout, QHeaderView, QLabel, QPushButton, QTableWidget,
@@ -16,6 +16,8 @@ from PySide6.QtWidgets import (
 )
 
 from ..domain.xv6_fs import DemoDisk
+from .live_poll import LivePollMixin
+from .no_data import ABSENT, paint_placeholder, panel_state, placeholder_for
 from .theme import ThemeManager, icons
 from .theme.manager import scale_css as _scss
 
@@ -80,10 +82,12 @@ class CacheGrid(QWidget):
         self._bufs: list = []
         self._prev: dict = {}                 # index -> blockno, to spot a recycle
         self._flash: dict = {}                # index -> monotonic time of the last eviction
+        self._note = ""                       # why there is nothing to draw, when there isn't
         self.setMinimumHeight(96)
 
-    def set_bufs(self, bufs) -> None:
+    def set_bufs(self, bufs, note: str = "") -> None:
         import time
+        self._note = note
         now = time.monotonic()
         for b in bufs:                        # a slot whose block changed was just recycled
             was = self._prev.get(b.index)
@@ -100,9 +104,8 @@ class CacheGrid(QWidget):
         t = self.theme.theme
         p.fillRect(self.rect(), QColor(t.panel))
         if not self._bufs:
-            p.setPen(QColor(t.faint))
-            p.drawText(self.rect(), Qt.AlignCenter,
-                       "buffer cache not reported by this kernel — rebuild the xv6 image")
+            paint_placeholder(p, self.rect(), t, self._note or placeholder_for(
+                ABSENT, "buffer cache"))
             return
         now = time.monotonic()
         n = len(self._bufs)
@@ -147,9 +150,11 @@ class BlockMap(QWidget):
         self.theme = theme
         self._used: list = []
         self._last = 0
+        self._note = ""                       # why there is nothing to draw, when there isn't
         self.setMinimumHeight(70)
 
-    def set_map(self, used, last_alloc=0) -> None:
+    def set_map(self, used, last_alloc=0, note: str = "") -> None:
+        self._note = note
         self._used = list(used or [])
         self._last = int(last_alloc or 0)
         self.update()
@@ -160,9 +165,8 @@ class BlockMap(QWidget):
         p.fillRect(self.rect(), QColor(t.panel))
         n = len(self._used)
         if not n:
-            p.setPen(QColor(t.faint))
-            p.drawText(self.rect(), Qt.AlignCenter,
-                       "block map not reported by this kernel — rebuild the xv6 image")
+            paint_placeholder(p, self.rect(), t, self._note or placeholder_for(
+                ABSENT, "block map"))
             return
         cols = max(1, self.width() // 9)
         rows = max(1, min(6, (n + cols - 1) // cols))
@@ -186,12 +190,23 @@ class BlockMap(QWidget):
                 p.drawRect(QRectF(x, y, cw - 1, ch - 1))
 
 
-class StorageLab(QDialog):
-    def __init__(self, parent, theme: ThemeManager, device=None, provider=None) -> None:
+#: One dump a round (/fs), but it is the largest of them — so a slower cadence than the Memory
+#: face despite doing less work. A constant so a term of use can tune it from one place.
+STORAGE_POLL_MS = 2000
+
+
+class StorageLab(LivePollMixin, QDialog):
+    #: Carries (payload, ok) from the poll worker to the GUI thread. See live_poll.
+    snap_ready = Signal(object)
+
+    def __init__(self, parent, theme: ThemeManager, device=None, provider=None,
+                 state=None) -> None:
         super().__init__(parent)
         self.theme = theme
         self.device = device
         self.provider = provider or DemoDisk()
+        self.state = state                    # MachineState: one cache, one lock, every reader
+        self._live = not hasattr(self.provider, "simulate_write")   # can't fake a txn on a real fs
 
         t = theme.theme
         self.setWindowTitle(f"File System Lab — {getattr(device, 'name', 'xv6')}")
@@ -229,7 +244,31 @@ class StorageLab(QDialog):
         grid.addWidget(self._build_log_panel(), 1, 1)
         grid.setColumnStretch(0, 1); grid.setColumnStretch(1, 1)
 
-        self._render(self.provider.snapshot())
+        self._render(self._snapshot())
+        self._init_poll(STORAGE_POLL_MS, live=self._live)
+
+    # -- the poll --------------------------------------------------------- #
+    def _snapshot(self):
+        """One read of the FS face, through MachineState when there is one."""
+        if self.state is not None:
+            return self.state.refresh_fs()
+        return self.provider.snapshot()
+
+    def _read(self):
+        """OFF the GUI thread. One dump — /fs carries the superblock, log, bcache and block map."""
+        return self._snapshot()
+
+    def _render_live(self, snap, fresh: bool) -> None:
+        if snap is None:
+            self._chip.setText("no reading yet")
+            return
+        self._render(snap)
+        self._chip.setText(self.poll_caption() + ("" if fresh else "  ·  stale"))
+
+    def _on_pause(self, on: bool) -> None:
+        self.set_paused(on)
+        self._pause.setText("Resume" if on else "Pause")
+        self._chip.setText(self.poll_caption())
 
     # -- header/panels ---------------------------------------------------- #
     def _build_header(self, root) -> None:
@@ -239,6 +278,16 @@ class StorageLab(QDialog):
         title = QLabel(f"  File System Lab — {getattr(self.device, 'name', 'xv6')}")
         title.setStyleSheet(_scss(f"color:{t.text};font-size:16px;font-weight:600;"))
         head.addWidget(ic); head.addWidget(title); head.addStretch(1)
+        self._chip = QLabel("live")
+        self._chip.setStyleSheet(_scss(f"color:{t.accent_for('green')};font-size:11px;"))
+        self._pause = QPushButton("Pause"); self._pause.setCheckable(True)
+        self._pause.setStyleSheet(
+            f"QPushButton{{color:{t.text};background:{t.panel};border:1px solid {t.line};"
+            f"border-radius:8px;padding:4px 10px;}}QPushButton:hover{{border-color:{t.accent};}}")
+        self._pause.toggled.connect(self._on_pause)
+        for w in (self._chip, self._pause):
+            w.setVisible(self._live)
+            head.addWidget(w)
         root.addLayout(head)
         hint = QLabel("The on-disk regions, the inodes and the tree they build, the buffer "
                       "cache, and the write-ahead log that makes writes crash-safe.")
@@ -289,13 +338,14 @@ class StorageLab(QDialog):
         self._log_body = QLabel(); self._log_body.setWordWrap(True); self._log_body.setAlignment(Qt.AlignTop)
         self._log_body.setStyleSheet(_scss(f"color:{t.text};font-family:monospace;font-size:12px;border:none;"))
         v.addWidget(self._log_body, 1)
-        live = not hasattr(self.provider, "simulate_write")   # live reader can't fake a txn
-        btn = QPushButton("  Refresh" if live else "  Simulate write")
+        live = self._live
+        btn = QPushButton("  Refresh now" if live else "  Simulate write")
         btn.setToolTip("Re-read the live file-system state (launch `writer` from the scheduler "
                        "window to make real log transactions)" if live else
                        "Advance a simulated write-ahead-log transaction")
         btn.setIcon(icons.icon("save", t.accent_for("green"), 14))
-        btn.clicked.connect(self._on_write)
+        # Live: kick the poll, which reads off the GUI thread rather than inline.
+        btn.clicked.connect((lambda: self._tick()) if live else self._on_write)
         btn.setStyleSheet(
             f"QPushButton{{color:{t.text};background:{t.panel};border:1px solid {t.line};"
             f"border-radius:8px;padding:6px 12px;}}QPushButton:hover{{border-color:{t.accent};}}")
@@ -305,7 +355,7 @@ class StorageLab(QDialog):
     # -- actions ---------------------------------------------------------- #
     def _on_write(self) -> None:
         fn = getattr(self.provider, "simulate_write", None)
-        self._render(fn() if callable(fn) else self.provider.snapshot())
+        self._render(fn() if callable(fn) else self._snapshot())
 
     def _render(self, snap) -> None:
         t = self.theme.theme
@@ -327,7 +377,8 @@ class StorageLab(QDialog):
             for c, val in enumerate(["", str(d.inum), name]):
                 self._tree_tbl.setItem(r, c, QTableWidgetItem(val))
         # S4: block allocator map + locality score
-        self._block_map.set_map(getattr(snap, "block_used", []), getattr(snap, "last_alloc", 0))
+        self._block_map.set_map(getattr(snap, "block_used", []), getattr(snap, "last_alloc", 0),
+                                placeholder_for(panel_state(snap, "blockmap"), "block map"))
         allocs, gap = getattr(snap, "allocs", 0), getattr(snap, "mean_gap", 0)
         if allocs:
             self._alloc_lbl.setText(
@@ -336,7 +387,10 @@ class StorageLab(QDialog):
         else:
             self._alloc_lbl.setText("no allocations yet — run `writer` to grow a file")
         # buffer cache — the grid shows the policy at work, the table the exact state
-        self._cache_grid.set_bufs(snap.bufs)
+        # A container that is not answering is not a kernel too old to report — the two get
+        # different sentences, so nobody rebuilds an image to fix a stopped machine.
+        self._cache_grid.set_bufs(snap.bufs,
+                                  placeholder_for(panel_state(snap, "bcache"), "buffer cache"))
         self._buf_tbl.setRowCount(len(snap.bufs))
         for r, b in enumerate(snap.bufs):
             for c, val in enumerate([str(b.blockno), str(b.refcnt),

@@ -29,10 +29,24 @@ def home(tmp_path, monkeypatch):
 
 class _Ran:
     returncode = 0
+    stdout = ""
+    stderr = ""
 
 
-def _docker_ok(*a, **k):
-    return _Ran()
+def _docker_ok(cmd=(), *a, **k):
+    """A docker where everything works AND every name resolves to the image it should.
+
+    It has to answer `image inspect --format {{.Id}}` with real ids now, not just an exit code:
+    the checks compare a version's own reference against the plain name the runtime resolves, so a
+    fake that reports "present" without an identity would pass a test the product cannot. One id
+    for everything is the honest shape of "this machine is current".
+    """
+    import subprocess as sp
+    cmd = list(cmd)
+    if cmd[:3] == ["docker", "image", "inspect"]:
+        names = cmd[5:] if cmd[3:5] == ["--format", "{{.Id}}"] else cmd[3:]
+        return sp.CompletedProcess(cmd, 0, "\n".join(["sha256:ok"] * len(names)) + "\n", "")
+    return sp.CompletedProcess(cmd, 0, "", "")
 
 
 @pytest.fixture
@@ -217,15 +231,27 @@ def test_a_pull_records_only_what_actually_arrived(monkeypatch, with_docker):
     monkeypatch.setattr(images, "find_backend", lambda hint=None: None)
     refs = images.image_refs("6.1.0")
 
-    def half(cmd, **k):
-        # Two calls per image now — `docker pull <ref>`, then `docker tag <ref> <name>:latest`, so
-        # the pulled image carries the name the runtime resolves. Both must succeed for the image
-        # to count, so key off the REF in either shape rather than the last argument.
-        target = cmd[2] if cmd[1] == "tag" else cmd[-1]
+    # Three steps per image now — pull, tag, then CONFIRM the name really resolves to the pulled
+    # image. The confirmation exists because two exit codes of 0 were once the whole of the
+    # evidence, and a machine recorded four successful pulls with none of the images on disk.
+    store: dict = {}
 
-        class R:
-            returncode = 0 if target == refs[0] else 1
-        return R()
+    def half(cmd, **k):
+        import subprocess as sp
+        if cmd[:2] == ["docker", "pull"]:
+            if cmd[2] != refs[0]:
+                return sp.CompletedProcess(cmd, 1, "", "not published")
+            store[cmd[2]] = "sha256:one"
+            return sp.CompletedProcess(cmd, 0, "", "")
+        if cmd[:2] == ["docker", "tag"]:
+            store[cmd[3]] = store.get(cmd[2], "")
+            return sp.CompletedProcess(cmd, 0, "", "")
+        if cmd[:3] == ["docker", "image", "inspect"]:
+            names = cmd[5:] if cmd[3:5] == ["--format", "{{.Id}}"] else cmd[3:]
+            if any(n not in store for n in names):
+                return sp.CompletedProcess(cmd, 1, "", "No such image")
+            return sp.CompletedProcess(cmd, 0, "\n".join(store[n] for n in names), "")
+        return sp.CompletedProcess(cmd, 0, "", "")
 
     r = B.execute(B.plan("6.1.0", run=_docker_ok), run=half)
     assert not r["ok"]
@@ -240,19 +266,26 @@ def test_a_clean_pull_says_so_plainly(monkeypatch, with_docker):
     assert marker.read_marker()["version"] == "6.1.0"
 
 
-def test_a_total_failure_names_the_architecture_as_a_likely_cause(monkeypatch, with_docker):
-    """The most probable reason a pull finds nothing is that this arch was never published — say
-    it, rather than leaving someone to guess at a registry error."""
+def test_a_total_failure_does_not_guess_at_the_architecture(monkeypatch, with_docker):
+    """This used to end "If this version was never published for arm64, that is the likely
+    reason." It was a guess dressed as a diagnosis, and a student on an M3 met it on three
+    versions in a row while arm64 was published and pulling fine elsewhere — so the only message
+    they had pointed away from their actual problem.
+
+    The guess is also redundant: an image genuinely missing for an architecture makes docker say
+    "no matching manifest for linux/arm64", which is quoted like any other reason. What is left
+    when docker says nothing at all is the command whose output IS the answer."""
     monkeypatch.setattr(images, "find_backend", lambda hint=None: None)
     monkeypatch.setattr(B.platform, "machine", lambda: "arm64")
 
     def nope(*a, **k):
-        class R:
-            returncode = 1
-        return R()
+        import subprocess as sp
+        return sp.CompletedProcess(a[0] if a else [], 1, "", "")
 
     r = B.execute(B.plan("6.1.0", run=_docker_ok), run=nope)
-    assert not r["ok"] and "arm64" in r["message"]
+    assert not r["ok"]
+    assert "never published" not in r["message"]
+    assert "docker pull" in r["message"], "say what to run when there is no reason to quote"
     assert "keep building and reading topologies" in r["message"]
 
 
@@ -383,3 +416,197 @@ def test_release_refuses_a_dirty_tree_and_a_reused_version():
     assert "git status --porcelain" in sh          # dirty tree
     assert "already exists" in sh                  # tag reuse
     assert "pytest" in sh                          # tests before tagging
+
+
+# --------------------------------------------------------------------------- #
+# progress during a download
+# --------------------------------------------------------------------------- #
+# The panel's bar was indeterminate, on the reasoning that "docker gives us no usable percentage".
+# Half right. `docker pull` into a PIPE emits no byte counts at all — the "Downloading [===>  ]
+# 12MB/50MB" redraws are a TTY affectation, and a 20 MB image with seven layers produced none of
+# them — but it announces every layer and reports each one finishing, which is a real count.
+#
+# The other half of the complaint was that the image name "sometimes gets buried": it was going to
+# the console, under everything else a launch prints. It goes next to the bar now.
+REAL_PULL = """alpine: Pulling from library/nginx
+9c1b6dd6c1e6: Pulling fs layer
+2c2b3e5e0b7a: Pulling fs layer
+4f4fb700ef54: Already exists
+9c1b6dd6c1e6: Verifying Checksum
+9c1b6dd6c1e6: Download complete
+9c1b6dd6c1e6: Pull complete
+2c2b3e5e0b7a: Waiting
+2c2b3e5e0b7a: Pull complete
+Digest: sha256:deadbeef
+Status: Downloaded newer image for nginx:alpine
+docker.io/library/nginx:alpine"""
+
+
+def test_layer_lines_are_read_as_progress():
+    """Against output captured from a real non-TTY `docker pull`, not an invented shape."""
+    from gini.setup.images import PullProgress
+    p = PullProgress()
+    moved = [(p.done, p.total) for line in REAL_PULL.splitlines() if p.feed(line)]
+    assert moved, "nothing in a real pull was recognised as progress"
+    assert (p.done, p.total) == (3, 3)
+    assert p.fraction == 1.0, "a finished pull must read as finished"
+
+
+def test_a_shared_layer_counts_on_both_sides():
+    """"Already exists" is a layer this machine has from another image. Counting it only in the
+    denominator would leave a mostly-cached pull stuck short of the end for ever."""
+    from gini.setup.images import PullProgress
+    p = PullProgress()
+    for line in ("aaaaaaaaaaaa: Already exists", "bbbbbbbbbbbb: Pulling fs layer"):
+        p.feed(line)
+    assert (p.done, p.total) == (1, 2)
+
+
+def test_noise_is_not_progress():
+    from gini.setup.images import PullProgress
+    p = PullProgress()
+    for line in ("Digest: sha256:deadbeef", "Status: Image is up to date for x", "", "   ",
+                 "docker.io/library/nginx:alpine", "6.5.2: Pulling from gini-toolkit/gini-xv6"):
+        assert p.feed(line) is False
+    assert p.total == 0 and p.fraction == 0.0
+
+
+def test_the_fraction_never_exceeds_one():
+    """Docker can report a layer complete more than once. A bar past its own end looks broken."""
+    from gini.setup.images import PullProgress
+    p = PullProgress()
+    p.feed("aaaaaaaaaaaa: Pulling fs layer")
+    p.feed("aaaaaaaaaaaa: Pull complete")
+    p.feed("aaaaaaaaaaaa: Pull complete")
+    assert p.fraction == 1.0
+
+
+def test_progress_runs_across_the_whole_job_not_each_image(monkeypatch, tmp_path):
+    """Four images are ONE download to the person watching. A bar that restarted at each of them
+    would look like four downloads, and would reach 100% three times before finishing."""
+    import gini.services.bootstrap as B
+    seen = []
+
+    def fake_pull(refs, run=None, on_progress=None, on_error=None):
+        if on_progress:
+            on_progress(1, 2)                       # half of this image
+            on_progress(2, 2)
+        return [(refs[0], True)]
+
+    monkeypatch.setattr(B.images, "pull_images", fake_pull)
+    monkeypatch.setattr(B.marker, "write_marker", lambda *_a, **_k: None)
+    plan = {"state": B.PULL, "refs": ["r/a:1", "r/b:1"], "app_version": "1", "image_tag": "1",
+            "arch": "arm64"}
+    B.execute(plan, on_progress=lambda f, t: seen.append(round(f, 3)))
+    assert seen == [0.25, 0.5, 0.75, 1.0], f"the bar jumped: {seen}"
+
+
+def test_the_caption_names_the_image_being_downloaded(monkeypatch):
+    """The half of the complaint the bar alone does not answer."""
+    import gini.services.bootstrap as B
+    captions = []
+    monkeypatch.setattr(B.images, "pull_images",
+                        lambda refs, run=None, on_progress=None, on_error=None:
+                        (on_progress and on_progress(1, 4), [(refs[0], True)])[1])
+    monkeypatch.setattr(B.marker, "write_marker", lambda *_a, **_k: None)
+    B.execute({"state": B.PULL, "refs": ["ghcr.io/x/gini-xv6:6.5.2"], "app_version": "1"},
+              on_progress=lambda f, t: captions.append(t))
+    assert any("gini-xv6:6.5.2" in c for c in captions)
+    assert any("layer 1 of 4" in c for c in captions)
+
+
+def test_no_progress_callback_keeps_the_waited_pull(monkeypatch):
+    """Every existing test of this path drives a fake `run` that never spawns anything. Passing a
+    progress callback is what switches `pull_one` to streaming, so omitting it must not."""
+    import gini.services.bootstrap as B
+    got = {}
+    monkeypatch.setattr(B.images, "pull_images",
+                        lambda refs, run=None, on_progress=None, on_error=None:
+                        (got.setdefault("cb", on_progress), [(refs[0], True)])[1])
+    monkeypatch.setattr(B.marker, "write_marker", lambda *_a, **_k: None)
+    B.execute({"state": B.PULL, "refs": ["r/a:1"], "app_version": "1"})
+    assert got["cb"] is None
+
+
+def test_the_setup_message_quotes_docker_rather_than_guessing(monkeypatch, with_docker):
+    """It used to end with "If this version was never published for arm64, that is the likely
+    reason" — a guess, presented as the likely cause, that sent a student looking at the registry
+    while the actual fault was on their own machine."""
+    import gini.services.bootstrap as B
+    monkeypatch.setattr(images, "find_backend", lambda hint=None: None)
+    monkeypatch.setattr(B.marker, "write_marker", lambda *_a, **_k: None)
+
+    def fails(refs, run=None, on_progress=None, on_error=None):
+        if on_error:
+            on_error(refs[0], "Error response from daemon: denied")
+        return [(refs[0], False)]
+
+    monkeypatch.setattr(B.images, "pull_images", fails)
+    r = B.execute({"state": B.PULL, "refs": ["r/gini-xv6:1"], "app_version": "1", "arch": "arm64"})
+    assert "denied" in r["message"]
+    assert "never published" not in r["message"]
+    assert r["reasons"]["r/gini-xv6:1"] == "Error response from daemon: denied"
+
+
+def test_a_failure_with_no_reason_says_what_to_run(monkeypatch, with_docker):
+    """Better than a guess: the command whose output IS the answer."""
+    import gini.services.bootstrap as B
+    monkeypatch.setattr(images, "find_backend", lambda hint=None: None)
+    monkeypatch.setattr(B.marker, "write_marker", lambda *_a, **_k: None)
+    monkeypatch.setattr(B.images, "pull_images",
+                        lambda refs, run=None, on_progress=None, on_error=None:
+                        [(refs[0], False)])
+    r = B.execute({"state": B.PULL, "refs": ["r/gini-xv6:1"], "app_version": "1", "arch": "arm64"})
+    assert "docker pull r/gini-xv6:1" in r["message"]
+
+
+# -- the Compose plugin: a working Docker that still cannot Run anything ------- #
+def _no_compose(cmd=(), *a, **k):
+    """A Docker that is installed, running, and has no `compose` subcommand.
+
+    Not a contrived case — it is what `apt install docker.io` gives you on Ubuntu, because the
+    plugin is a separate package. `docker ps` works, `docker info` works, preflight was happy,
+    and Run died on the CLI's own argument parser.
+    """
+    import subprocess as sp
+    cmd = list(cmd)
+    if cmd[:3] == ["docker", "compose", "version"]:
+        return sp.CompletedProcess(cmd, 125, "", "docker: 'compose' is not a docker command.")
+    return _docker_ok(cmd, *a, **k)
+
+
+def test_a_docker_without_compose_is_not_reported_as_ready():
+    """It used to be. `docker info` answers, so preflight said the machine was fine, and the
+    failure surfaced much later as:
+
+        Run failed: unknown flag: --build
+        Usage:  docker [OPTIONS] COMMAND [ARG...]
+
+    which names nothing a student could act on.
+    """
+    p = B.plan("6.8.1", run=_no_compose)
+    assert p["state"] == B.NEEDS_RUNTIME
+    assert p["runtime_state"] == "no_compose"
+
+
+def test_the_message_names_compose_and_not_a_stopped_engine():
+    """The engine IS running. Telling somebody to start it sends them to fix the wrong thing —
+    the same mistake that split "stopped" from "missing" in the first place."""
+    why = B.plan("6.8.1", run=_no_compose)["why"]
+    assert "compose" in why.lower()
+    assert "not running" not in why, why
+
+
+def test_a_complete_docker_is_still_ready():
+    """The other half — this must not become "nobody can ever Run"."""
+    assert B.plan("6.8.1", run=_docker_ok)["runtime_state"] == "ok"
+
+
+def test_compose_is_only_asked_about_when_the_daemon_answers():
+    """A machine with no Docker at all needs the INSTALL steps, not a note about a plugin."""
+    import subprocess as sp
+
+    def nothing(cmd=(), *a, **k):
+        return sp.CompletedProcess(list(cmd), 1, "", "Cannot connect to the Docker daemon")
+    p = B.plan("6.8.1", run=nothing)
+    assert p["runtime_state"] == "stopped" and p["state"] == B.NEEDS_RUNTIME

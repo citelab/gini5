@@ -84,3 +84,69 @@ def test_offer_returns_nothing_when_the_machine_is_ready():
     _app()
     assert offer(_plan(bootstrap.READY)) is None
     assert offer(None) is None
+
+
+# --------------------------------------------------------------------------- #
+# the bar actually moves
+# --------------------------------------------------------------------------- #
+def test_the_bar_is_determinate(qtbot):
+    """It was `setRange(0, 0)` — a barber's pole that says only "something is happening", for a
+    wait that can run to minutes."""
+    p = FirstRunDialog(_plan())
+    qtbot.addWidget(p)
+    assert p.bar.maximum() > 0
+
+
+def test_progress_moves_the_bar_and_names_the_image(qtbot):
+    """The complaint had two halves: no bar, and the image name buried in the console. Both are
+    answered in the same place, next to each other."""
+    p = FirstRunDialog(_plan())
+    qtbot.addWidget(p)
+    p._on_progress(0.5, "Downloading gini-xv6:6.5.2…   layer 3 of 7")
+    assert p.bar.value() == p.bar.maximum() // 2
+    assert "gini-xv6:6.5.2" in p.detail.text()
+
+
+def test_a_fraction_outside_the_range_cannot_break_the_bar(qtbot):
+    p = FirstRunDialog(_plan())
+    qtbot.addWidget(p)
+    for f in (-1.0, 0.0, 1.0, 2.5, float("inf")):
+        p._on_progress(f, "")
+        assert p.bar.minimum() <= p.bar.value() <= p.bar.maximum()
+
+
+def test_a_crash_in_setup_reports_itself_instead_of_hanging(qtbot, monkeypatch):
+    """The worst report is no report. This one used to leave the panel on "Starting…" for ever.
+
+    `_start` runs `bootstrap.execute` on a bare thread. An exception there killed the thread
+    silently — `finished_setup` never fired, so the panel kept the caption it had set a moment
+    earlier and offered no retry. A student would sit watching "Starting…" with no reason to
+    believe anything was wrong except that nothing ever happened.
+    """
+    dlg = FirstRunDialog(_plan()); qtbot.addWidget(dlg)
+
+    def boom(*a, **k):
+        raise OSError(28, "No space left on device")
+    monkeypatch.setattr(bootstrap, "execute", boom)
+
+    with qtbot.waitSignal(dlg.finished_setup, timeout=3000):
+        dlg.go.click()
+
+    assert "No space left on device" in dlg.detail.text(), "say what went wrong"
+    assert dlg.detail.text() != "Starting…"
+    assert dlg.go.isEnabled() and dlg.go.text() == "Try again", "and let them have another go"
+
+
+def test_a_missing_compose_plugin_gets_the_plugin_instructions(qtbot):
+    """Three causes need three answers: a stopped engine gets the START command, an absent Docker
+    the INSTALL steps, and a Docker whose Compose plugin is missing the plugin's own line. The
+    hint used to be a two-way choice, so this case silently got the full install instructions —
+    telling somebody to install Docker while they are looking at it running."""
+    plan = _plan(bootstrap.NEEDS_RUNTIME, runtime_state="no_compose",
+                 runtime_plan={"start": "sudo systemctl start docker",
+                               "manual": "Install Docker Engine for your distro",
+                               "compose": "sudo apt install docker-compose-plugin"})
+    dlg = FirstRunDialog(plan); qtbot.addWidget(dlg)
+    shown = " ".join(w.text() for w in dlg.findChildren(type(dlg.detail)))
+    assert "docker-compose-plugin" in shown
+    assert "Install Docker Engine" not in shown, "sent them to install Docker they already have"

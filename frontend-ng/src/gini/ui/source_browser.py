@@ -141,6 +141,13 @@ class SourceBrowser(QWidget):
     """Read-only kernel source with a jump list. Fetches off the GUI thread."""
 
     loaded = Signal(str, str)              # (rel path, text) — delivered on the GUI thread
+    #: The apps mode has its OWN pair of signals, deliberately, rather than reusing `loaded`.
+    #: `_on_loaded` repopulates the top pane with the file's FUNCTIONS, which is right when the
+    #: file list lives in the header combo (kernel mode) and wrong here, where the top pane IS the
+    #: app list — a shared path would wipe the list the student is choosing from. Scripts mode
+    #: sidesteps the same problem with its own `_open_script`; this is the async equivalent.
+    appsListed = Signal(list)              # ([app name, ...]) — the machine's own list
+    appLoaded = Signal(str, str)           # (rel path, text) — content only, list untouched
 
     def __init__(self, theme, fetch_fn=None, parent=None) -> None:
         super().__init__(parent)
@@ -198,6 +205,8 @@ class SourceBrowser(QWidget):
             theme.themeChanged.connect(self.refresh_theme)
         self._apply_theme()                          # colours live in ONE place, see below
         self.loaded.connect(self._on_loaded)
+        self.appsListed.connect(self._on_apps_listed)
+        self.appLoaded.connect(self._on_app_loaded)
 
     # -- theming ------------------------------------------------------------ #
     def _apply_theme(self) -> None:
@@ -287,6 +296,111 @@ class SourceBrowser(QWidget):
         self._view.setPlainText(text)
         self._view.moveCursor(QTextCursor.Start)
         self._sub.setText(f"{name}  ·  {line_count(text)} lines  ·  loads as /scripts/{name}")
+
+    # -- apps: the xv6 user programs -------------------------------------------------------- #
+    def show_apps(self, machine: str = "") -> None:
+        """Browse the xv6 USER PROGRAMS — spin, walker, alloc and the rest — read out of the
+        running container, exactly as the kernel source is.
+
+        Nothing is shipped in the wheel: `user/<name>.c` is fetched from the machine's own xv6
+        checkout through the agent's `/source`, which already serves any `.c` under the tree. So
+        what a student reads is the source of the app that machine actually runs, patcher edits
+        and all, and it cannot drift from the binary the way a bundled copy could.
+
+        WHICH apps is asked of the machine (`/programs`) rather than hardcoded here. That list is
+        the one the agent will actually accept a launch for, so the panel and the Machine Lab's
+        menu cannot disagree — and an app added to the source but not yet in the image is simply
+        absent, instead of being offered and then failing to open.
+
+        Layout follows scripts mode: the top pane is the app list, the bottom is the source.
+        """
+        self._mode = "apps"
+        self._block = ""
+        self._set_lua_highlight(False)
+        self._files.blockSignals(True)
+        self._files.clear()
+        self._files.setVisible(False)          # in this mode the top pane IS the file list
+        self._files.blockSignals(False)
+        self._title.setText(f"GINI Source  ·  {machine} apps" if machine else "GINI Source  ·  apps")
+        self._jump.blockSignals(True)
+        self._jump.clear()
+        self._jump.blockSignals(False)
+        agent = self.fetch_fn() if self.fetch_fn else None
+        if agent is None:
+            self._view.setPlainText("")
+            self._sub.setText("No running xv6 machine — start one to read the source of its apps.")
+            return
+        self._sub.setText("asking the machine which apps it has …")
+
+        def work():
+            # Blocking HTTP: off the GUI thread, like every other reader in this class.
+            try:
+                names = (agent.get_json("/programs") or {}).get("programs") or []
+            except Exception:                     # noqa: BLE001 - never take the app down
+                names = []
+            self.appsListed.emit(list(names))
+
+        run_off_gui(self, work)
+
+    def _on_apps_listed(self, names) -> None:
+        if self._mode != "apps":
+            return                # the student moved on while the machine was answering
+        rels = []
+        for n in sorted({str(n).strip() for n in (names or []) if str(n).strip()}):
+            rel = safe_rel(f"user/{n}.c")
+            if rel:
+                rels.append((n, rel))
+        self._jump.blockSignals(True)
+        self._jump.clear()
+        for name, rel in rels:
+            self._jump.addItem(_jump_item(name, "app", rel))
+        self._jump.blockSignals(False)
+        if not rels:
+            self._view.setPlainText("")
+            self._sub.setText("That machine reported no apps. If it is still booting, select it "
+                              "again in a moment.")
+            return
+        # Open the first WITHOUT going through the selection signal: setCurrentRow would fire
+        # _on_jump and fetch it a second time, and this one is a network round trip.
+        self._jump.blockSignals(True)
+        self._jump.setCurrentRow(0)
+        self._jump.blockSignals(False)
+        self._open_app(rels[0][1])
+
+    def _open_app(self, rel: str) -> None:
+        rel = safe_rel(rel)
+        if not rel:
+            self._sub.setText("That path is not inside the kernel tree.")
+            return
+        agent = self.fetch_fn() if self.fetch_fn else None
+        if agent is None:
+            self._sub.setText("No running xv6 machine — start one to read the source of its apps.")
+            self._view.setPlainText("")
+            return
+        self._sub.setText(f"loading {rel} …")
+
+        def work():
+            try:
+                text = agent.get_text(f"/source?file={rel}")
+            except Exception as e:                # noqa: BLE001 - never take the app down
+                text = f"// unreadable: {e}"
+            self.appLoaded.emit(rel, text)
+
+        run_off_gui(self, work)
+
+    def _on_app_loaded(self, rel: str, text: str) -> None:
+        """Content only. The top pane keeps the app list — see the signal declarations."""
+        if self._mode != "apps":
+            return                # a load that landed after the student left this mode
+        sf = parse_source(rel, text)
+        if not sf.ok:
+            self._view.setPlainText("")
+            self._sub.setText(sf.error or f"could not read {rel}")
+            return
+        self._view.setPlainText(sf.text)
+        self._view.moveCursor(QTextCursor.Start)
+        self._sub.setText(f"{rel}  ·  {sf.lines} lines  ·  {len(sf.entries)} function(s)  ·  "
+                          f"read from the running machine; launch it from the Machine Lab")
 
     def show_none(self, what: str = "") -> None:
         """Selected something with no source of its own. Clear, and say why: a stale pane
@@ -381,6 +495,10 @@ class SourceBrowser(QWidget):
         if kind == "path":
             if value:
                 self._open_script(str(value))
+            return
+        if kind == "app":                    # an xv6 user program, fetched from the container
+            if value:
+                self._open_app(str(value))
             return
         if kind != "line":                   # an item from some future mode: ignore, never crash
             return

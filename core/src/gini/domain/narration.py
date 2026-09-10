@@ -103,6 +103,29 @@ def describe(entry: Entry) -> str:
         if not out:
             return head + "   (no output)"
         return head + "".join(f"\n            {line}" for line in out)
+    if k == ev.LAB_OPEN:
+        return f"Opened the {d.get('face', '?')} face on {d.get('on', '?')}."
+    if k == ev.TUNE:
+        return (f"On {d.get('on', '?')}, changed {d.get('knob', '?')} from "
+                f"{d.get('from', '?')} to {d.get('to', '?')}.")
+    if k == ev.SPAWN:
+        verb = "Killed" if d.get("action") == "kill" else "Launched"
+        pid = f" (pid {d['pid']})" if d.get("pid") is not None else ""
+        return f"{verb} {d.get('what', '?')}{pid} on {d.get('on', '?')}."
+    if k == ev.BUILD:
+        what = "Reverted" if d.get("action") == "revert" else "Built"
+        src = d.get("sources") or {}
+        n = sum(int((m or {}).get("lines") or 0) for m in src.values())
+        size = f", {_count(n, 'line')}" if n else ""
+        head = (f"{what} the {d.get('shadow', '?')} shadow on {d.get('on', '?')}{size} — "
+                f"{'compiled' if d.get('ok') else 'FAILED'}.")
+        # The compiler's own words, indented under the attempt, the way COMMAND puts a command's
+        # output under it. A failed build is the interesting one and it must carry its reason.
+        return head + "".join(f"\n            {line}" for line in (d.get("log") or []))
+    if k == ev.OBSERVE:
+        # No verdict and no tick: this is a phenomenon that occurred, not a check that passed or
+        # failed, and dressing it as either would misrepresent it.
+        return f"GINI observed on {d.get('on', '?')}: {d.get('detail', '?')}"
     if k == ev.MEASURE:
         got = d.get("summary") or ", ".join(f"{a}={b}" for a, b in
                                             sorted(d.get("measurement", {}).items()))
@@ -116,6 +139,10 @@ def describe(entry: Entry) -> str:
     if k == ev.OBJECTIVE:
         return (f"Objective \"{d.get('say') or d.get('id')}\" went "
                 f"{d.get('from', '?')} → {d.get('to', '?')}.")
+    if k == ev.ANSWER:
+        # The question is quoted with it. A marker reading the transcript top to bottom should not
+        # have to hold three prompts in their head to know which one this replies to.
+        return f"Q: {d.get('prompt', '?')}\n            A: {d.get('text', '') or '(left blank)'}"
     if k == SUBMIT:
         art = d.get("artifact", {}) or {}
         met = sum(1 for r in d.get("objectives", []) if r.get("status") == "met")

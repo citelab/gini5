@@ -213,6 +213,14 @@ class MachineState:
     mode: str = "real"                            # "real" (live kernel) | "demo" (stand-in). A
     #                                               USER choice — never auto-switched (see set_mode)
     latest: Snapshot | None = None
+    # An honest one-line note from the last Step switch: set when a step caught no context
+    # switch (idle kernel), cleared by the next Run poll. The Lab shows it in the stack panel
+    # instead of presenting the idle scheduler stack as if it were a captured switch (issue #11).
+    last_step_note: str = ""
+    # The last GOOD reading of each face, cached here rather than in the widgets so every reader
+    # — the Memory face, the File System face, the OS HUD, the Ask GINI card — sees one value.
+    latest_vm: object = None
+    latest_fs: object = None
     timeline: SchedTimeline = field(default_factory=SchedTimeline)
     cpu_timelines: dict = field(default_factory=dict)   # cpu_index -> SchedTimeline (SMP)
     watcher: StateWatcher = field(default_factory=StateWatcher)
@@ -220,6 +228,11 @@ class MachineState:
     vm: object = None                             # virtual-memory reader (snapshot()->VmSnapshot)
     fs: object = None                             # file-system reader (snapshot()->FsSnapshot)
     on_event: object = None                       # callback(self) fired on new pedagogical events
+    # callback(self, events) fired with the SAME events, for the proof chain. Separate from
+    # `on_event` because that one only notifies — the Coach then calls `drain_events()`, which
+    # EMPTIES the queue. A recorder that also drained would race the Coach and each would get
+    # some of the events; this observes without consuming, as events are produced.
+    on_record: object = None
     _events: list = field(default_factory=list)
     _prev_card: dict = field(default_factory=dict)
     # The two data "planes" the mode toggles between: each is (provider, vm, fs). The injected
@@ -347,17 +360,68 @@ class MachineState:
         return int(getattr(self.provider, "timeslice", 1) or 1)
 
     def refresh(self) -> Snapshot | None:
+        self.last_step_note = ""                   # a Run poll supersedes the last Step's note
         if self.provider is None:                 # Real mode with no running kernel -> no data
             return None
         with self._lock:                          # see _lock: readers must not overlap
             self._ingest(self.provider.snapshot())
             return self.latest
 
+    def refresh_vm(self):
+        """Re-read the virtual-memory face under the same lock, and cache the result.
+
+        Two reasons this exists rather than the faces calling `self.vm.snapshot()` themselves.
+
+        ONE READER AT A TIME. The vm and fs readers used to bypass `_lock` entirely, which was
+        harmless while nothing polled them — but once a face polls, its worker and the scheduler's
+        can be inside the provider together, and a slower older read can land after a newer one.
+        That is the same defect `_lock` was added for, and the same fix.
+
+        KEEP THE LAST GOOD ONE. `_ingest` already refuses an empty process list, on the grounds
+        that init and sh always exist so an empty read means the read FAILED. The same is true
+        here and there was nothing enforcing it: with polling, one timed-out `/vm` would flip the
+        face to "the container is not answering" and back again a second later. A face that
+        flickers between real data and an error is worse than one that holds still.
+        """
+        if self.vm is None:
+            return self.latest_vm
+        with self._lock:
+            try:
+                snap = self.vm.snapshot()
+            except Exception:                     # noqa: BLE001 — a failed read is not a crash
+                return self.latest_vm
+            if snap is not None and getattr(snap, "ok", True):
+                self.latest_vm = snap
+                return snap
+            # Nothing good yet? Then the failure IS the news, and the face should say so.
+            return self.latest_vm if self.latest_vm is not None else snap
+
+    def refresh_fs(self):
+        """The file-system face's half of refresh_vm. Same lock, same keep-last-good rule."""
+        if self.fs is None:
+            return self.latest_fs
+        with self._lock:
+            try:
+                snap = self.fs.snapshot()
+            except Exception:                     # noqa: BLE001
+                return self.latest_fs
+            if snap is not None and getattr(snap, "ok", True):
+                self.latest_fs = snap
+                return snap
+            return self.latest_fs if self.latest_fs is not None else snap
+
     def step(self) -> Snapshot | None:
         if self.provider is None:
             return None
         with self._lock:
-            self._ingest(self.provider.step())
+            snap = self.provider.step()
+            # A step that caught no switch reports switched=False (see Xv6Bridge.step). Say so
+            # honestly rather than let _ingest silently keep the last frame on the empty read.
+            self.last_step_note = ("" if getattr(snap, "switched", None) is not False else
+                                   "No context switch happened while Step was waiting — the "
+                                   "kernel was idle (init and sh asleep). Launch a program "
+                                   "(spin, walker) to make the scheduler switch.")
+            self._ingest(snap)
             return self.latest
 
     def _ingest(self, snap: Snapshot | None) -> None:
@@ -381,6 +445,13 @@ class MachineState:
         if not events:
             return
         self._events.extend(events)
+        # FIRST, and never allowed to raise: the chain is a bystander here and a watcher that
+        # broke the poll loop would take the Lab's live updates down with it.
+        if self.on_record:
+            try:
+                self.on_record(self, list(events))
+            except Exception:                     # noqa: BLE001
+                pass
         if self.on_event and any(e.kind != "control" for e in events):
             try:
                 self.on_event(self)

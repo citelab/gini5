@@ -26,7 +26,9 @@ from ..domain.xv6_fs import (
     FsSnapshot, Superblock, layout, parse_balloc, parse_bcache, parse_logheader,
     parse_superblock,
 )
-from ..domain.xv6_vm import VmSnapshot, parse_faults, parse_vmall, parse_vmprint
+from ..domain.xv6_vm import (
+    VmSnapshot, parse_faults, parse_vmall, parse_vmprint, regions_from_leaves,
+)
 
 # must match gini_pick() in gini_patch.py: 0=round-robin 1=priority 2=lottery. Custom student
 # policies (MLFQ, stride, …) get their own ids when added via the Scheduler Builder.
@@ -81,13 +83,38 @@ class _VmReader:
         self.agent = agent
 
     def snapshot(self):
-        # REAL only: return the live page table, or an explicit no-data VmSnapshot. Never fake.
-        # The region map + physical-allocator bar aren't dumped for real yet, so they're left
-        # empty (not in `have`) rather than borrowed from the demo.
+        """REAL only: the live page table, or an explicit no-data VmSnapshot. Never fake.
+
+        `have` is COMPUTED FROM WHAT PARSED, the same way `_FsReader` does it. It used to be the
+        literal `("pagetable",)`, which was a claim rather than an observation — and a false one:
+        the `KA` line in this very dump carries the physical allocator's free/total counts, they
+        were parsed, and they reached the snapshot. That one hardcoded tuple then told the face
+        they had not, so the fragmentation gauge (which reads the numbers directly) drew real
+        memory next to a physical bar reading "0 used / 0 free of 0 pages".
+        """
         try:
             vm = parse_vmprint(self.agent.get_text("/vm"))
             if vm.leaves:                               # got real mappings
-                vm.source, vm.ok, vm.have = "real", True, ("pagetable",)
+                have, derived = ["pagetable"], []
+                if vm.phys.total_pages:                 # the KA line was present
+                    have += ["phys", "frag"]
+                if vm.vmf_handled or vm.vmf_fell:
+                    have.append("vmfault")
+                # #4 (B3 Option 2): if the kernel reported the break (the VR line), the heap
+                # extent rests on p->sz rather than the last mapped page — so the map is REPORTED,
+                # not derived, and the panel drops the "(derived)" tag. Older kernels send no VR
+                # line: region_sz is 0, the map is worked out from the leaves, and it stays derived.
+                regions = regions_from_leaves(vm.leaves, vm.region_sz)
+                if regions:
+                    vm.regions = regions
+                    have.append("regions")
+                    if not vm.regions_reported:
+                        # Worked out from the leaves, not dumped by the kernel — declared in BOTH
+                        # tuples so the panel says "(derived)". Hiding the distinction would be a
+                        # poor trade for one word of chrome in a course about address spaces.
+                        derived.append("regions")
+                vm.source, vm.ok = "real", True
+                vm.have, vm.derived = tuple(have), tuple(derived)
                 return vm
         except Exception:
             pass
@@ -196,9 +223,34 @@ class Xv6Bridge:
                         cpu=self._last_cpu, stack=self._last_stack)
 
     def step(self) -> Snapshot:
-        self.agent.post("/step")
+        # One round trip: the agent halts at swtch, reads the detail while still halted, and
+        # returns it (see known issue #11). The quantum hint lets the agent size its timeout to
+        # the slice the student chose. `self.timeslice` is the SET quantum; `kernel_quantum` is
+        # what the kernel actually reported — prefer the latter when we have it.
+        qt = self.kernel_quantum or self.timeslice or 1
+        raw = self.agent.post(f"/step?quantum={int(qt)}")
         self._seq += 1
-        return self._detail_snapshot()              # halted at swtch -> full frozen detail
+        try:
+            d = json.loads(raw) if isinstance(raw, str) else (raw or {})
+        except (ValueError, TypeError):
+            d = {}
+        # Skew-safety: an OLDER image's /step returns {"out": ...} with no snapshot fields. Fall
+        # back to the two-session read so a new gBuilder still works (buggy as before, not broken)
+        # against an old image. A current image sends "switched" + the detail.
+        if "switched" not in d and "registers" not in d:
+            return self._detail_snapshot()          # old agent -> old behaviour
+        if not d.get("switched", True):
+            # No context switch happened in the window (idle kernel, or the slice was too long
+            # to catch one). Keep the last known registers/stack and flag it, so the UI reports
+            # the truth instead of showing the idle scheduler stack as a captured switch.
+            return Snapshot(procs=[], ticks=self._seq, cpu=self._last_cpu,
+                            stack=self._last_stack, source="real", switched=False)
+        self._last_cpu = parse_registers(d.get("registers", ""))
+        self._last_stack = parse_backtrace(d.get("bt", ""))
+        procs = parse_procdump(d.get("procs", ""))
+        return Snapshot(procs=procs, running_pid=running_pid(procs), ticks=self._seq,
+                        cpu=self._last_cpu, stack=self._last_stack, source="real",
+                        switched=True)             # halted at swtch -> full frozen detail
 
     def set_timeslice(self, ticks: int) -> None:
         self.timeslice = int(ticks)
@@ -309,19 +361,27 @@ class Xv6Bridge:
         """Raw gini_trapdump text (TC per-kind counters + TR trap ring) for the Traps face."""
         return self.agent.get_text("/traps")
 
-    def catch_trap(self, kind: str = "any"):
-        """Freeze the next live user trap (gdb /trapcatch) and parse it into a TrapFrame — the
-        real scause/sepc/stval + saved user registers that seed the CPU journey. `kind` conditions
-        the breakpoint (pagefault/syscall/timer/illegal/device). Returns a not-ok TrapFrame on
-        timeout/idle, so the journey falls back to its authored captions."""
+    def catch_trap(self, kind: str = "any", wait: float | None = None):
+        """Arm the kernel-side one-shot capture and parse the caught trap into a TrapFrame — the
+        real scause/sepc/stval + (for a user-mode trap) the saved user registers that seed the CPU
+        journey. `kind` is any/syscall/pagefault/timer/device/illegal; `wait` overrides the agent's
+        default catch window. On timeout the agent returns `{ok:false, error}`; that reason is kept
+        on the frame AND on `last_catch_error` (like `last_run_error`), so the lab can say WHY a
+        catch found nothing instead of silently opening an authored journey."""
         from ..domain.xv6 import parse_trapframe
-        raw = self.agent.post(f"/trapcatch?kind={kind}")
-        txt = ""
+        self.last_catch_error = ""
+        path = f"/trapcatch?kind={kind}" + (f"&wait={float(wait)}" if wait else "")
+        raw = self.agent.post(path)
         try:
-            txt = json.loads(raw).get("out", "")
+            reply = json.loads(raw)
         except Exception:
-            txt = raw or ""
-        return parse_trapframe(txt)
+            reply = {"out": raw or ""}
+        if reply.get("ok") is False:
+            self.last_catch_error = str(reply.get("error") or "the catch found nothing")
+            fr = parse_trapframe("")            # ok=False
+            fr.error = self.last_catch_error
+            return fr
+        return parse_trapframe(reply.get("out", ""))
 
     def alarms(self) -> str:
         """Raw gini_dump text (contains the per-proc `ALARM …` lines) for the sigalarm-lab strip."""

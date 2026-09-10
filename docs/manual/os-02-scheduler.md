@@ -42,8 +42,48 @@ The quantum slider changes stripe width. Everything on this face except
 Step/Snapshot comes from the `/procs` dump at 500 ms.
 
 `SchedTimeline.add_run` records a slot when the pid changes *or* the tick
-advances, so at the ~0.5 s tick the strip is a faithful switch history, not a
-sampling artifact.
+advances, so two polls inside one kernel tick collapse to one slot: the x-axis
+is kernel ticks, not poll events, and polling *faster* than the tick cannot
+distort the strip. At the ~0.5 s tick and a 500 ms poll it is therefore a
+faithful switch history rather than a sampling artifact — **while Run is
+pressed.** Polling slower than the tick is a different matter; see below.
+
+### Run/Pause, and what keeps the strip moving
+
+`Run` and `Pause` are not what they sound like. They start and stop a `QTimer`
+and nothing else — the kernel is free-running either way, and `_on_poll`
+deliberately *reads* rather than steps ("on a live idle kernel, stepping waits
+for a context switch that never comes and would hang").
+
+What the button means depends on the data mode, which is a different control:
+
+| | Real | Demo |
+|---|---|---|
+| Run | pull `/procs` every 500 ms | `state.step()` — advances the stand-in |
+| Pause | **still pulling**, every 2000 ms | nothing runs |
+| honest name | fast poll / slow poll | run / pause |
+
+In Demo the label is exactly right: nothing else writes to the state, so Pause
+freezes the world. In Real it is wrong in both halves, and the strip keeps
+growing with the button reading "Run". That is not a fault — it is two other
+timers writing to the same shared `MachineState`, both gated on `live`:
+
+- the **hub's overview poll**, 2000 ms, started by `_show_overview()` and left
+  running deliberately so the scheduler can be open alongside Memory and CPU;
+- the **CPU & Registers face**, 1000 ms, if it is open.
+
+All three end in `state.refresh()` → `MachineState._ingest`, which is what
+appends to `timeline` and `cpu_timelines`.
+
+**The consequence worth knowing.** Paused, you sample about one kernel tick in
+four, and a process that only ran during an unobserved tick does not appear at
+all. Two processes alternating every tick can render as one holding the CPU.
+That illusion is a property of the *slow* poll, not the fast one — so read a
+Gantt with Run pressed, and treat a paused strip as a sketch.
+
+The naming is left alone on purpose: `Run`/`Pause` is accurate in Demo, which
+is where the control is first met, and in Real it still selects the sampling
+rate that decides whether the strip can be trusted.
 
 ## How it is bolted into xv6
 
@@ -113,9 +153,18 @@ register panel. See [os-wire-protocol](os-01-wire-protocol.md).
 - `wait_ticks` is the kernel's own aging counter and doubles as the starvation
   metric (`Xv6Runner.max_wait_slices`).
 - Step uses gdb (`tbreak swtch; continue`) and halts the kernel briefly; on an
-  idle kernel it times out harmlessly.
+  idle kernel it times out harmlessly. **It does not actually freeze what it
+  then shows** — the halt and the read are two gdb sessions and the first
+  detaches before the second attaches, so on a busy kernel the registers and
+  stack describe a later instant than the switch. See
+  [known issues #11](os-15-known-issues.md).
 - Lottery over a short window is indistinguishable from priority — length of
   evidence is part of the lesson (C17 in the course plan).
+- The Gantt's sample rate depends on which windows are open (500 ms with Run,
+  2000 ms paused, plus 1000 ms if the CPU face is up). Because the x-axis is
+  kernel ticks rather than wall time the strip stays honest about *order*, but
+  a slow poll drops ticks entirely — so two strips are only comparable if they
+  were watched the same way.
 
 ## Cross-references
 

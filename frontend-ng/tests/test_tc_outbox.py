@@ -30,6 +30,14 @@ if str(_TC) not in sys.path:
 from gini.domain import proof as P                            # noqa: E402
 from gini.services import outbox, tc_submit                   # noqa: E402
 
+
+def _rc(lab: str = "lab1", course: str = "comp535") -> str:
+    """The lab's release code. A student link will not vend without it — see
+    `test_tc_release_code.py`. Imported lazily because each fixture rebuilds the server module."""
+    from gini_teaching_center import server
+    return ((server._STORE.activity(f"{course}/{lab}") or {}).get("release_code") or "")
+
+
 HOUR = 3600.0
 
 
@@ -44,7 +52,7 @@ def test_summary_surfaces_what_was_recorded_but_never_shown(box):
     outbox.queue(a_proof("ABCD1234EFGH"), root=box, now=1000.0)
     outbox.queue(a_proof("MNPQ5678RSTU"), root=box, now=2000.0)
 
-    def refuse(url, code, proof, topo):
+    def refuse(url, code, proof, topo, shadows=None):     # mirrors tc_submit.submit
         return {"ok": False, "error": "the course server refused: code expired"}
 
     outbox.flush("http://x", refuse, root=box, now=3000.0)
@@ -250,7 +258,7 @@ def _real_work(url, tmp_path):
     """A real code and a real chain, as gBuilder would produce them."""
     from gini_teaching_center import activities as ACT
     from gini.domain.topology import Topology
-    code = _call(url, "/api/activity?course=comp535&lab=lab1")["code"]
+    code = _call(url, "/api/activity?course=comp535&lab=lab1&rc=" + _rc())["code"]
     t = Topology("lab")
     r1 = t.add_device("router")
     t.add_link(t.add_device("host").id, r1.id)

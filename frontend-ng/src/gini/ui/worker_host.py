@@ -221,4 +221,7 @@ def run_off_gui(owner: QObject, work, *args) -> None:
             box[0] = box[1] = None           # drop the closure, and the widget with it …
             reaper.released.emit(token)      # … and only then ask the GUI thread to let go
 
-    threading.Thread(target=guarded, daemon=True).start()
+    # Named after the owner, because `_no_leaked_threads` in conftest reports the thread NAME
+    # when something outlives its test — and "Thread-47" tells nobody which face to go and look at.
+    threading.Thread(target=guarded, daemon=True,
+                     name=f"{type(owner).__name__}-bg").start()

@@ -55,6 +55,10 @@ class FakeAgent:
             return json.dumps({"out": (
                 "===TRAP===\nscause 0x000000000000000f\nsepc 0x1080\nstval 0x4000\n"
                 "pid 5\na7 0x000000000000000f\n")})
+        if "/step" in url:
+            # A current agent freezes at swtch and returns the detail in ONE round trip.
+            return json.dumps({"switched": True, "registers": REGS, "bt": BT,
+                               "procs": PROCS, "ticks": "42"})
         return "{}"
 
 
@@ -150,8 +154,49 @@ def test_step_takes_full_detail_after_swtch():
     br.snapshot()
     fa.posts.clear()
     snap = br.step()
-    assert any(u.endswith("/step") for u in fa.posts)  # halted at a context switch
+    assert any("/step" in u for u in fa.posts)         # halted at a context switch
     assert snap.cpu.key("pc") == "0x80001d4a"          # fresh gdb detail at the switch
+    assert snap.switched is True                        # the read was frozen AT the swtch
+
+
+def test_step_reports_no_switch_when_kernel_idle():
+    # A current agent that caught no switch returns switched=False with no detail. The bridge
+    # keeps the last known registers/stack but flags the miss, so the UI can be honest (#11).
+    class Idle(FakeAgent):
+        def post(self, url):
+            self.posts.append(url)
+            if "/step" in url:
+                return json.dumps({"switched": False})
+            return "{}"
+    fa = Idle()
+    br = Xv6Bridge(AgentClient("http://x:5000", get=fa.get, post=fa.post), quantum=1)
+    br.snapshot()                                       # seed last registers
+    prev = br._last_cpu
+    snap = br.step()
+    assert snap.switched is False
+    assert snap.procs == []                             # empty -> MachineState keeps last frame
+    assert br._last_cpu is prev                         # registers not clobbered by the miss
+
+
+def test_step_passes_quantum_hint_and_scales():
+    br, fa = _bridge()
+    br.set_timeslice(10)
+    fa.posts.clear()
+    br.step()
+    assert any("/step?quantum=10" in u for u in fa.posts)   # the agent sizes its timeout to it
+
+
+def test_step_falls_back_for_old_image():
+    # Skew-safety: an OLD image's /step returns {"out": ...} with no snapshot fields. The bridge
+    # must still produce a frame (via the legacy /snapshot read) rather than blank the panel.
+    class Old(FakeAgent):
+        def post(self, url):
+            self.posts.append(url)
+            return json.dumps({"out": "tbreak swtch\n"})   # legacy shape, no detail
+    fa = Old()
+    br = Xv6Bridge(AgentClient("http://x:5000", get=fa.get, post=fa.post), quantum=1)
+    snap = br.step()
+    assert snap.cpu.key("pc") == "0x80001d4a"           # detail came from the fallback /snapshot
 
 
 def test_controls_post_to_agent():
@@ -159,7 +204,7 @@ def test_controls_post_to_agent():
     br.set_timeslice(10)
     br.step()
     assert any("/control?quantum=10" in u for u in fa.posts)
-    assert any(u.endswith("/step") for u in fa.posts)
+    assert any("/step" in u for u in fa.posts)
 
 
 def test_kernel_quantum_read_from_sched_line():
@@ -356,3 +401,79 @@ def test_console_since_streams_delta():
     br = Xv6Bridge(AgentClient("http://x:5000", get=get, post=lambda u: "{}"))
     text, nxt = br.console_since(10)
     assert text == "README cat\n" and nxt == 42
+
+
+# -- B2: `have` is an observation, not a claim --------------------------------- #
+# A full /vm dump: vm-shadow counters, the page-allocator line, then vmprint's leaves.
+FULL_VM = (
+    "VMF handled 3 fellthrough 412\n"
+    "KA free 32000 total 32768 maxrun 30000 shadow 1\n"
+    "page table 0x87f6e000\n"
+    " .. .. ..0: pte 0x1b pa 0x87001000\n"     # text
+    " .. .. ..1: pte 0x17 pa 0x87002000\n"     # data
+    " .. .. ..2: pte 0x07 pa 0x87003000\n"     # guard (U cleared by uvmclear)
+    " .. .. ..3: pte 0x17 pa 0x87004000\n"     # stack
+)
+
+
+class _OneText:
+    def __init__(self, text):
+        self.text = text
+
+    def get_text(self, _url):
+        return self.text
+
+
+def test_have_reflects_what_actually_parsed():
+    """It used to be the literal ("pagetable",) — a claim rather than an observation, and a false
+    one: the KA line in the same dump reached the snapshot while this tuple said it had not."""
+    from gini.runtime.xv6_bridge import _VmReader
+    full = _VmReader(_OneText(FULL_VM)).snapshot()
+    assert set(full.have) == {"pagetable", "phys", "frag", "vmfault", "regions"}
+    assert full.derived == ("regions",), "the region map is worked out, not reported"
+    assert full.phys.total_pages == 32768
+
+
+def test_vr_line_marks_regions_reported_not_derived():
+    # #4 (B3 Option 2): the same dump WITH the kernel's VR line -> the region map rests on the
+    # reported break, so "regions" is in `have` but NOT in `derived` (the panel drops "(derived)").
+    # Without the line (older kernel) the map is worked out from the leaves and stays derived.
+    from gini.runtime.xv6_bridge import _VmReader
+    with_vr = FULL_VM.replace("page table 0x87f6e000\n",
+                              "page table 0x87f6e000\nVR 0x87004000 0x3fffffe000 0x3ffffff000\n")
+    rep = _VmReader(_OneText(with_vr)).snapshot()
+    assert "regions" in rep.have and rep.derived == ()          # reported, not derived
+    der = _VmReader(_OneText(FULL_VM)).snapshot()
+    assert "regions" in der.have and der.derived == ("regions",)  # unchanged: still derived
+
+
+def test_a_kernel_without_the_allocator_line_does_not_claim_one():
+    from gini.runtime.xv6_bridge import _VmReader
+    no_ka = _VmReader(_OneText("\n".join(FULL_VM.splitlines()[2:]))).snapshot()
+    assert "phys" not in no_ka.have and "frag" not in no_ka.have
+    assert "pagetable" in no_ka.have and no_ka.ok
+
+
+def test_a_read_that_yields_nothing_claims_nothing():
+    from gini.runtime.xv6_bridge import _VmReader
+    dead = _VmReader(_OneText("")).snapshot()
+    assert dead.ok is False and dead.have == () and dead.source == "real"
+
+
+def test_catch_trap_carries_the_reason_on_a_failed_catch():
+    """The agent returns {ok:false, error} on a timeout. The reason is kept on the frame AND on
+    last_catch_error (like last_run_error), so the lab can say WHY nothing was caught instead of
+    silently opening an authored journey."""
+    from gini.runtime.xv6_bridge import AgentClient, Xv6Bridge
+    reason = "armed for timer; no matching trap in 10s — the machine may be idle"
+    br = Xv6Bridge(AgentClient("http://x", get=FakeAgent().get,
+                               post=lambda u: json.dumps({"ok": False, "error": reason})))
+    fr = br.catch_trap("timer")
+    assert fr.ok is False and fr.error == reason
+    assert br.last_catch_error == reason
+
+
+def test_catch_trap_passes_the_wait_through():
+    br, fa = _bridge()
+    br.catch_trap("timer", wait=20)
+    assert "kind=timer" in fa.posts[-1] and "wait=20" in fa.posts[-1]

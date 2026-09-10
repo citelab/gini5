@@ -640,3 +640,125 @@ def test_commands_are_counted_in_the_operation_summary(rec):
     rec.note_command("M1", "ping -c 1 M2", ["1 packets received"])
     text = N.narrate(rec._chain.entries)
     assert "command(s) run" in text and "1 command(s) run" in text
+
+
+# ============================================================================ #
+# The OS labs
+#
+# A networking student's work IS the topology, and the chain has always carried it. An OS
+# student's work happens inside the Machine Lab, and until these events it left NO trace: a
+# submission narrated as "placed a Machine, ran, opened a console, submitted" while the whole
+# assignment — switching schedulers, launching workloads, compiling their own kernel — went
+# unrecorded. See docs/design/os-lab-provenance.md.
+# ============================================================================ #
+def _kinds(rec):
+    return [e.kind for e in rec._chain.entries]
+
+
+def _data(rec, kind):
+    return [e.data for e in rec._chain.entries if e.kind == kind]
+
+
+def test_a_kernel_knob_records_what_moved(rec):
+    rec.arm(CODE)
+    rec.note_tune("M1", "scheduler policy", "round-robin", "lottery")
+    assert _data(rec, ev.TUNE) == [{"on": "M1", "knob": "scheduler policy",
+                                   "from": "round-robin", "to": "lottery"}]
+
+
+def test_a_knob_that_did_not_move_records_nothing(rec):
+    """A combo repopulated from the kernel's own POLICY roster must not read as a decision —
+    the same rule `configure` already applies to an unchanged property."""
+    rec.arm(CODE)
+    rec.note_tune("M1", "quantum", 3, 3)
+    assert ev.TUNE not in _kinds(rec)
+
+
+def test_launching_and_killing_are_both_recorded(rec):
+    """Starting a workload is how a student makes the phenomenon happen, so it is the act that
+    gives every measurement after it its meaning."""
+    rec.arm(CODE)
+    rec.note_spawn("M1", "alloc 8", "launch")
+    rec.note_spawn("M1", "grind", "kill", pid=7)
+    got = _data(rec, ev.SPAWN)
+    assert got[0]["action"] == "launch" and got[0]["what"] == "alloc 8"
+    assert got[1]["action"] == "kill" and got[1]["pid"] == 7
+
+
+def test_a_face_is_recorded_once_however_often_it_is_opened(rec):
+    """Flipping between Memory and CPU twenty times is navigation, not evidence — and twenty
+    entries would bury the four that matter."""
+    rec.arm(CODE)
+    for _ in range(5):
+        rec.note_lab_open("M1", "Virtual Memory")
+    rec.note_lab_open("M1", "CPU & Registers")
+    faces = [d["face"] for d in _data(rec, ev.LAB_OPEN)]
+    assert faces == ["Virtual Memory", "CPU & Registers"]
+
+
+def test_a_new_code_starts_the_faces_over(rec):
+    """The count belongs to the lab. The commonest path is submit-then-arm-the-next-lab, which
+    never goes through cancel() — so without a reset on ARM the second lab would never record a
+    face the first one happened to open."""
+    rec.arm(CODE)
+    rec.note_lab_open("M1", "Virtual Memory")
+    other = mint(lambda n: bytes((i * 31 + 9) % 256 for i in range(n))).pretty
+    rec.arm(other)
+    rec.note_lab_open("M1", "Virtual Memory")
+    assert [d["face"] for d in _data(rec, ev.LAB_OPEN)] == ["Virtual Memory"]
+
+
+# -- the build: THE assignment ----------------------------------------------- #
+def test_a_successful_build_records_what_was_compiled(rec):
+    rec.arm(CODE)
+    rec.note_build("M1", "sched", True,
+                   sources={"gini_sched.c": {"sha256": "abc123", "lines": 142}})
+    d = _data(rec, ev.BUILD)[0]
+    assert d["ok"] is True and d["shadow"] == "sched"
+    assert d["sources"] == {"gini_sched.c": {"sha256": "abc123", "lines": 142}}
+
+
+def test_a_FAILED_build_is_recorded_with_the_compiler_output(rec):
+    """A student who fought the compiler for an hour did an hour of work. A chain showing only
+    successes cannot tell "never tried" from "tried nine times", and would reward hiding
+    failure — the opposite of what a teaching record is for."""
+    rec.arm(CODE)
+    rec.note_build("M1", "sched", False, log=["gini_sched.c:88: error: 'p' undeclared",
+                                              "make: *** [kernel] Error 1"])
+    d = _data(rec, ev.BUILD)[0]
+    assert d["ok"] is False
+    assert "undeclared" in d["log"][0], "a failed build must carry its reason"
+
+
+def test_a_revert_is_distinguishable_from_a_build(rec):
+    rec.arm(CODE)
+    rec.note_build("M1", "vm", True, action="revert")
+    assert _data(rec, ev.BUILD)[0]["action"] == "revert"
+
+
+def test_the_os_events_count_as_operations(rec):
+    """They belong in OPERATION, so `narration.summarize` counts them without a special case and
+    the report's closing paragraph is right for an OS lab as well as a network one."""
+    for k in (ev.LAB_OPEN, ev.TUNE, ev.SPAWN, ev.BUILD):
+        assert k in ev.OPERATION
+        assert k not in ev.CONSTRUCTION and k not in ev.WITNESSED and k not in ev.ANSWERED
+
+
+def test_recording_an_os_event_can_never_break_the_lab(rec):
+    """Load is the most consequential button in the Machine Lab. Every entry point goes through
+    `_guard`, for the same reason terminal_panel._pump wraps the tap whole: a build that stopped
+    working because the chain hiccuped would be far worse than a missing entry."""
+    rec.arm(CODE)
+    rec._chain = None                       # the chain is gone underneath the caller
+    rec.note_build("M1", "sched", True)     # must not raise
+    rec.note_tune("M1", "quantum", 1, 9)
+    rec.note_spawn("M1", "grind")
+    rec.note_lab_open("M1", "Locks")
+
+
+def test_nothing_is_recorded_before_a_code_is_armed(rec):
+    """The Machine Lab is explorable with no code armed at all; that exploration is not evidence
+    and must not become a chain."""
+    rec.note_build("M1", "sched", True)
+    rec.note_tune("M1", "quantum", 1, 9)
+    assert rec._chain is None

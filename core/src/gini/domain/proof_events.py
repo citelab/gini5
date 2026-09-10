@@ -34,12 +34,28 @@ RUN, STOP, OPEN_CONSOLE, MEASURE, INVOKE = (
     "run", "stop", "open_console", "measure", "invoke")
 COMMAND = "command"
 WITNESS, OBJECTIVE = "witness", "objective"
+ANSWER = "answer"
 LOAD = "load"
+# The OS labs. A networking student's work IS the topology, and the chain has always carried it;
+# an OS student's work happens inside the Machine Lab and used to leave no trace at all, so a
+# submission narrated as "placed a Machine, ran, opened a console, submitted" while the whole
+# assignment went unrecorded. See docs/design/os-lab-provenance.md.
+LAB_OPEN, TUNE, SPAWN, BUILD = "lab_open", "tune", "spawn", "build"
+#: What the KERNEL did, as opposed to what the student did to it. Separate from `witness` on
+#: purpose: `summarize` counts a witness as passed when its verdict is "ok", so folding a
+#: starvation observation in there would make the report say "2 of 5 checks passed" about
+#: something that was never a check. A phenomenon observed is not a test failed.
+OBSERVE = "observe"
 STOPPED, RESUMED = "stopped", "resumed"
 
 CONSTRUCTION = (PLACE, REMOVE, CONNECT, DISCONNECT, CONFIGURE)
-OPERATION = (RUN, STOP, OPEN_CONSOLE, MEASURE, INVOKE, COMMAND)
-WITNESSED = (WITNESS, OBJECTIVE)
+OPERATION = (RUN, STOP, OPEN_CONSOLE, MEASURE, INVOKE, COMMAND,
+             LAB_OPEN, TUNE, SPAWN, BUILD)
+WITNESSED = (WITNESS, OBJECTIVE, OBSERVE)
+#: A student's own words, and the weakest tier there is — deliberately NOT folded in with
+#: `witnessed`, because a witness is something GINI measured and an answer is something a person
+#: typed. Nothing here checks it against the teacher's key; that is a person's job.
+ANSWERED = (ANSWER,)
 PROVENANCE = (LOAD, PREEXISTING, SUBMIT, STOPPED, RESUMED)
 
 # bus signal -> the kind it becomes. The recorder subscribes to exactly these.
@@ -176,6 +192,100 @@ def command(device: str, cmd: str, output: list[str] | None = None) -> tuple[str
     return COMMAND, {"on": clip(device, 64), "cmd": clip(cmd, 200), "out": lines}
 
 
+# -- the OS labs ------------------------------------------------------------- #
+def lab_open(device: str, face: str) -> tuple[str, dict]:
+    """A student opened one of the Machine Lab's faces.
+
+    ONCE PER FACE per session — the recorder enforces that, not this. Someone flipping between
+    Memory and CPU twenty times is navigating, not working, and twenty entries would bury the four
+    that matter. What this answers is narrow and worth having: did they go and look at the part of
+    the kernel the lab was about?
+    """
+    return LAB_OPEN, {"on": clip(device, 64), "face": clip(face, 40)}
+
+
+def tune(device: str, knob: str, before, after) -> tuple[str, dict] | None:
+    """A kernel knob changed on a RUNNING machine — scheduler policy, quantum, a scheduler control.
+
+    None when nothing moved, exactly as `configure` returns None for an unchanged property: a combo
+    box repopulated from the kernel's own roster must not read as a student's decision.
+
+    Deliberately not folded into `configure`. That kind means a topology element's properties
+    before Run; this is an act on a booted kernel, and conflating them would make the narration say
+    somebody edited a device when they switched a scheduler policy.
+    """
+    b, a = clip(str(before), 80), clip(str(after), 80)
+    if b == a:
+        return None
+    return TUNE, {"on": clip(device, 64), "knob": clip(knob, 40), "from": b, "to": a}
+
+
+def spawn(device: str, what: str, action: str = "launch",
+          pid: int | None = None) -> tuple[str, dict]:
+    """A program started or a process killed on the running kernel.
+
+    `alloc 8 &`, `writer`, `grind`, `forktest` — the workloads the OS labs are watched through.
+    Starting one is how a student makes the phenomenon they are studying happen, so it is the act
+    that gives every measurement after it its meaning.
+    """
+    d = {"on": clip(device, 64), "what": clip(what, 80),
+         "action": "kill" if action == "kill" else "launch"}
+    if pid is not None:
+        d["pid"] = int(pid)
+    return SPAWN, d
+
+
+def build(device: str, shadow: str, ok: bool, sources: dict | None = None,
+          log: list[str] | None = None, action: str = "load") -> tuple[str, dict]:
+    """The student compiled their own kernel code. THE assignment, in one entry.
+
+    FAILURES ARE RECORDED, with the tail of the compiler's output. A student who fought the
+    compiler for an hour did an hour of work, and a chain showing only successes cannot tell
+    "never tried" from "tried nine times" — it would also reward hiding failure, which is the
+    opposite of what a teaching record is for.
+
+    The tail, not the head, because that is where the error is: `command` truncates from the front
+    for the same reason in reverse, since `ping` says what matters first and then repeats itself.
+
+    `sources` is `{filename: {"sha256", "lines"}}` for the shadow files as they stood WHEN THIS
+    BUILD RAN. It binds the entry to the code that was compiled: the files travel with the
+    submission and the server checks them against this, the way `topology_matches` already checks
+    the topology, so a marker reads provably the code this entry describes.
+
+    A file edited AFTER the last build therefore no longer matches, and that is REPORTED rather
+    than refused. Unlike a topology mismatch — which means the submitted work is not the proven
+    work — this only means "what you sent is not what you last compiled", which is a normal thing
+    to have done and no grounds for throwing an evening away.
+    """
+    src = {}
+    for name, meta in (sources or {}).items():
+        meta = meta if isinstance(meta, dict) else {"sha256": meta}
+        src[clip(str(name), 64)] = {"sha256": clip(str(meta.get("sha256", "")), 64),
+                                    "lines": int(meta.get("lines") or 0)}
+    return BUILD, {"on": clip(device, 64), "shadow": clip(shadow, 40),
+                   "action": "revert" if action == "revert" else "load",
+                   "ok": bool(ok), "sources": src,
+                   "log": [clip(x, 200) for x in (log or [])]}
+
+
+def observe(device: str, kind: str, detail: str, pid: int | None = None) -> tuple[str, dict]:
+    """A phenomenon GINI measured on the running kernel — starvation, a CPU monopoly, a zombie.
+
+    The other half of an OS lab's evidence. Tier 1 records what the student DID; this records what
+    the kernel did about it, which is what turns "switched to lottery" into "switched to lottery
+    and pid 7 stopped starving".
+
+    Nearly free: `machine_state.StateWatcher` already detects these on every poll and they were
+    being thrown away. It is EDGE-TRIGGERED — each condition fires once when it becomes true and
+    re-arms when it clears — so this cannot flood a chain, which is the only reason it is safe to
+    record from a polling path at all.
+    """
+    d = {"on": clip(device, 64), "what": clip(kind, 40), "detail": clip(detail, 300)}
+    if pid is not None:
+        d["pid"] = int(pid)
+    return OBSERVE, d
+
+
 def measure(name: str, result: dict) -> tuple[str, dict]:
     """A Source/Sink rider's structured reading. The measurement is the point; the raw stream is
     not recorded, because it is long, noisy and adds nothing an instructor would read."""
@@ -201,6 +311,23 @@ def witness(probe: str, verdict: str) -> tuple[str, dict]:
 def objective(objective_id: str, say: str, before: str, after: str) -> tuple[str, dict]:
     return OBJECTIVE, {"id": clip(objective_id, 64), "say": clip(say),
                        "from": str(before or ""), "to": str(after or "")}
+
+
+# -- answered ---------------------------------------------------------------- #
+def answer(question_id: str, prompt: str, text: str) -> tuple[str, dict]:
+    """What a student wrote in reply to one of the lab's questions.
+
+    The PROMPT rides along with the answer rather than being looked up when the report is read.
+    A chain entry has to stay readable on its own — a teacher may edit or retire a question
+    between the lab and the marking, and an answer whose question has changed underneath it is
+    worse than no answer at all.
+
+    Answering twice appends twice. The chain is append-only and a student may think again; the
+    report shows the last one and says how many there were, so a marker can see them change their
+    mind rather than have the earlier attempt quietly disappear.
+    """
+    return ANSWER, {"id": clip(question_id, 64), "prompt": clip(prompt, 400),
+                    "text": clip(text, 2000)}
 
 
 # -- provenance -------------------------------------------------------------- #

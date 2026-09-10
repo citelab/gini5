@@ -268,6 +268,82 @@ class MainWindow(QMainWindow):
             if k in cfg:
                 setattr(s, k, cfg[k])
 
+    # ---- lab questions ---------------------------------------------------- #
+    def _refresh_questions(self) -> None:
+        """Render the GINI Labs tab from the recorder, and put the outstanding count on the tab.
+
+        Everything comes from the recorder: the chain is the state, so a panel that kept its own
+        copy would be a second answer to "what has been answered" that could disagree with the one
+        being submitted.
+        """
+        r = self.proof_recorder
+        if r is None or not hasattr(self, "questions_panel"):
+            return
+        from ..domain import lab_questions as _lq
+        from .questions_panel import announce
+        qs, answers = r.questions, r.answers()
+        submitted = bool(r.armed and r._chain and r._chain.has_submitted())
+        tk = r.ticket
+        self.questions_panel.show_state(
+            armed=r.armed, submitted=submitted, questions=qs, answers=answers,
+            expects_questions=bool(tk and tk.questions),
+            # The lab itself: what it is called and what it asks for. Both arrive with the code.
+            title=getattr(r, "activity_title", ""), brief=getattr(r, "activity_brief", ""))
+        # Live only while recording is in progress — before arming there is no lab, and after
+        # handing in an answer would land past the `submit` entry in a chain nobody reads again.
+        self.questions_panel.set_live(r.armed and not submitted)
+        want = announce(qs, answers) if (r.armed and not submitted) else "GINI Labs"
+        if _lq.missing_because_offline(bool(tk and tk.questions), qs) and r.armed:
+            want = "GINI Labs (!)"
+        if self._questions_dock.windowTitle() != want:
+            self._questions_dock.setWindowTitle(want)
+
+    def _on_questions_arrived(self) -> None:
+        """A lab's questions just landed. Say so ONCE, audibly and visibly.
+
+        Raising the tab outright was the other option and is the wrong one: it would take the pane
+        away from whatever the student was reading, at the exact moment they had just armed a code
+        and were looking at the canvas. A bell and a count on the tab tell them without taking the
+        wheel.
+        """
+        self._refresh_questions()
+        if not self.proof_recorder.questions:
+            return
+        from .questions_panel import beep
+        beep()
+        n = len(self.proof_recorder.questions)
+        self.ctx.bus.log.emit(
+            "info", f"This lab asks {n} question{'' if n == 1 else 's'} — "
+                    f"see the GINI Labs tab, on the right beside Terminal.")
+
+    def _raise_questions(self) -> None:
+        """Bring the tab forward — the one time this panel takes the pane.
+
+        It does not do this when the questions ARRIVE, because a student who has just armed a code
+        is looking at the canvas and it would snatch the pane away from whatever they were reading.
+        Here they have asked for it: they pressed "Answer them first" and would otherwise have to
+        go and find the tab themselves.
+        """
+        self._questions_dock.show()
+        self._questions_dock.raise_()
+
+    def _record_answer(self, question_id: str, text: str) -> None:
+        prompt = next((q.prompt for q in self.proof_recorder.questions if q.id == question_id), "")
+        if self.proof_recorder.note_answer(question_id, prompt, text):
+            self.ctx.bus.log.emit("ok", "Answer recorded in the proof chain.")
+        else:
+            self.ctx.bus.log.emit(
+                "error", "That answer was not recorded — this work is already handed in.")
+        self._refresh_questions()
+
+    def _fetch_questions(self) -> None:
+        """Ask the course server for this code's questions again.
+
+        Needed twice over: a code armed with no server in reach never received them, and the arm
+        reply is not persisted, so a gBuilder restarted mid-lab has none either. Same button.
+        """
+        self.proof_strip.fetch_questions()
+
     def _open_about(self) -> None:
         """Which build is running, in a form that can be pasted into a bug report."""
         from .about_dialog import AboutDialog
@@ -1594,6 +1670,8 @@ class MainWindow(QMainWindow):
                         on_source=self._open_kernel_source,
                         window_getter=lambda: int(
                             getattr(self.ctx.settings, "os_hud_window_s", 10) or 10),
+                        scale_getter=lambda: int(
+                            getattr(self.ctx.settings, "os_hud_scale", 0) or 0),
                         scrub_getter=lambda: int(
                             getattr(self.ctx.settings, "os_hud_scrub_s", 120) or 120))
                 self._oshud.show_topright()
@@ -1716,6 +1794,20 @@ class MainWindow(QMainWindow):
         self.addDockWidget(Qt.RightDockWidgetArea, termd)
         self.tabifyDockWidget(srcd, termd)
         self._terminal_dock = termd
+
+        # GINI Labs — the lab, and its questions, answered where the work is. Last in the stack,
+        # after Terminal, because it is the only tab that is empty most of the time: it has
+        # something to say only while a code with questions on it is being recorded.
+        from .questions_panel import QuestionsPanel
+        self.questions_panel = QuestionsPanel(self.theme)
+        self.questions_panel.answered.connect(self._record_answer)
+        self.questions_panel.refetch.connect(self._fetch_questions)
+        qd = QDockWidget("GINI Labs", self)
+        qd.setObjectName("dock_questions")
+        qd.setWidget(self.questions_panel)
+        self.addDockWidget(Qt.RightDockWidgetArea, qd)
+        self.tabifyDockWidget(termd, qd)
+        self._questions_dock = qd
         # selection_changed is Signal(object) — the device id ALONE. The panel needs the topology
         # to resolve it, so it goes through an adapter rather than being connected directly.
         # (TerminalPanel subscribes to theme.themeChanged itself, as SourceBrowser does.)
@@ -1747,6 +1839,13 @@ class MainWindow(QMainWindow):
         # the window opening, and it runs on a worker thread from there — the usual recovery for
         # a student whose wifi died mid-submission is simply reopening gBuilder on campus.
         _QTimer.singleShot(2000, self.proof_strip.flush_outbox)
+        # The strip re-emits the recorder's own change callback, so this one connection covers
+        # arming, answering, resuming, cancelling and handing in — every transition the panel
+        # renders. It is made here rather than beside the dock because the strip is built later.
+        self.proof_strip.changed.connect(self._refresh_questions)
+        self.proof_strip.questionsArrived.connect(self._on_questions_arrived)
+        self.proof_strip.answerFirst.connect(self._raise_questions)
+        self._refresh_questions()
         _dash = self.dashboard.layout()
         _dash.insertWidget(max(0, _dash.count() - 1), self.proof_strip)
         dash = QDockWidget("Dashboard", self)
@@ -3232,7 +3331,12 @@ class MainWindow(QMainWindow):
             if _role(tk) == "router":
                 sb.show_scripts(dev.name)
             elif tk == "xv6":
-                pass          # its source is the kernel board's to open; leave that view alone
+                # Point it at the machine's APPS — the programs a student launches — the same way
+                # selecting a router points it at that router's Lua modules. The KERNEL source is
+                # still the board's to open (double-click a block), which overrides this; that is
+                # the right precedence, because opening a block is a deliberate act and selecting
+                # the machine is not.
+                sb.show_apps(dev.name)
             else:
                 # anything else has no source yet. Clear, so the pane never keeps showing the
                 # last router's module as though it belonged to what was just clicked.
@@ -3504,6 +3608,11 @@ class MainWindow(QMainWindow):
             return
         setattr(self, attr, None)
         try:
+            # A polling face must be stopped AND JOINED first: deleteLater() while a worker is
+            # still inside a read is the shape that was crashing pytest-qt. See ui/live_poll.
+            stop = getattr(old, "stop_polling", None)
+            if callable(stop):
+                stop()
             old.close()
             old.setParent(None)
             old.deleteLater()
@@ -3593,8 +3702,36 @@ class MainWindow(QMainWindow):
                 ms = MachineState(demo, device_id=device_id, mode="demo")
             # new teachable kernel events -> notify the assistant (proactive Coach)
             ms.on_event = lambda s, did=device_id: self.ctx.bus.machine_events.emit(did)
+            # ...and the same events into the proof chain, WITHOUT consuming them. The Coach
+            # drains the queue; this is handed the events as they are produced, so the two cannot
+            # race for them. See docs/design/os-lab-provenance.md.
+            ms.on_record = self._record_kernel_events
             states[device_id] = ms
         return ms
+
+    #: Which of the watcher's events are worth a line in a student's proof. Deliberately short.
+    #:
+    #: "idle" is a steady state, not a phenomenon — every lab passes through it and a chain full
+    #: of it would bury the three that mean something. "control" is the student's OWN action
+    #: (they switched a policy), already recorded as a `tune` when they did it, and recording it
+    #: again here would double-count one act as both a deed and an observation.
+    _RECORDED_KERNEL_EVENTS = ("starvation", "cpu_monopoly", "zombie_leak")
+
+    def _record_kernel_events(self, ms, events) -> None:
+        """Put the kernel's own teachable moments into the chain. Called from the POLL THREAD.
+
+        Under-promotes on purpose: a quiet chain is easier to widen than a noisy one is to trust.
+        """
+        rec = getattr(self, "proof_recorder", None)
+        if rec is None:
+            return
+        name = ""
+        dev = self.ctx.topology.devices.get(getattr(ms, "device_id", "")) if self.ctx else None
+        name = str(getattr(dev, "name", "") or getattr(ms, "device_id", "") or "")
+        for e in events or []:
+            if getattr(e, "kind", "") not in self._RECORDED_KERNEL_EVENTS:
+                continue
+            rec.note_observed(name, e.kind, getattr(e, "detail", ""), getattr(e, "pid", None))
 
     def _xv6_for_peripheral(self, device_id: str) -> str | None:
         """The xv6 Machine a peripheral is wired to (grammar guarantees at most one), or None."""
@@ -3623,12 +3760,26 @@ class MainWindow(QMainWindow):
         if dev.type_key == "storage_volume":
             # the disk is the file system — reuse the Storage face against this Machine's FS reader
             from .storage_lab import StorageLab
-            self._storage = StorageLab(self, self.theme, device=xv6, provider=ms.fs)
+            # Retired and given the state like the Machine Lab's own: this face polls now, so a
+            # rebind would leave the old one reading the serial line forever.
+            self._retire_lab("_storage")
+            self._storage = StorageLab(self, self.theme, device=xv6, provider=ms.fs, state=ms)
             self._storage.show(); self._storage.raise_()
             return
-        if not getattr(ms, "live", False) or not hasattr(ms.provider, "console"):
+        # `ms.live` is not an attribute MachineState has ever had — `live` is a WIDGET flag
+        # (MachineLab, CpuLab, LockLab each set their own). So `getattr(ms, "live", False)` was
+        # always False and this returned every single time: double-clicking a Terminal opened
+        # nothing and printed "Start the topology (Run)" at a topology that was already running.
+        # `has_real()` is the question that was meant, and it is the one MachineState answers.
+        if not ms.has_real():
             self.ctx.log(f"Start the topology (Run) so {xv6.name} is booted, then open "
                          f"{dev.name}.", "info")
+            return
+        if not hasattr(ms.provider, "console"):
+            # A kernel IS attached; this Machine is just being viewed in Demo mode, and telling
+            # somebody to Run a topology that is already running sends them to fix the wrong thing.
+            self.ctx.log(f"{xv6.name} is showing Demo data, so there is no console to open. "
+                         f"Switch it to Real in the Machine Lab, then open {dev.name}.", "info")
             return
         from .peripherals import TerminalView
         self._peripheral = TerminalView(self, self.theme, ms.provider, dev)
@@ -3646,7 +3797,10 @@ class MainWindow(QMainWindow):
         try:
             self._retire_lab("_machine_lab")
             self._machine_lab = MachineLab(
-                self, self.theme, dev, state=ms, live=getattr(ms, "live", False),
+                # No `live=`: the parameter exists but MachineLab overrides it from the data
+                # mode two lines into __init__, and the value passed here was the same phantom
+                # `ms.live` that broke the Terminal above. Passing it read as if it did something.
+                self, self.theme, dev, state=ms, recorder=self.proof_recorder,
                 on_console=lambda: self._open_terminal(device_id),
                 on_log=lambda lvl, msg: self.ctx.bus.log.emit(lvl, msg))  # mirror to GINI Console
         except Exception as e:

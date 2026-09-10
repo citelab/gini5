@@ -12,7 +12,12 @@ fake feed.
 """
 from __future__ import annotations
 
+import threading
+import weakref
+
 from PySide6.QtCore import Qt, QTimer, Signal
+
+from .live_poll import JOIN_TIMEOUT, LivePollMixin
 from PySide6.QtGui import QColor, QPainter
 from PySide6.QtWidgets import (
     QComboBox, QDialog, QFrame, QHBoxLayout, QLabel, QPlainTextEdit, QPushButton, QVBoxLayout,
@@ -23,9 +28,10 @@ from ..domain.xv6 import (
     TRAP_KINDS, TrapRate, parse_alarms, parse_trapcounts, parse_traptrace, trap_kind_name,
 )
 from .theme import ThemeManager, icons
-from .worker_host import run_off_gui
 
-# trap kinds the "Step a trap" catcher can target (conditioned gdb breakpoint); "any" = next trap
+# trap kinds the "Step a trap" catcher can target (kernel-side one-shot capture, armed over the
+# console mux — no gdb); "any" = next trap. NB known issue #13: "any"/"device" usually catch the
+# probe's own UART interrupt, which IS a genuine device trap, just GINI's rather than the workload's.
 _CATCH_KINDS = ["any", "pagefault", "syscall", "timer", "illegal", "device"]
 
 # one colour per trap kind, so the histogram reads at a glance
@@ -70,9 +76,15 @@ class TrapBars(QWidget):
             y += rowh
 
 
-class TrapLab(QDialog):
-    traps_ready = Signal(str)          # raw /traps text pushed from the poll worker
-    alarms_ready = Signal(str)         # raw gini_dump text (ALARM lines) from the poll worker
+class TrapLab(LivePollMixin, QDialog):
+    #: (payload, ok) from the poll worker to the GUI thread — see live_poll. The mixin owns the
+    #: timer, the worker and, the load-bearing part, the JOIN in stop_polling(): this dialog used
+    #: to fire-and-forget its poll and catch threads, guarding only with `if not self._closed`
+    #: before the emit, and a worker past that check emitting into a dialog being destroyed was a
+    #: nondeterministic SIGSEGV (mid-test in ~1 of 20 two-module runs; in production, _retire()'s
+    #: deleteLater() while a catch was in flight). _retire() calls stop_polling() — which this
+    #: class never had, so it was silently skipped.
+    snap_ready = Signal(object)
     caught = Signal(object)            # a TrapFrame from a live catch (or None), off the worker
 
     def __init__(self, parent, theme: ThemeManager, device=None, traps_source=None,
@@ -83,7 +95,7 @@ class TrapLab(QDialog):
         self._src = traps_source or (lambda: "")
         self._on_step = on_step
         self._on_play = on_play             # callable() opening the decode-the-trap game; may be None
-        self._catch = catch_source          # callable(kind) -> TrapFrame (live gdb freeze); may be None
+        self._catch = catch_source          # callable(kind) -> TrapFrame (kernel-side capture, no gdb); may be None
         self._alarm_src = alarm_source      # callable() -> gini_dump text with ALARM lines; may be None
         self._rate = TrapRate(window=60.0)
         self._busy = False
@@ -152,14 +164,22 @@ class TrapLab(QDialog):
             f"border-radius:8px;padding:6px 12px;}}QPushButton:hover{{border-color:{t.accent};}}")
         self._step_btn.clicked.connect(self._step)
         row.addWidget(self._step_btn)
+        # Why a catch found nothing, when it does. Shown here rather than opening a journey full of
+        # authored placeholders as if a trap had been caught.
+        self._catch_msg = QLabel("")
+        self._catch_msg.setWordWrap(True)
+        self._catch_msg.setStyleSheet(f"color:{t.muted};font-size:12px;")
+        row.addWidget(self._catch_msg, 1)
         root.addLayout(row)
 
-        self.traps_ready.connect(self._apply)
-        self.alarms_ready.connect(self._apply_alarms)
         self.caught.connect(self._on_caught)
-        self._poll = QTimer(self); self._poll.timeout.connect(self._fetch)
-        self._poll.start(1500)
-        self._fetch()
+        self._catch_thread: threading.Thread | None = None   # the one-shot catch worker; joined on close
+        # The poll is the mixin's: timer, worker, backoff, and the join on close. A round reads
+        # the trap dump (and the alarm lines when wired) OFF the GUI thread in _read() and renders
+        # ON it in _render_live(). `_tick()` here is the eager first read the old bare `_fetch()`
+        # was — a Lab must not open on an empty picture.
+        self._init_poll(1500, live=True)
+        self._tick()
 
     def _panel(self, title, inner) -> QFrame:
         t = self.theme.theme
@@ -174,54 +194,71 @@ class TrapLab(QDialog):
         return f
 
     def _step(self) -> None:
-        """Freeze a live trap (off the GUI thread — the gdb catch can take up to a few seconds),
-        then open the journey seeded with it. With no live catch source, open the authored
-        journey immediately."""
+        """Freeze a live trap (off the GUI thread — the catch polls the kernel for up to ~10 s,
+        and holds the single-threaded agent while it does, see known issue #12), then open the
+        journey seeded with it. With no live catch source, open the authored journey immediately."""
         if not callable(self._on_step):
             return
         if callable(self._catch):
             kind = self._kind.currentText()
+            catch = self._catch                 # the bridge's callable — the I/O needs no `self`
             self._step_btn.setEnabled(False)
             self._step_btn.setText("  freezing a trap…")
+            # The worker must never hold the last strong reference to this dialog: a closure over
+            # `self` did, so when a test (or _retire) dropped its reference while the catch was in
+            # flight, the dialog was destroyed either from under the worker's emit or ON the worker
+            # thread when the closure died — both undefined in Qt, both a SIGSEGV. A weak ref,
+            # resolved only after the I/O, means a straggler finds the dialog gone (destroyed on the
+            # GUI thread, where it belongs) or closed, and does nothing. stop_polling() joins it.
+            wself = weakref.ref(self)
 
             def work():
                 try:
-                    fr = self._catch(kind)
+                    fr = catch(kind)
                 except Exception:
                     fr = None
-                if not self._closed:
-                    self.caught.emit(fr)
-            run_off_gui(self, work)
+                me = wself()
+                if me is None or me._closed:    # gone, or closed while we were catching
+                    return
+                me.caught.emit(fr)
+                del me                          # release on this thread while the GUI still owns it
+            self._catch_thread = threading.Thread(target=work, daemon=True, name="TrapLab-catch")
+            self._catch_thread.start()
         else:
             self._on_step(None)
 
     def _on_caught(self, frame) -> None:
         self._step_btn.setEnabled(True)
         self._step_btn.setText("  Step a trap ▸")
-        if not self._closed and callable(self._on_step):
+        if self._closed:
+            return
+        # A catch that found nothing: say WHY (the agent's real reason), do not open a journey that
+        # would present authored placeholders as a captured trap.
+        if frame is not None and not getattr(frame, "ok", False):
+            self._catch_msg.setText(getattr(frame, "error", "") or "No trap was caught.")
+            return
+        self._catch_msg.setText("")
+        if callable(self._on_step):
             self._on_step(frame)
 
-    def _fetch(self) -> None:
-        if self._busy or self._closed:
-            return
-        self._busy = True
+    def _read(self):
+        """OFF the GUI thread — one coalesced round: the trap dump, plus the alarm lines when an
+        alarm source is wired. Touches no widget. Returning None would mean "this round failed"
+        and keep the last good picture; a source that raises is exactly that case, and the mixin's
+        _work() turns the exception into a failed round for us."""
+        txt = self._src() or ""
+        atxt = (self._alarm_src() or "") if callable(self._alarm_src) else None
+        return (txt, atxt)
 
-        def work():
-            try:
-                txt = self._src()
-            except Exception:
-                txt = ""
-            atxt = ""
-            if callable(self._alarm_src):
-                try:
-                    atxt = self._alarm_src() or ""
-                except Exception:
-                    atxt = ""
-            if not self._closed:                # don't signal a dialog that's being torn down
-                self.traps_ready.emit(txt or "")
-                if callable(self._alarm_src):
-                    self.alarms_ready.emit(atxt)
-        run_off_gui(self, work)
+    def _render_live(self, payload, fresh: bool) -> None:
+        """ON the GUI thread. `payload` is the last GOOD round (the mixin never hands us a failed
+        one in place of it), so a bad read never blanks a good picture — it just isn't fresh."""
+        if payload is None:                     # nothing good has ever arrived
+            return
+        txt, atxt = payload
+        self._apply(txt)
+        if atxt is not None:
+            self._apply_alarms(atxt)
 
     def _apply_alarms(self, txt) -> None:
         if self._closed:
@@ -263,7 +300,18 @@ class TrapLab(QDialog):
             if at_bottom:
                 sb.setValue(sb.maximum())
 
-    def closeEvent(self, e) -> None:  # noqa: N802
+    def stop_polling(self, timeout: float = JOIN_TIMEOUT) -> None:
+        """Stop the poll AND join the one-shot catch worker. The mixin's closeEvent calls this, and
+        so does MachineLab._retire() before its deleteLater() — the call this class never answered
+        before, which is why retiring a Traps face mid-catch could take gBuilder down.
+
+        A catch can block for the agent's whole wait (~10 s), so the join is bounded: closing a
+        window must never feel stuck. A straggler that outlives the bound holds only a WEAK
+        reference to this dialog (see _step) and finds `_closed` set, so it can neither emit into
+        a dialog being destroyed nor become its last owner. `_closed` is set FIRST, the mixin's
+        discipline: once it is set no emit can happen, and the join only waits for the I/O."""
         self._closed = True
-        self._poll.stop()
-        super().closeEvent(e)
+        t, self._catch_thread = self._catch_thread, None
+        if t is not None and t.is_alive():
+            t.join(timeout)
+        super().stop_polling(timeout)

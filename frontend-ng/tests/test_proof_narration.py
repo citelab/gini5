@@ -199,3 +199,70 @@ def test_span_reads_in_human_units():
     assert N.fmt_span(90) == "1m"
     assert N.fmt_span(3600) == "1h"
     assert N.fmt_span(4140) == "1h 9m"
+
+
+# -- the OS labs, read by a marker -------------------------------------------- #
+#
+# An OS submission used to narrate as "placed a Machine, ran, opened a console, submitted" while
+# the whole assignment happened inside the Machine Lab. These are the sentences that fix that, and
+# the bar is the same as everywhere else here: a marker skimming thirty of these on a Sunday must
+# not be able to miss what a student did or failed to do.
+def _os_chain() -> P.Chain:
+    from gini.domain import proof_events as ev
+    c = P.Chain.start(TICKET, assignment="xv6-sched", gini_version="1.2.3", t=T0)
+    c.append(*ev.lab_open("M1", "Process Scheduler"), t=T0 + 30)
+    c.append(*ev.tune("M1", "scheduler policy", "round-robin", "lottery"), t=T0 + 60)
+    c.append(*ev.spawn("M1", "grind", "launch"), t=T0 + 90)
+    c.append(*ev.build("M1", "sched", False,
+                       log=["gini_sched.c:88: error: 'p' undeclared"]), t=T0 + 300)
+    c.append(*ev.build("M1", "sched", True,
+                       sources={"gini_sched.c": {"sha256": "abc123", "lines": 142}}), t=T0 + 600)
+    return c
+
+
+def _line(c, i):
+    return N.describe(c.entries[i])
+
+
+def test_a_face_a_knob_and_a_workload_each_read_as_one_sentence():
+    c = _os_chain()
+    assert _line(c, 1) == "Opened the Process Scheduler face on M1."
+    assert _line(c, 2) == "On M1, changed scheduler policy from round-robin to lottery."
+    assert _line(c, 3) == "Launched grind on M1."
+
+
+def test_a_failed_build_says_so_and_carries_the_compiler_output():
+    """The interesting one. A marker must be able to see the student fought the compiler, and
+    what it said, without opening anything else."""
+    line = _line(_os_chain(), 4)
+    assert "FAILED" in line
+    assert "undeclared" in line, "a failed build with no reason is not evidence of anything"
+
+
+def test_a_successful_build_names_the_shadow_and_its_size():
+    line = _line(_os_chain(), 5)
+    assert "sched" in line and "compiled" in line and "142 lines" in line
+    assert "FAILED" not in line
+
+
+def test_a_kill_reads_differently_from_a_launch():
+    from gini.domain import proof_events as ev
+    c = P.Chain.start(TICKET, t=T0)
+    c.append(*ev.spawn("M1", "grind", "kill", pid=7), t=T0 + 1)
+    assert N.describe(c.entries[1]) == "Killed grind (pid 7) on M1."
+
+
+def test_the_os_work_is_counted_as_operations():
+    """`summarize` drives the report's closing paragraph. An OS lab full of work must not read as
+    a session in which nothing was done."""
+    s = N.summarize(_os_chain().entries)
+    assert s["operation"] == 5, s["kinds"]
+    assert s["construction"] == 0
+
+
+def test_a_revert_does_not_read_as_a_build():
+    from gini.domain import proof_events as ev
+    c = P.Chain.start(TICKET, t=T0)
+    c.append(*ev.build("M1", "vm", True, action="revert"), t=T0 + 1)
+    line = N.describe(c.entries[1])
+    assert line.startswith("Reverted"), line

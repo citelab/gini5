@@ -515,3 +515,168 @@ def test_the_late_tag_survives_a_round_trip_through_the_database(store):
     back = store.submission_by_receipt(rec["receipt"])
     assert back["late"] == 1
     assert ACT.report(back, act, [], [])["accepted_by"] == "prof"
+
+
+# ============================================================================ #
+# The release code — what makes a student link unguessable
+#
+# `/getcode?course=comp310_ecse427&lab=lab3` is a URL a student can EDIT. Knowing lab3's link
+# means knowing lab4's, and lab4's brief describes an assignment nobody has been set yet. The
+# code closes that, and doubles as the way a lab reaches its TAs before release.
+# ============================================================================ #
+def a_coded_activity(store, *, released=True, code="Z5G6"):
+    act = an_activity(store, released=released)
+    store.activity_set_release_code(act["id"], code)
+    return store.activity(act["id"])
+
+
+def test_a_link_without_the_code_vends_nothing():
+    """The whole feature in one line."""
+    act = {"status": "released", "release_code": "Z5G6", "vend_until": NOW + HOUR}
+    ok, why = ACT.vending_open(act, NOW)
+    assert not ok and why == ACT.BAD_LINK
+
+
+def test_the_right_code_vends_as_before():
+    act = {"status": "released", "release_code": "Z5G6", "vend_until": NOW + HOUR}
+    assert ACT.vending_open(act, NOW, release_code="Z5G6") == (True, "")
+
+
+def test_a_wrong_code_says_nothing_about_the_lab():
+    """A refusal must not become an oracle. "wrong code", "no such lab" and "not released yet"
+    all have to read the same, or a student learns which labs exist by trying."""
+    seen = {ACT.message(ACT.vending_open(a, NOW, release_code="AAAA")[1])
+            for a in ({"status": "released", "release_code": "Z5G6"},
+                      {"status": "draft", "release_code": "Z5G6"})}
+    assert len(seen) == 1, "a draft and a released lab answered a bad code differently"
+
+
+def test_the_code_is_typed_the_way_a_student_types_it():
+    """Same folding as an activity code: upper-cased, O read as 0, separators dropped. A teacher
+    reads this over a bench and a student types it."""
+    act = {"status": "released", "release_code": "Z5G0", "vend_until": NOW + HOUR}
+    for typed in ("z5g0", "Z5G0", "z5-g0", " Z5GO "):
+        assert ACT.vending_open(act, NOW, release_code=typed)[0], typed
+
+
+def test_a_minted_code_avoids_the_confusable_letters():
+    """I/L/O/U are absent from the alphabet on purpose — those are the two pairs that cause every
+    mistyped code, and a four-symbol code has no check digit to catch one."""
+    for _ in range(200):
+        c = ACT.mint_release_code()
+        assert len(c) == ACT.RELEASE_CODE_LEN
+        assert set(c) <= set(T.ALPHABET)
+        assert not (set(c) & set("ILOU"))
+
+
+# -- draft runs: the lab reaches its TAs before it reaches the class ---------- #
+def test_the_code_opens_a_draft_so_the_TAs_can_rehearse():
+    """The second half of the feature. A teacher hands the link to their TAs, who run the lab end
+    to end — the same vend, the same arm, the same submit — before anyone else can reach it."""
+    act = {"status": "draft", "release_code": "Z5G6", "vend_until": NOW + HOUR}
+    assert ACT.vending_open(act, NOW, release_code="Z5G6") == (True, "")
+
+
+def test_an_unreleased_lab_with_no_code_is_still_closed():
+    """The old refusal has to survive: a draft nobody has given a code to is nobody's business."""
+    ok, why = ACT.vending_open({"status": "draft", "vend_until": NOW + HOUR}, NOW)
+    assert not ok and why == ACT.NOT_RELEASED
+
+
+def test_a_draft_run_is_marked_all_the_way_to_the_submission(store):
+    """A TA's rehearsal is a real, verifying submission. It must not sit in the marking list
+    looking like a student's."""
+    act = a_coded_activity(store, released=False)
+    issued = ACT.mint_code(act, now=NOW)
+    issued["draft"] = 1 if ACT.is_draft_run(act) else 0
+    store.code_put(issued)
+    assert store.code(issued["code"])["draft"] == 1
+
+    proof = a_proof(issued["code"])
+    row = ACT.prepare({"proof": proof}, store.code(issued["code"]), act, now=NOW + 60)
+    assert row["draft"] == 1
+    assert store.submission_put(row)
+    assert store.activity_submissions(act["id"])[0]["draft"] == 1
+
+
+def test_a_released_lab_produces_ordinary_submissions(store):
+    act = a_coded_activity(store, released=True)
+    issued = ACT.mint_code(act, now=NOW)
+    issued["draft"] = 1 if ACT.is_draft_run(act) else 0
+    store.code_put(issued)
+    row = ACT.prepare({"proof": a_proof(issued["code"])}, store.code(issued["code"]), act,
+                      now=NOW + 60)
+    assert row["draft"] == 0
+
+
+# -- every lab has one, including the ones that predate the feature ----------- #
+def test_a_lab_saved_before_release_codes_can_be_backfilled(store):
+    """"Required" has to be true of every row, not of every row created from now on. A lab with
+    no code would otherwise be either permanently unreachable or permanently unguarded."""
+    an_activity(store)
+    stale = store.activities_missing_release_code()
+    assert [a["id"] for a in stale] == ["comp535/lab1"]
+    store.activity_set_release_code("comp535/lab1", ACT.mint_release_code())
+    assert store.activities_missing_release_code() == []
+
+
+def test_an_activity_without_a_code_still_vends(store):
+    """The empty case is a fallback, not a loophole: a row that somehow has no code must stay
+    reachable rather than becoming unfixable."""
+    act = an_activity(store)
+    assert act.get("release_code", "") == ""
+    assert ACT.vending_open(act, NOW)[0]
+
+
+# -- duration 0: the lab is due AT the vending deadline ---------------------------------------- #
+# A lab is run one of two ways, and "minutes per attempt" picks which. Above zero it is a TIMED
+# ATTEMPT. At zero it has a FIXED HAND-IN TIME: everyone is due the moment vending stops, however
+# early they started. Zero used to be impossible — the route refused it, and `or 60` would have
+# turned it into an hour PAST the deadline anyway, the opposite of what it asks for.
+
+def test_zero_minutes_makes_the_deadline_the_due_date(store):
+    """The worked example: it is Wednesday 20:00, vending stops Thursday 21:00, duration 0. A
+    student who takes a code NOW has until Thursday 21:00 — not an hour after it."""
+    wed_2000 = NOW
+    thu_2100 = NOW + 25 * HOUR
+    act = an_activity(store, vend_until=thu_2100, session_minutes=0)
+    row = ACT.mint_code(act, now=wed_2000)
+    assert row["valid_until"] == thu_2100                      # the deadline itself, exactly
+
+
+def test_zero_minutes_gives_everyone_the_same_moment(store):
+    """The point of a fixed hand-in time: starting earlier buys nothing and starting later costs
+    nothing. With a timed attempt the last code out still gets its full window past the deadline."""
+    act = an_activity(store, vend_until=NOW + HOUR, session_minutes=0)
+    early = ACT.mint_code(act, now=NOW)
+    late = ACT.mint_code(act, now=NOW + HOUR - 1)
+    assert early["valid_until"] == late["valid_until"] == NOW + HOUR
+
+
+def test_a_zero_minute_code_works_up_to_the_deadline_and_not_past_it(store):
+    act = an_activity(store, vend_until=NOW + HOUR, session_minutes=0)
+    row = ACT.mint_code(act, now=NOW)
+    assert ACT.check_code(row, act, now=NOW + HOUR - 1)[0] is True     # a minute before: fine
+    assert ACT.check_code(row, act, now=NOW + HOUR)[1] == ACT.EXPIRED  # at the deadline: closed
+
+
+def test_zero_is_a_real_duration_and_only_an_absent_one_defaults():
+    """`or 60` could not tell 0 from unset, and that single character was the whole bug."""
+    assert ACT.session_minutes_for({"session_minutes": 0}) == 0
+    assert ACT.session_minutes_for({"session_minutes": 30}) == 30
+    assert ACT.session_minutes_for({}) == ACT.DEFAULT_SESSION_MINUTES        # absent -> default
+    assert ACT.session_minutes_for({"session_minutes": None}) == ACT.DEFAULT_SESSION_MINUTES
+
+
+def test_zero_minutes_reports_no_per_attempt_overrun(store):
+    """The two readings of 0 must agree: no per-attempt window here, due at the deadline there.
+    A run of any length is inside a window that does not exist."""
+    act = an_activity(store, vend_until=NOW + HOUR, session_minutes=0)
+    assert ACT.within_session({"started": NOW, "finished": NOW + 10 * HOUR}, act) is True
+
+
+def test_a_timed_attempt_is_unchanged(store):
+    """The existing behaviour is load-bearing and must not move: 60 minutes still means the code
+    lives an hour PAST the deadline, so a code taken at the last minute keeps its full session."""
+    act = an_activity(store, vend_until=NOW + HOUR, session_minutes=60)
+    assert ACT.mint_code(act, now=NOW)["valid_until"] == NOW + HOUR + 60 * 60

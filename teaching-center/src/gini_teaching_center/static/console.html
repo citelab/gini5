@@ -57,6 +57,17 @@
   button.danger{background:#fff;border:2px solid #eccdc9;color:var(--red);border-radius:11px;
         padding:9px 15px;font-weight:800;cursor:pointer}
   .rowb{display:flex;gap:12px;flex-wrap:wrap;align-items:center;margin-top:18px}
+  /* prompt, key, remove — on one line, so a set of questions reads as a set. */
+  .qrow{display:flex;gap:8px;align-items:center;margin-top:8px}
+  .qrow input{margin:0}
+  .qrow .q-prompt{flex:3}
+  .qrow .q-answer{flex:2}
+  .qrow .q-del{flex:none;padding:8px 12px}
+  .qcard{border:1px solid var(--line);border-radius:10px;padding:12px 14px;margin-top:10px}
+  .q-ask{font-weight:700}
+  .q-said{margin-top:6px;white-space:pre-wrap}
+  /* An unanswered question is shown, never hidden — a blank is a fact about the attempt. */
+  .q-said.blank{color:var(--dim);font-style:italic}
 
   table{width:100%;border-collapse:collapse}
   th{text-align:left;font-size:13px;font-weight:800;text-transform:uppercase;letter-spacing:.06em;
@@ -152,12 +163,31 @@
         <textarea id="a-brief" placeholder="Build a few LANs joined by routers and show a machine on one LAN can talk to a machine on another."></textarea>
         <label>Codes stop being issued</label><input id="a-vend" type="datetime-local">
         <div class="note">The hard stop. After this no student can start.</div>
-        <label>Minutes per attempt</label><input id="a-mins" type="number" value="60">
+        <label>Minutes per attempt <span style="font-weight:400;opacity:.7">— 0 = due at the
+          deadline</span></label>
+        <input id="a-mins" type="number" min="0" value="60"
+               title="How long a student gets once they start. Set 0 for a lab with a fixed
+hand-in time: everyone is then due when code vending stops, however early they began.">
         <div class="note">From when they enter the code, not from now.</div>
         <label>Grace period (minutes)</label><input id="a-grace" type="number" value="0">
         <div class="note">After the deadline, still accepted and tagged LATE. 0 = a hard stop.
           Without it a student who finished at 23:58 and lost their wifi holds a proof the server
           refuses for ever, recoverable only by a teacher accepting it by hand.</div>
+        <label style="margin-top:16px">Questions</label>
+        <div class="note">Short answers, in the student's own words. Write a few; each student is
+          asked a random selection of them, fixed when their code is issued. The answers you give
+          are the marker's key — they are never sent to a student's machine, and nothing here is
+          marked automatically.</div>
+        <div id="a-qs"></div>
+        <div class="rowb" style="margin-top:6px">
+          <button class="flat" onclick="addQ()">Add a question</button>
+          <span class="note" style="display:inline">Ask
+            <input id="a-shown" type="number" min="0" value="0"
+                   style="max-width:64px;display:inline-block;margin:0 4px">
+            of them</span>
+        </div>
+        <div class="note">0 asks nobody anything. Leaving a question unanswered never blocks a
+          student — a blank is recorded as a blank and the marker sees it.</div>
         <div class="rowb">
           <button class="go" onclick="saveAct()">Save</button>
           <button class="flat" onclick="clearAct()">Clear</button>
@@ -232,7 +262,9 @@
   <!-- STAFF (admin) ---------------------------------------------------- -->
   <section id="staff" hidden>
     <h2>Staff</h2>
-    <div class="sub">Teachers you add get a one-time claim token. They choose their own password.</div>
+    <div class="sub">Teachers you add get a one-time claim token. They choose their own password.
+      Forgotten one? <b>Reset password</b> puts that account back to a fresh token — role and
+      courses kept, every session ended.</div>
     <div class="grid g2">
       <div class="card">
         <h2 style="font-size:21px">Add a teacher</h2>
@@ -246,6 +278,12 @@
       </div>
       <div class="card"><table id="s-list"></table></div>
     </div>
+
+    <div class="note" style="margin-top:14px">There is no &ldquo;forgot my password&rdquo; link,
+      and no way to reset your own account — this server has no address to send mail from, so a
+      self-service link would be a way in for whoever reads the mailbox rather than a recovery. If
+      you are the only admin and you are locked out, set <span class="mono">ADMIN_PASSWORD</span>
+      and restart the server: it is authoritative on every boot.</div>
 
     <!-- Deliberately at the BOTTOM, in its own red-edged card, well away from the everyday
          controls. This is the one action here that destroys student work. -->
@@ -460,12 +498,37 @@ async function makeCourse(){
   if (r.ok) { $('#c-id').value = $('#c-title').value = ''; loadCourses(); }
 }
 
+// The link is the only way in, so it has to be trivially copyable — a teacher pastes it into an
+// announcement, and a code typed from memory is a code typed wrong.
+async function copyLink(lab){
+  const rows = await api('/api/activities?course=' + encodeURIComponent(COURSE));
+  const a = rows.find(r => r.lab === lab);
+  if (!a) return;
+  const url = `${location.origin}/getcode?course=${encodeURIComponent(COURSE)}`
+            + `&lab=${encodeURIComponent(a.lab)}&rc=${encodeURIComponent(a.release_code||'')}`;
+  try { await navigator.clipboard.writeText(url); say('Student link copied.', true); }
+  catch (e) { prompt('Copy this link:', url); }   // clipboard needs a secure context + permission
+}
+
+// Rotating is deliberate and destructive: every link already sent stops working. Confirmed, and
+// the consequence is spelled out rather than implied by the word "new".
+async function newLink(lab){
+  if (!confirm(`Give ${lab} a new release code?\n\nEvery link already sent out for it will stop `
+             + `working, and you will need to share the new one.`)) return;
+  await api('/api/activities/newlink', {course: COURSE, lab});
+  loadActs();
+}
+
 // ---- activities -------------------------------------------------------------
 async function loadActs(){
   $('#acts-sub').textContent = 'Labs in ' + COURSE;
   loadSubs();
   const rows = await api('/api/activities?course=' + encodeURIComponent(COURSE));
-  const link = a => `${location.origin}/getcode?course=${encodeURIComponent(COURSE)}&lab=${encodeURIComponent(a.lab)}`;
+  // The link now CARRIES the release code, and without it the server will not vend. That is
+  // what stops a student who has lab3's link from reading lab4 by editing the address bar — and
+  // it is why the link must be copied from here rather than typed from memory.
+  const link = a => `${location.origin}/getcode?course=${encodeURIComponent(COURSE)}`
+                  + `&lab=${encodeURIComponent(a.lab)}&rc=${encodeURIComponent(a.release_code||'')}`;
   $('#a-list').innerHTML = rows.length ? (
       '<tr><th>Lab<th>Title<th>Status<th>Codes out<th>In<th>' +
       rows.map(a => `<tr>
@@ -473,12 +536,18 @@ async function loadActs(){
         <td><span class="tag ${a.status==='released'?'live':'draft'}">${esc(a.status)}</span>
         <td class="mono">${a.vended}<td class="mono">${a.submitted}
         <td>${a.status==='released'
-              ? `<button class="flat" onclick="release('${esc(a.lab)}',false)">Close</button>
-                 <a href="${link(a)}" target="_blank" style="margin-left:10px">student link</a>`
+              ? `<button class="flat" onclick="release('${esc(a.lab)}',false)">Close</button>`
               : `<button class="go" onclick="release('${esc(a.lab)}',true)">Release</button>`}
-            <button class="flat" style="margin-left:10px" onclick='editAct(${JSON.stringify(a.lab)
-              },${JSON.stringify(a.title||'')},${JSON.stringify(a.brief||'')},${
-              Number(a.vend_until)||0},${Number(a.session_minutes)||60},${Number(a.grace_minutes)||0})'>Edit</button>
+            <button class="flat" style="margin-left:10px"
+                    onclick="copyLink('${esc(a.lab)}')">Copy link</button>
+            <a href="${link(a)}" target="_blank" style="margin-left:8px">open</a>
+            <span class="mono note" style="margin-left:8px" title="release code — the link will
+                  not work without it">${esc(a.release_code||'—')}</span>
+            <button class="flat" style="margin-left:6px"
+                    onclick="newLink('${esc(a.lab)}')" title="Rotate the release code. Every link
+                    already sent stops working.">New link</button>
+            <button class="flat" style="margin-left:10px"
+                    onclick='editAct(${JSON.stringify(JSON.stringify(a))})'>Edit</button>
             ${a.submitted
               ? `<span class="note" style="margin-left:12px">${a.submitted} submitted — close it,
                  it cannot be deleted</span>`
@@ -509,22 +578,65 @@ function actBody(){
           brief:$('#a-brief').value.trim(),
           vend_until: Number.isNaN(t) ? null : t/1000,
           session_minutes: m === '' ? null : parseInt(m, 10),
-          grace_minutes: g === '' ? null : parseInt(g, 10)};
+          grace_minutes: g === '' ? null : parseInt(g, 10),
+          questions: readQs(),
+          show_n: parseInt($('#a-shown').value, 10) || 0};
 }
 
 // Editing has to be deliberate. The form is otherwise blind: type a lab id that already exists,
 // press Save, and you have overwritten it without ever seeing what was there.
-function editAct(lab, title, brief, vend, mins, grace){
-  $('#a-lab').value = lab; $('#a-title').value = title; $('#a-brief').value = brief;
-  $('#a-mins').value = mins;
-  $('#a-grace').value = grace || 0;
+//
+// The whole row is handed over rather than a list of positional arguments — it had grown to six and
+// the next field to arrive would have landed in the wrong slot sooner or later.
+function editAct(json){
+  const a = typeof json === 'string' ? JSON.parse(json) : json;
+  $('#a-lab').value = a.lab; $('#a-title').value = a.title || '';
+  $('#a-brief').value = a.brief || '';
+  // `|| 60` here turned a saved 0 back into 60 on the way into the form, so opening a
+  // due-at-the-deadline lab and pressing Save silently gave it a timed attempt instead.
+  $('#a-mins').value = a.session_minutes == null ? 60 : Number(a.session_minutes);
+  $('#a-grace').value = Number(a.grace_minutes) || 0;
   // datetime-local wants exactly YYYY-MM-DDTHH:mm in LOCAL time, which toISOString would shift.
-  if (vend) {
-    const d = new Date(vend*1000 - new Date().getTimezoneOffset()*60000);
+  if (a.vend_until) {
+    const d = new Date(a.vend_until*1000 - new Date().getTimezoneOffset()*60000);
     $('#a-vend').value = d.toISOString().slice(0,16);
   } else $('#a-vend').value = '';
-  $('#a-heading').textContent = 'Editing ' + lab;
+  drawQs(a.questions || []);
+  $('#a-shown').value = Number(a.show_n) || 0;
+  $('#a-heading').textContent = 'Editing ' + a.lab;
   $('#a-lab').scrollIntoView({behavior:'smooth', block:'center'});
+}
+
+// ---- questions ------------------------------------------------------------------ //
+// Held in the DOM rather than in a parallel array: the rows ARE the state, so there is nothing to
+// keep in step with them, and a question can be edited, added or dropped without an index.
+function drawQs(qs){
+  $('#a-qs').innerHTML = '';
+  (qs || []).forEach(q => addQ(q));
+}
+function addQ(q){
+  q = (q && q.prompt !== undefined) ? q : {};
+  const row = document.createElement('div');
+  row.className = 'qrow';
+  row.dataset.id = q.id || '';
+  row.innerHTML =
+    `<input class="q-prompt" placeholder="What IP did you give M1?">
+     <input class="q-answer" placeholder="the answer you expect">
+     <button class="flat q-del" title="Remove this question">✕</button>`;
+  row.querySelector('.q-prompt').value = q.prompt || '';
+  row.querySelector('.q-answer').value = q.answer || '';
+  row.querySelector('.q-del').onclick = () => row.remove();
+  $('#a-qs').appendChild(row);
+}
+function readQs(){
+  // The id rides along so an edit stays the SAME question. Without it, re-saving would retire every
+  // question and mint new ones, leaving a report on an already-issued code naming questions that no
+  // longer exist.
+  return [...document.querySelectorAll('#a-qs .qrow')].map(r => ({
+    id: r.dataset.id || '',
+    prompt: r.querySelector('.q-prompt').value.trim(),
+    answer: r.querySelector('.q-answer').value.trim()
+  })).filter(q => q.prompt);
 }
 async function saveAct(){
   if (!$('#a-lab').value.trim()) { say('Give the lab an id, like lab1.'); return; }
@@ -537,6 +649,7 @@ async function saveAct(){
 function clearAct(){
   ['a-lab','a-title','a-brief','a-vend'].forEach(i=>$('#'+i).value='');
   $('#a-mins').value = '60';
+  $('#a-qs').innerHTML = ''; $('#a-shown').value = '0';
   $('#a-heading').textContent = 'New lab';
 }
 
@@ -566,15 +679,64 @@ async function release(lab, on){
   loadActs();
 }
 
+// Which lab bins are expanded. A real class hands in hundreds of times across a term, and one flat
+// list of every submission in the course is unreadable — so submissions are binned BY LAB and a
+// bin opens on click. Kept across reloads (the list refreshes on a timer) so a teacher reading one
+// lab's submissions does not have it collapse under them.
+let SUB_OPEN = {};
+let SUB_ROWS = [];
+
+function toggleBin(lab){
+  SUB_OPEN[lab] = !SUB_OPEN[lab];
+  drawSubs();
+}
+
 async function loadSubs(){
-  const rows = await api('/api/submissions?course=' + encodeURIComponent(COURSE));
+  SUB_ROWS = await api('/api/submissions?course=' + encodeURIComponent(COURSE));
+  drawSubs();
+}
+
+function drawSubs(){
+  const rows = SUB_ROWS || [];
   // Same-topology twins are worth SEEING in the list, not only inside one report — a teacher
   // scanning what came in should notice a cluster without opening thirty receipts one by one.
+  // Counted across the WHOLE course, not per bin: two students who shared a topology may well have
+  // handed it to different labs, and that is exactly the case worth catching.
   const seen = {};
   rows.forEach(r => { seen[r.artifact_hash] = (seen[r.artifact_hash]||0) + 1; });
-  $('#sub-list').innerHTML = rows.length ? (
-      '<tr><th>Receipt<th>Lab<th>Claimed by<th>Arrived<th>' +
-      rows.map(r => `<tr>
+
+  // Bin by lab, newest bin first. `activity` is "course/lab"; fall back to the whole id if it is
+  // ever not, so a malformed row lands in a visible bin instead of vanishing.
+  const bins = new Map();
+  rows.forEach(r => {
+    const lab = (r.activity||'').split('/')[1] || r.activity || '(unknown)';
+    if (!bins.has(lab)) bins.set(lab, []);
+    bins.get(lab).push(r);
+  });
+  if (!rows.length){
+    $('#sub-list').innerHTML = '<tr><td class="empty">Nothing submitted yet.</td></tr>';
+    return;
+  }
+  const order = [...bins.keys()].sort((a,b) =>
+      Math.max(...bins.get(b).map(r=>r.ts||0)) - Math.max(...bins.get(a).map(r=>r.ts||0)));
+
+  let html = '';
+  for (const lab of order){
+    const rs = bins.get(lab).slice().sort((a,b) => (b.ts||0) - (a.ts||0));
+    const open = !!SUB_OPEN[lab];
+    const unclaimed = rs.filter(r => !r.student_id).length;
+    const late = rs.filter(r => r.late).length;
+    // The bin header carries the counts a teacher triages on, so the bins alone answer "where is
+    // marking outstanding" without opening any of them.
+    html += `<tr class="bin" onclick="toggleBin('${esc(lab)}')" style="cursor:pointer">
+      <td colspan="5" style="background:#f2f5f1;border-top:1px solid #dfe3dd">
+        <b style="font-size:15px">${open ? '▾' : '▸'} ${esc(lab)}</b>
+        <span class="tag" style="margin-left:12px">${rs.length} submitted</span>
+        ${unclaimed ? `<span class="tag draft" style="margin-left:8px">${unclaimed} unclaimed</span>` : ''}
+        ${late ? `<span class="tag warn" style="margin-left:8px">${late} late</span>` : ''}</td>`;
+    if (!open) continue;
+    html += '<tr><th>Receipt<th>Lab<th>Claimed by<th>Arrived<th>';
+    html += rs.map(r => `<tr>
         <td class="mono">${esc(r.receipt)}
         <td class="mono">${esc((r.activity||'').split('/')[1] || r.activity)}
         <td>${r.student_id ? '<span class="mono">'+esc(r.student_id)+'</span>'
@@ -583,8 +745,9 @@ async function loadSubs(){
             ${r.late ? `<span class="tag warn" style="margin-left:10px">late</span>` : ''}
             ${seen[r.artifact_hash] > 1
                ? `<span class="tag warn" style="margin-left:10px">shared topology</span>` : ''}
-        <td><button class="flat" onclick="openReceipt('${esc(r.receipt)}')">Open</button>`).join('')
-    ) : '<tr><td class="empty">Nothing submitted yet.</td></tr>';
+        <td><button class="flat" onclick="openReceipt('${esc(r.receipt)}')">Open</button>`).join('');
+  }
+  $('#sub-list').innerHTML = html;
 }
 
 // ---- taking one in by hand ---------------------------------------------------
@@ -616,20 +779,20 @@ async function ingest(){
 // Global shelf, per-course link. One copy of a book serves every course that links it, which is
 // what stops five operating-systems courses holding five copies of one index — and the link is a
 // teacher's decision about which vocabulary their class is taught in.
-// What this page was built to talk to, compared against the version the SERVER reports. The two
-// can differ: `_page` reads this file off disk on EVERY request, so upgrading the package swaps
-// the UI the moment it lands while the running process keeps the old Python in memory. That
-// produced a Library tab rendering perfectly above "No endpoint at /api/references for GET", with
-// nothing anywhere saying the answer was to restart the service.
-const BUILT_FOR = '6.4';
-
+// Is this page newer than the Python serving it? `_page` reads this file off disk on EVERY
+// request, so upgrading the package swaps the UI the moment it lands while the running process
+// keeps the old Python in memory — a Library tab rendering perfectly above "No endpoint at
+// /api/references for GET", with nothing anywhere saying the answer was to restart the service.
+//
+// The SERVER decides, because only the server can see both facts: the version on disk and the
+// version it is running. This was a literal typed in here — `BUILT_FOR = '6.4'` — which every
+// release had to remember to bump. 6.5.0 shipped without it, so the banner told every healthy
+// server it was mid-upgrade, told its admin to restart, and did not go away when they did.
 function checkServerVersion(){
-  const running = String((ME && ME.server) || '');
-  const short = v => v.split('.').slice(0, 2).join('.');
-  if (!running || short(running) === BUILT_FOR) return;
-  say(`This page came from version ${BUILT_FOR}; the server running is ${esc(running)}. `
-    + `The package was upgraded without restarting the service, so parts of this console will ask `
-    + `for endpoints that are not there yet. Restart the Teaching Center.`);
+  if (!ME || !ME.restart_needed) return;
+  say(`This console came from version ${esc(ME.on_disk)}; the service is still running `
+    + `${esc(ME.server)}. The package was upgraded without restarting, so parts of this page will `
+    + `ask for endpoints that are not there yet. Restart the Teaching Center.`);
 }
 
 async function loadLibrary(){
@@ -710,8 +873,65 @@ async function openReceipt(receipt){
           : `<span class="note" style="margin:0">No runnable copy came with this submission; it was
              sent by a gBuilder that only uploaded the proof.</span>`}
       </div>
+      ${qBlock(r.questions)}
+      ${srcBlock(r.sources)}
       <pre>${esc(r.narration)}</pre>
     </div>`;
+}
+
+// THE KERNEL CODE a student wrote. For an OS lab this is the deliverable, and until it travelled
+// with the submission a marker could read a chain saying a kernel had been built and see nothing of
+// what was in it.
+//
+// Each file is paired with the hash the chain says was compiled. A mismatch is SHOWN, never treated
+// as a refusal: it means "this is not the file you last compiled", which is what happens when a
+// student tidies up after a build or starts the next experiment before handing in. "Never
+// compiled" is the louder one — a source handed in that no build in the chain mentions.
+function srcBlock(src){
+  if (!src || !src.length) return '';
+  return `<div style="margin-top:20px">
+    <div class="big" style="font-size:17px">Their kernel code</div>
+    <div class="note">Checked against the chain: each file's hash is compared with what the last
+      successful build recorded.</div>
+    ${src.map(f => `<div class="qcard">
+      <div class="rowb" style="margin:0">
+        <span class="mono"><b>${esc(f.path)}</b></span>
+        <span class="note" style="margin:0">${f.lines} lines</span>
+        ${f.never_built
+          ? `<span class="tag warn">never compiled — no build in the chain mentions this file</span>`
+          : f.matches
+            ? `<span class="tag live">matches the build</span>`
+            : `<span class="tag warn">edited after the last build</span>`}
+      </div>
+      ${f.omitted
+        ? `<div class="note">Not sent: ${esc(f.omitted)}. Its hash still travelled, so the
+           check above is still meaningful.</div>`
+        : `<pre style="max-height:420px">${esc(f.text)}</pre>`}
+    </div>`).join('')}
+  </div>`;
+}
+
+// What the lab asked, what they wrote, and the key — laid out for a person to read and judge.
+// NOTHING here is scored: no tick, no cross, no percentage, and the two answers carry equal visual
+// weight on purpose. A wrong-looking answer to "why did the first ping fail?" is often a right
+// answer phrased differently, and telling those apart is exactly the marker's job.
+function qBlock(qs){
+  if (!qs || !qs.length) return '';
+  return `<div style="margin-top:20px">
+    <div class="big" style="font-size:17px">Questions</div>
+    <div class="note">Not marked. The expected answer is shown beside the student's, to compare.</div>
+    ${qs.map(q => `<div class="qcard">
+      <div class="q-ask">${esc(q.prompt)}</div>
+      ${q.asked_as ? `<div class="note" style="color:var(--red)">Asked at the time as
+        &ldquo;${esc(q.asked_as)}&rdquo; — the question was edited afterwards.</div>` : ''}
+      <div class="q-said ${q.answered ? '' : 'blank'}">${
+        q.answered ? (esc(q.given) || '(they submitted an empty answer)')
+                   : 'Not answered.'}</div>
+      ${q.revisions ? `<div class="note">Changed ${q.revisions}
+        time${q.revisions === 1 ? '' : 's'}; the chain has every pass.</div>` : ''}
+      ${q.key ? `<div class="note"><b>Expected:</b> ${esc(q.key)}</div>` : ''}
+    </div>`).join('')}
+  </div>`;
 }
 
 async function getTopology(receipt){
@@ -775,6 +995,9 @@ async function loadStaff(){
       <td><button class="flat" onclick="setRole('${esc(s.username)}','${
              s.role === 'admin' ? 'teacher' : 'admin'}')">Make ${
              s.role === 'admin' ? 'teacher' : 'admin'}</button>
+          ${s.username === (ME && ME.who) ? '' : `<button class="flat" style="margin-left:10px"
+                  onclick="resetStaff('${esc(s.username)}')">${
+                  s.claimed ? 'Reset password' : 'New token'}</button>`}
           <button class="danger" style="margin-left:10px"
                   onclick="delStaff('${esc(s.username)}')">Remove</button>`).join('');
 }
@@ -823,12 +1046,34 @@ async function setRole(u, role){
 async function addStaff(){
   const r = await api('/api/staff', {username:$('#s-user').value.trim(), role:$('#s-role').value});
   $('#s-err').textContent = r.ok ? '' : r.error;
-  // The token is shown ONCE, here, because it is not stored in a recoverable form afterwards.
+  // Shown here on creation, and again in the staff row for as long as the account is unclaimed.
+  // Deliberately: a token that could only be read on the boot or click that minted it made it a
+  // one-time SIGHTING as well as a one-time secret, and missing the line locked out the person it
+  // was for. The moment it is claimed it is deleted, so reprinting gives up nothing.
   $('#s-token').innerHTML = r.ok
     ? `<div class="ok">Give <b>${esc(r.username)}</b> this claim token:</div>
        <div class="code" style="margin-top:10px">${esc(r.claim_token)}</div>` : '';
   if (r.ok) { $('#s-user').value=''; loadStaff(); }
 }
+// The whole of password recovery. There is no "forgot my password" link because this server has
+// no address to send mail from and no second factor — an emailed link would be a way in for
+// whoever controls the mailbox. The admin knows their teachers, and hands over a fresh token.
+async function resetStaff(u){
+  if (!confirm(`Reset ${u}?\n\nTheir password is cleared and they are signed out everywhere. `
+             + `They sign in again with a new claim token, which appears in this list. `
+             + `Their role and courses are kept.`)) return;
+  const r = await api('/api/staff/reset', {username: u});
+  $('#s-err').textContent = r.ok ? '' : r.error;
+  // Shown where the Add token is shown, and it also stays in the row below until claimed — an
+  // admin who closes this page has not lost the only copy.
+  $('#s-token').innerHTML = r.ok
+    ? `<div class="ok">${esc(r.username)} was reset${r.sessions_ended
+         ? ` and signed out of ${r.sessions_ended} session${r.sessions_ended === 1 ? '' : 's'}`
+         : ''}. Give them this claim token:</div>
+       <div class="code" style="margin-top:10px">${esc(r.claim_token)}</div>` : '';
+  loadStaff();
+}
+
 async function delStaff(u){
   const r = await api('/api/staff/delete', {username:u});
   $('#s-err').textContent = r.ok ? '' : r.error;

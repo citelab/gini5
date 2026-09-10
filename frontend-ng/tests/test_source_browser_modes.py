@@ -131,3 +131,104 @@ def test_bouncing_between_modes_repeatedly(app, theme, scripts):
         b.show_scripts("R2")
         b.show_none("Y")
     assert b._jump.count() == 0
+
+
+# -- apps: the xv6 user programs, read from the running container ------------------------------- #
+# Nothing is shipped in the wheel; `user/<name>.c` comes from the machine's own checkout through
+# the agent, and WHICH apps exist is asked of the machine rather than hardcoded. The mode joins the
+# dispatch this file exists to guard, so it gets the same stale-flag treatment as the others.
+
+class _FakeAgent:
+    """Stands in for the in-container agent: names from /programs, source from /source."""
+
+    def __init__(self, names=("spin", "walker"), text="// an app\nint\nmain(void)\n{\n  return 0;\n}\n"):
+        self.names, self.text, self.asked = list(names), text, []
+
+    def get_json(self, path):
+        self.asked.append(path)
+        return {"programs": self.names}
+
+    def get_text(self, path):
+        self.asked.append(path)
+        return self.text
+
+
+def _apps_browser(theme, agent):
+    from gini.ui.source_browser import SourceBrowser
+    b = SourceBrowser(theme, fetch_fn=lambda: agent)
+    b.resize(420, 620)
+    return b
+
+
+def _settle(app, b, want, n=200):
+    import time
+    for _ in range(n):
+        app.processEvents()
+        if want():
+            return
+        time.sleep(0.005)
+
+
+def test_apps_mode_lists_the_machines_own_programs(app, theme):
+    agent = _FakeAgent(names=("walker", "spin", "alloc"))
+    b = _apps_browser(theme, agent)
+    b.show_apps("xv6-1")
+    _settle(app, b, lambda: b._jump.count() >= 3)
+    assert [b._jump.item(i).text() for i in range(b._jump.count())] == ["alloc", "spin", "walker"]
+    assert "/programs" in agent.asked, "the list must come from the machine, not a hardcoded one"
+    # top pane IS the file list in this mode, so the header combo gets out of the way
+    assert not b._files.isVisible()
+
+
+def test_apps_mode_opens_the_first_app_once(app, theme):
+    agent = _FakeAgent(names=("spin",))
+    b = _apps_browser(theme, agent)
+    b.show_apps("xv6-1")
+    _settle(app, b, lambda: bool(b._view.toPlainText()))
+    assert b._view.toPlainText().startswith("// an app")
+    # exactly one fetch: selecting row 0 must not ALSO fire the signal and fetch it again
+    assert agent.asked.count("/source?file=user/spin.c") == 1
+
+
+def test_picking_an_app_does_not_wipe_the_app_list(app, theme):
+    """The trap this mode had to avoid. `_on_loaded` repopulates the top pane with the file's
+    FUNCTIONS — right when the file list lives in the header combo, fatal here where the top pane
+    IS the list. Apps therefore load through their own path."""
+    agent = _FakeAgent(names=("spin", "walker"))
+    b = _apps_browser(theme, agent)
+    b.show_apps("xv6-1")
+    _settle(app, b, lambda: b._jump.count() >= 2)
+    before = [b._jump.item(i).text() for i in range(b._jump.count())]
+    b._on_jump(b._jump.item(1))                       # walker
+    _settle(app, b, lambda: "walker" in b._sub.text())
+    assert [b._jump.item(i).text() for i in range(b._jump.count())] == before
+
+
+def test_an_app_item_is_never_read_as_a_line_or_a_path(app, theme):
+    """The invariant this file is about, extended to the new kind."""
+    agent = _FakeAgent(names=("spin", "walker"))
+    b = _apps_browser(theme, agent)
+    b.show_apps("xv6-1")
+    _settle(app, b, lambda: b._jump.count() >= 2)
+    assert b._jump.count() == 2, "the list must hold app items for this test to mean anything"
+    for mode in ("kernel", "scripts", "none", ""):
+        b._mode = mode                                # the stale-flag window
+        for i in range(b._jump.count()):
+            b._on_jump(b._jump.item(i))               # must not raise
+
+
+def test_apps_mode_then_no_source_clears_without_crashing(app, theme):
+    agent = _FakeAgent(names=("spin", "walker"))
+    b = _apps_browser(theme, agent)
+    b.show_apps("xv6-1")
+    _settle(app, b, lambda: b._jump.count() >= 2)
+    b.show_none("S1 (Switch)")                        # must not raise
+    assert b._jump.count() == 0
+
+
+def test_apps_mode_with_no_machine_says_so_rather_than_showing_nothing(app, theme):
+    from gini.ui.source_browser import SourceBrowser
+    b = SourceBrowser(theme, fetch_fn=lambda: None)
+    b.show_apps("xv6-1")
+    assert "No running xv6 machine" in b._sub.text()
+    assert b._jump.count() == 0

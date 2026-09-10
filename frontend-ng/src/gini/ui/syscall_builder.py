@@ -23,11 +23,15 @@ _ARG_LABELS = [("int", "int"), ("pointer (addr)", "addr"), ("string", "str")]
 
 class SyscallBuilder(QDialog):
     def __init__(self, parent, theme: ThemeManager, device=None, on_apply=None,
-                 existing=None) -> None:
+                 existing=None, recorder=None) -> None:
         super().__init__(parent)
         self.theme = theme
         self.device = device
         self.on_apply = on_apply                 # callable(Codegen) — Mac writes+recompiles
+        # Apply writes five edits into the kernel and recompiles it. That is a change to the
+        # student's kernel and belongs in the chain beside a shadow build — see
+        # docs/design/os-lab-provenance.md. None when no code is armed.
+        self._recorder = recorder
         self._existing = tuple(existing or sb.STOCK_SYSCALLS)
         self._added = 0                          # syscalls authored this session (for numbering)
         self._codegen = None
@@ -218,15 +222,25 @@ class SyscallBuilder(QDialog):
         if self._codegen is None:
             return
         if self.on_apply is not None:
+            from .lab_record import record
+            name = ""
             try:
                 name = self.spec_from_form().name
                 self.on_apply(self._codegen)
+                record(self._recorder, "note_build", str(getattr(self.device, "name", "") or ""),
+                       f"syscall {name}", True)
                 self._added += 1
                 self._existing = self._existing + (name,)   # block re-using this name
                 self.status.setText("Applied — writing the 5 edits and recompiling xv6…")
                 self.status.setStyleSheet(_scss(f"color:{t.success};font-size:12px;"))
                 self.apply_btn.setEnabled(False)
             except Exception as e:
+                # Recorded like a failed shadow build, and for the same reason: a student who
+                # fought this for an hour did an hour of work, and a chain showing only successes
+                # cannot tell "never tried" from "tried nine times".
+                record(self._recorder, "note_build",
+                       str(getattr(self.device, "name", "") or ""),
+                       f"syscall {name}" if name else "syscall", False, None, [str(e)])
                 self.status.setText(f"⚠ Apply failed: {e}")
                 self.status.setStyleSheet(_scss(f"color:{t.danger};font-size:12px;"))
         else:

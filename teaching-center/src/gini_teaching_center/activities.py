@@ -17,6 +17,13 @@ gating issuance alone does not gate use. Every code therefore carries an absolut
 `vend_until + session_minutes`. Hoarding buys nothing, and a code taken one minute before close
 still gets its full session.
 
+**Two ways to run a lab, and the duration picks which.** With `session_minutes > 0` the lab is a
+TIMED ATTEMPT: the student gets that long, and the last code out still gets its full window past
+the deadline. With `session_minutes = 0` the lab has a FIXED HAND-IN TIME: `valid_until` is the
+vending deadline exactly, so everyone is due at the same moment however early they started. Today
+Wednesday 20:00, vending stops Thursday 21:00, duration 0 — a student starting now has until
+Thursday 21:00. Zero is a real value here and is never defaulted away; see `session_minutes_for`.
+
 **Two collision checks, catching two different cheats.** A receipt collision means the same proof
 *file* was handed in twice. An artifact collision means the same *topology* was built under two
 codes — the collusion case a receipt cannot see, because the chain binds the ticket and the
@@ -31,6 +38,7 @@ import json
 import time
 
 from gini.domain import proof as _proof
+from gini.domain import proof_events as _ev
 from gini.domain import ticket as _ticket
 
 #: Why a code was refused. Each maps to a sentence a student can act on — none of them leak whether
@@ -43,10 +51,16 @@ EXPIRED = "expired"
 ALREADY_USED = "already_used"
 ALREADY_CLAIMED = "already_claimed"
 NO_SUCH_RECEIPT = "no_such_receipt"
+BAD_LINK = "bad_link"
 
 _MESSAGES = {
     NO_ACTIVITY: "There is no activity here. Check the link your instructor gave you.",
     NOT_RELEASED: "This activity has not been released yet.",
+    # Says nothing about whether the lab exists, is released, or is merely mistyped. All three
+    # read the same, because the point of the code is that a student who has lab3's link cannot
+    # learn anything by editing it to lab4 — including whether lab4 is there.
+    BAD_LINK: "That link is not valid for this activity. Use the link your instructor gave you, "
+              "in full — it ends with a four-character code.",
     VENDING_CLOSED: "Codes for this activity are no longer being issued.",
     UNKNOWN_CODE: "That code was not issued by this course.",
     EXPIRED: "That code has expired. Take a new one if the activity is still open.",
@@ -69,18 +83,102 @@ def activity_id(course: str, lab: str) -> str:
 
 
 # --------------------------------------------------------------------------- #
+# the release code — what makes a student link unguessable
+# --------------------------------------------------------------------------- #
+#: How many symbols. Four is a deliberate speed bump, not a secret: 32**4 is about a million, which
+#: stops a student editing `lab3` to `lab4` in the address bar and stops nothing else. It travels in
+#: a URL, so it is in browser history, server logs and every forwarded email — treat it as "this
+#: link is not public", never as authentication.
+RELEASE_CODE_LEN = 4
+
+
+def mint_release_code(rand=None) -> str:
+    """Four symbols from the ticket alphabet — Crockford base32, no I/L/O/U.
+
+    The same alphabet as an activity code on purpose: a teacher reads this over a bench and a
+    student types it, so the two confusable pairs that cause every mistyped code (O/0, I/1) must be
+    impossible here for the same reason they are impossible there.
+    """
+    import secrets
+    rnd = rand or (lambda n: secrets.token_bytes(n))
+    return "".join(_ticket.ALPHABET[b % len(_ticket.ALPHABET)]
+                   for b in rnd(RELEASE_CODE_LEN))
+
+
+def normalize_release_code(code: str) -> str:
+    """What the student typed, reduced to what we compare. Same folding as an activity code."""
+    return _ticket.normalize(code)[:RELEASE_CODE_LEN]
+
+
+def release_code_ok(activity: dict, supplied: str) -> bool:
+    """Does this link carry the right code? An activity without one accepts anything.
+
+    The empty case is not a loophole left open — every activity is given a code when it is saved,
+    and the ones that predate the feature are backfilled at startup. It exists so that a row which
+    somehow has none still behaves, rather than becoming unreachable with no way to fix it.
+    """
+    want = normalize_release_code(str((activity or {}).get("release_code") or ""))
+    return not want or normalize_release_code(supplied) == want
+
+
+def is_draft_run(activity: dict) -> bool:
+    """Is this a rehearsal on an unreleased lab? Only reachable WITH the release code.
+
+    The whole point of handing a code to the TAs before release: they run the lab end to end, get
+    real submissions out of it, and those submissions must be distinguishable from a student's or
+    they will be marked.
+    """
+    return (activity or {}).get("status") != "released"
+
+
+# --------------------------------------------------------------------------- #
 # vending
 # --------------------------------------------------------------------------- #
-def vending_open(activity: dict, now: float | None = None) -> tuple[bool, str]:
-    """Whether a fresh code may be issued for this activity right now."""
+def vending_open(activity: dict, now: float | None = None, *,
+                 release_code: str = "") -> tuple[bool, str]:
+    """Whether a fresh code may be issued for this activity right now.
+
+    The release code is checked FIRST and its refusal is indistinguishable from "no such activity",
+    so the endpoint cannot be used to discover which labs exist or what state they are in.
+
+    A correct code also opens a DRAFT. That is the feature, not a hole: a teacher hands the link to
+    their TAs, the TAs run the lab for real before anyone else can reach it, and the vending
+    deadline still applies to them. What it buys is that the rehearsal uses exactly the path a
+    student will use — the same vend, the same arm, the same submit — rather than an approximation
+    of it that can be right while the real one is broken.
+    """
     if not activity:
         return False, NO_ACTIVITY
-    if activity.get("status") != "released":
+    if not release_code_ok(activity, release_code):
+        return False, BAD_LINK
+    if activity.get("status") != "released" and not (activity.get("release_code") or ""):
+        # No code to have got here with, so this is the old refusal: an unreleased lab.
         return False, NOT_RELEASED
     vend_until = float(activity.get("vend_until") or 0)
     if vend_until and (now or time.time()) >= vend_until:
         return False, VENDING_CLOSED
     return True, ""
+
+
+#: What "minutes per attempt" means when a lab never said. A stored row always has a value (the
+#: schema defaults it), so this is for dicts built by hand — tests, and older callers.
+DEFAULT_SESSION_MINUTES = 60
+
+
+def session_minutes_for(activity: dict) -> float:
+    """The per-attempt allowance, in minutes.
+
+    ZERO IS A REAL VALUE and must not be defaulted away: it means "there is no per-attempt window
+    — the lab is simply due at the vending deadline". Only an ABSENT value falls back.
+
+    This existed as `float(activity.get("session_minutes") or 60)` in two places, and `or` cannot
+    tell 0 from unset: a teacher who set the duration to 0 silently got an hour PAST their
+    deadline, which is the opposite of what they asked for.
+    """
+    v = (activity or {}).get("session_minutes")
+    if v is None or v == "":
+        return float(DEFAULT_SESSION_MINUTES)
+    return float(v)
 
 
 def valid_until_for(activity: dict) -> float:
@@ -90,11 +188,17 @@ def valid_until_for(activity: dict) -> float:
     is what makes hoarding pointless: a code taken on day one and a code taken at the last minute
     both die at the same moment, so taking a pile in advance gains nothing. The session clock is
     separate and starts when the student arms (§5.1).
+
+    **Duration 0 means the deadline IS the due date.** With `session_minutes = 0` this returns
+    `vend_until` exactly, so the lab is due when vending stops: today is Wednesday 20:00, vending
+    stops Thursday 21:00, and a student who starts now has until Thursday 21:00 — not an hour
+    after it. That is the natural way to run a lab with a fixed hand-in time rather than a timed
+    attempt, and `within_session()` already reports no per-attempt limit for 0, so the two agree.
     """
     vend_until = float(activity.get("vend_until") or 0)
     if not vend_until:
         return 0.0                                  # no vending deadline ⇒ no absolute expiry
-    return vend_until + float(activity.get("session_minutes") or 60) * 60.0
+    return vend_until + session_minutes_for(activity) * 60.0
 
 
 def mint_code(activity: dict, now: float | None = None) -> dict:
@@ -104,8 +208,14 @@ def mint_code(activity: dict, now: float | None = None) -> dict:
     digit, and gBuilder's `ticket.parse` refuses anything else with "That code has a typo in it" —
     so a locally-invented code would be issued happily and then rejected at arming, with the student
     blamed for a typo they did not make.
+
+    The code CARRIES whether this lab asks questions. gBuilder arms offline when the course server
+    cannot be reached, and this is the only way it can know it is missing something — otherwise a
+    student works the whole lab, hands in, and nobody finds out until a marker sees two blanks
+    caused by hotel wifi. Decided here from the same activity row the caller passes to
+    `pick_questions` in the same request, so the flag and the questions cannot disagree.
     """
-    return {"code": _ticket.mint().code,
+    return {"code": _ticket.mint(questions=int(activity.get("show_n") or 0) > 0).code,
             "activity": activity["id"],
             "issued": now if now is not None else time.time(),
             "valid_until": valid_until_for(activity),
@@ -224,6 +334,60 @@ def topology_matches(topology: dict, proof: dict) -> bool:
     return bool(topology) and _proof.artifact_summary(topology).get("sha256") == artifact_hash(proof)
 
 
+def built_sources(proof: dict) -> dict:
+    """`{filename: sha256}` from the LAST successful build in the chain, per file.
+
+    The last one because that is the kernel the student left running. Earlier builds are the story
+    of getting there and the report narrates them; only the final one is the thing to check the
+    submitted files against.
+    """
+    out: dict = {}
+    for entry in proof.get("entries") or []:
+        if (entry or {}).get("kind") != _ev.BUILD:
+            continue
+        data = entry.get("data") or {}
+        if not data.get("ok"):
+            continue
+        for name, meta in (data.get("sources") or {}).items():
+            sha = str((meta or {}).get("sha256") or "")
+            if sha:
+                out[str(name)] = sha
+    return out
+
+
+def check_sources(shadows: dict | None, proof: dict) -> list:
+    """Pair each submitted source with what the chain says was compiled. REPORTED, never refused.
+
+    A topology mismatch is fraud-shaped: it means the work handed in is not the work proved, so
+    `prepare` refuses it. A source mismatch is not. It means "the file you sent is not the file you
+    last compiled", which is what happens when a student tidies up after a build, or starts the
+    next experiment before handing in — normal, innocent, and no grounds for throwing an evening
+    away. So it is surfaced for the marker to weigh and nothing more.
+
+    Matching on the FILENAME, not the full "<machine>/<file>" key, because a build entry knows
+    which files it compiled and not which host directory they came from.
+    """
+    want = built_sources(proof)
+    out = []
+    for key, meta in sorted((shadows or {}).items()):
+        meta = meta if isinstance(meta, dict) else {}
+        name = str(key).rsplit("/", 1)[-1]
+        got, expected = str(meta.get("sha256") or ""), want.get(name, "")
+        out.append({
+            "path": str(key),
+            "lines": int(meta.get("lines") or 0),
+            "bytes": int(meta.get("bytes") or 0),
+            "text": meta.get("text", ""),
+            "omitted": str(meta.get("omitted") or ""),
+            # "" when the chain records no successful build of this file at all — which is itself
+            # worth seeing: a source handed in that was never compiled is not a submission.
+            "built_sha256": expected,
+            "matches": bool(expected) and got == expected,
+            "never_built": not expected,
+        })
+    return out
+
+
 def artifact_hash(proof: dict) -> str:
     """The topology's fingerprint, from the chain's submit entry."""
     for entry in reversed(proof.get("entries") or []):
@@ -269,6 +433,11 @@ def prepare(payload: dict, code_row: dict, activity: dict,
         raise Rejected(WRONG_TOPOLOGY,
                        "the submitted topology is not the one this proof was generated from")
 
+    # The student's kernel code. Checked against the chain and REPORTED, never refused — see
+    # check_sources. Kept in the payload so it travels with the submission into the report.
+    if payload.get("shadows") and not isinstance(payload.get("shadows"), dict):
+        raise Rejected(BAD_PROOF, "the submitted sources are not a mapping")
+
     if accepted_by:
         # Recorded IN the payload, so it travels with the submission and shows in the report. A
         # late submission that looked like any other would quietly rewrite the deadline.
@@ -279,6 +448,9 @@ def prepare(payload: dict, code_row: dict, activity: dict,
     return {"code": code_row["code"],
             # Recorded, never a refusal — the teacher weighs it, as with an overrun session.
             "late": 1 if is_late(code_row, now=now) else 0,
+            # Carried from the code, which learned it at vend time. A TA's rehearsal on an
+            # unreleased lab is a real submission and must not look like a student's.
+            "draft": 1 if int(code_row.get("draft") or 0) else 0,
             "receipt": _proof.receipt_code(proof),
             "activity": activity["id"],
             "artifact_hash": artifact_hash(proof),
@@ -294,6 +466,11 @@ def within_session(row: dict, activity: dict) -> bool:
     Reported, never enforced here — a run that overran is a fact for the teacher to weigh, not
     grounds for the server to throw away a student's evening.
     """
+    # `or 0` deliberately, NOT session_minutes_for(): 0 and "unset" both mean "no per-attempt
+    # window" HERE, and reporting an overrun against a default nobody chose would invent a fact.
+    # For a duration of 0 the two readings already agree — no limit, and the lab is due at the
+    # vending deadline (valid_until_for). They differ only when the field is absent, where this
+    # side stays silent rather than assuming an hour.
     limit = float(activity.get("session_minutes") or 0) * 60.0
     if not limit or not row.get("started") or not row.get("finished"):
         return True
@@ -322,7 +499,47 @@ def narrate(proof: dict) -> str:
         return f"(could not narrate this chain: {e})"
 
 
-def report(row: dict, activity: dict, twins: list, attempts: list | None = None) -> dict:
+def answered(proof: dict, questions: list[dict] | None) -> list[dict]:
+    """Pair what the lab asked with what the student wrote, for one marker to read.
+
+    Nothing is compared. `key` travels beside `given` and they are left side by side, because
+    deciding whether "it uses a lock" answers "how does sleep avoid a lost wakeup?" is the whole
+    of the marking and is not a string comparison.
+
+    An unanswered question is REPORTED, not hidden — a blank is a fact about the attempt. And the
+    prompt shown is the one recorded in the chain when it differs from the one on file, so a
+    question edited after the lab cannot make an answer look like a reply to something it never
+    replied to.
+    """
+    said: dict[str, list[dict]] = {}
+    for e in proof.get("entries") or []:
+        if (e or {}).get("kind") != _ev.ANSWER:
+            continue
+        d = e.get("data") or {}
+        said.setdefault(str(d.get("id", "")), []).append(d)
+    out = []
+    for q in questions or []:
+        turns = said.get(q["id"], [])
+        last = turns[-1] if turns else {}
+        out.append({
+            "id": q["id"],
+            "prompt": q.get("prompt", ""),
+            # Only when it moved. A marker should be told about an edit, not made to compare two
+            # identical strings on every row.
+            "asked_as": (last.get("prompt", "") if last.get("prompt", q.get("prompt", ""))
+                         != q.get("prompt", "") else ""),
+            "given": last.get("text", ""),
+            "answered": bool(turns),
+            # They may think again; the chain keeps every pass. The count is here so a marker can
+            # see that happened without the report reprinting all of them.
+            "revisions": max(0, len(turns) - 1),
+            "key": q.get("answer", ""),
+        })
+    return out
+
+
+def report(row: dict, activity: dict, twins: list, attempts: list | None = None,
+           questions: list[dict] | None = None) -> dict:
     """Everything a teacher sees for one receipt.
 
     Integrity, the account of what happened, whether it fit the session window, the duplicate flags,
@@ -338,12 +555,21 @@ def report(row: dict, activity: dict, twins: list, attempts: list | None = None)
         # by hand. A marker must be able to see that the clock was overridden and by whom.
         "accepted_by": payload.get("accepted_by", ""),
         "late": bool(row.get("late")),
+        # A rehearsal run by a TA before the lab was released. Shown so a marker never wonders
+        # which student this was.
+        "draft": bool(row.get("draft")),
         "title": (activity or {}).get("title", ""),
         "verdict": row.get("verdict", ""),
         "started": row.get("started", 0), "finished": row.get("finished", 0),
         "minutes": round(((row.get("finished") or 0) - (row.get("started") or 0)) / 60.0, 1),
         "within_session": within_session(row, activity or {}),
         "narration": narrate(proof),
+        # Prompt, what the student wrote, and the teacher's key — side by side and unjudged.
+        # There is no mark here and no auto-comparison: a person reads these.
+        "questions": answered(proof, questions),
+        # The kernel code, each file paired with the hash the chain says was compiled. An OS lab's
+        # deliverable, which a marker could previously read nothing of.
+        "sources": check_sources(payload.get("shadows"), proof),
         "entries": len(proof.get("entries") or []),
         "artifact": payload.get("artifact"),
         # Whether the teacher can actually OPEN this, or only read about it. An older gBuilder

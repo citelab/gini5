@@ -72,6 +72,9 @@
 <script>
 const qs = new URLSearchParams(location.search);
 const course = qs.get("course") || "", lab = qs.get("lab") || "";
+// The four-character release code from the link. Without it the server will not vend, which is
+// what stops a student who has lab3's link from reading lab4 by editing the address bar.
+const rc = qs.get("rc") || "";
 const when = t => t ? new Date(t * 1000).toLocaleString() : "—";
 const esc = s => String(s ?? "").replace(/[<>&]/g, c => ({ "<":"&lt;", ">":"&gt;", "&":"&amp;" }[c]));
 
@@ -135,7 +138,8 @@ when your instructor records your receipt against your student ID.</div>
 
 document.getElementById("course").textContent = course ? `${course} · ${lab}` : "";
 
-fetch(`/api/activity?course=${encodeURIComponent(course)}&lab=${encodeURIComponent(lab)}`)
+fetch(`/api/activity?course=${encodeURIComponent(course)}&lab=${encodeURIComponent(lab)}`
+      + `&rc=${encodeURIComponent(rc)}`)
   .then(r => r.json())
   .then(d => {
     document.getElementById("title").textContent = d.title || lab || "Activity";
@@ -147,12 +151,23 @@ fetch(`/api/activity?course=${encodeURIComponent(course)}&lab=${encodeURICompone
       out.innerHTML = `<div class="closed">${esc(d.error || "No code is available.")}</div>`;
       return;
     }
-    out.innerHTML = `
+    // A TA rehearsing before release. Said plainly so nobody mistakes a draft run for the real
+    // thing, and so a teacher who lands here knows which link they are holding.
+    if (d.draft) {
+      out.innerHTML = `<div class="closed" style="background:#fff7e6;border-color:#e8b04b">
+        <b>This lab has not been released.</b> You are seeing it because your link carries the
+        release code. Work recorded here is marked as a draft run and is kept apart from
+        students' submissions.</div>`;
+    }
+    out.innerHTML += `
       <div class="label">Your code</div>
       <div class="code">${esc(d.code)}</div>
       <dl>
         <dt>Enter it in</dt><dd>gBuilder, before you start</dd>
-        <dt>You then have</dt><dd>${d.session_minutes} minutes to finish</dd>
+        ${Number(d.session_minutes) > 0
+          ? `<dt>You then have</dt><dd>${d.session_minutes} minutes to finish</dd>`
+          : `<dt>You have</dt><dd><b>until ${when(d.valid_until)}</b> to finish — this lab has a
+               fixed hand-in time, so starting earlier does not give you longer</dd>`}
         <dt>Code vending stops</dt><dd>${when(d.vend_until)}</dd>
         <dt>This code expires</dt><dd>${when(d.valid_until)}</dd>
       </dl>

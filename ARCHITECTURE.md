@@ -16,7 +16,7 @@ why `scripts/dev.sh install` exists and installs core first.
 
 ```
 core/                        gini-core — pure Python, no Qt, no Docker (PyPI: gini-core)
-  src/gini/domain/           71 modules: devices, topology, connection grammar, recipes,
+  src/gini/domain/           72 modules: devices, topology, connection grammar, recipes,
                              the proof-of-activity format, the AOP schema, the xv6 parsers,
                              the routing model, the tutor's knowledge base
   src/gini/version.py        which build produced a given proof
@@ -31,14 +31,15 @@ frontend-ng/                 gBuilder 6 — PySide6 / Qt 6 / Python 3.10+ (PyPI:
     services/                compiler (topology→wiring), orchestrator (Docker), persistence
     server/                  optional: run a lab on a remote Docker/Kata host
     setup/                   first-run runtime detection and image pull/build
-  tests/                     the pytest suite — 2,956 tests, Qt included
+  tests/                     the pytest suite — 3,389 tests, Qt included
 
 teaching-center/             the course server — no Qt (PyPI: gini-teaching-center)
   src/gini_teaching_center/  threaded HTTPS server over SQLite: activity codes, submissions,
                              materials, staff accounts. HTTPS only; there is no HTTP mode.
 
 scripts/                     dev.sh (install/test/check) · release.sh · images.sh
-docs/                        design docs, and docs/manual/ — 17 pages on the xv6 integration
+docs/                        design docs, and docs/manual/ — 17 pages on the xv6 integration,
+                             including os-15-known-issues.md, which is kept honest
 .github/workflows/           three publish workflows (one per distribution) + tests.yml
 ```
 

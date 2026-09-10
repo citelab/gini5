@@ -150,13 +150,24 @@ class Handler(BaseHTTPRequestHandler):
             return True
         if p == "/auth/whoami" and self.command == "GET":
             me = self._who()
-            # The RUNNING code's version, so the page can tell whether it is talking to the server
-            # it shipped with. `_page` reads console.html off disk on every request, so upgrading
-            # the package swaps the UI instantly while the process keeps the old Python in memory
-            # — a Library tab that renders perfectly above "No endpoint at /api/references", and
+            # BOTH versions, and the whole point is that they can differ. `_page` reads
+            # console.html off disk on every request, so `pip install --upgrade` swaps the UI the
+            # instant it lands while this process keeps the old Python in `sys.modules` — a Library
+            # tab that renders perfectly above "No endpoint at /api/references for GET", with
             # nothing anywhere saying the answer is "restart the service".
-            from .version import __version__
-            self._send(200, {**me, "server": __version__}) if me \
+            #
+            # The comparison is made HERE rather than in the page. It used to be a literal typed
+            # into console.html (`BUILT_FOR = '6.4'`), which meant every release had to remember to
+            # bump it — and when 6.5.0 shipped and nobody had, the banner accused every healthy
+            # server of being mid-upgrade, told its admin to restart, and did not go away when they
+            # did. A number a human has to keep in sync is not a version check.
+            from .version import __version__, on_disk
+            disk = on_disk()
+            self._send(200, {**me, "server": __version__,
+                             # "" when it cannot be told — a source checkout has no `_version.py`.
+                             # No opinion is not a mismatch; that conflation was the bug.
+                             "on_disk": disk,
+                             "restart_needed": bool(disk) and disk != __version__}) if me \
                 else self._send(401, {"error": "not signed in"})
             return True
         if p == "/auth/logout" and self.command == "POST":
@@ -228,20 +239,36 @@ class Handler(BaseHTTPRequestHandler):
                              "brief": act.get("brief", ""),
                              "session_minutes": act["session_minutes"],
                              "grace_minutes": act.get("grace_minutes") or 0,
+                             # PROMPTS ONLY. `answer` is the marker's key and never leaves
+                             # this server — stripped HERE rather than trusted not to be read,
+                             # because this is the one reply a student's machine receives.
+                             "questions": [{"id": q["id"], "prompt": q["prompt"]}
+                                           for q in _STORE.questions_for_code(row["code"])],
                              "valid_until": row["valid_until"]})
             return
 
         act = _STORE.activity(_act.activity_id(self._q("course"), self._q("lab")))
-        ok, why = _act.vending_open(act)
+        ok, why = _act.vending_open(act, release_code=self._q("rc"))
         if not ok:
+            # No title on a bad link either: naming the lab would confirm it exists, which is the
+            # one thing the code is there to withhold.
+            title = "" if why in (_act.BAD_LINK, _act.NO_ACTIVITY) else (act or {}).get("title", "")
             self._send(200, {"ok": False, "reason": why, "error": _act.message(why),
-                             "title": (act or {}).get("title", "")})
+                             "title": title})
             return
         issued = _act.mint_code(act)
+        # A rehearsal on an unreleased lab. Recorded on the CODE, so it survives to the submission
+        # without the submit path needing to re-ask what the activity's status was at the time —
+        # which by then may have changed.
+        issued["draft"] = 1 if _act.is_draft_run(act) else 0
         _STORE.code_put(issued)
+        # Chosen HERE, once, and recorded against the code. Re-arming resumes the same chain, so
+        # the questions a student sees must be fixed the moment their code exists.
+        _STORE.pick_questions(issued["code"], act["id"], act.get("show_n") or 0)
         from gini.domain.ticket import Ticket
         self._send(200, {"ok": True, "activity": act["id"], "title": act["title"],
                          "brief": act.get("brief", ""),
+                         "draft": bool(issued.get("draft")),
                          "code": Ticket(issued["code"]).pretty,
                          "vend_until": act["vend_until"], "valid_until": issued["valid_until"],
                          "session_minutes": act["session_minutes"]})
@@ -422,7 +449,11 @@ class Handler(BaseHTTPRequestHandler):
                 out = []
                 for a in _STORE.activities(course):
                     out.append({**a, "vended": len(_STORE.codes_for(a["id"])),
-                                "submitted": len(_STORE.activity_submissions(a["id"]))})
+                                "submitted": len(_STORE.activity_submissions(a["id"])),
+                                # Staff-only route (the auth gate is just above) and the
+                                # console needs these to fill the editor. Keys included:
+                                # this is the one place a teacher edits them.
+                                "questions": _STORE.questions(a["id"])})
                 return self._send(200, out)
             if p == "/api/materials":
                 return self._send(200, _STORE.materials(course))
@@ -443,8 +474,11 @@ class Handler(BaseHTTPRequestHandler):
             if not self._may(act.get("course", "")):
                 return self._send(403, {"error": "That is not your course."})
             twins = _STORE.artifact_twins(row.get("artifact_hash", ""), exclude_code=row["code"])
-            return self._send(200, _act.report(row, act, twins,
-                                              _STORE.claim_attempts(row["receipt"])))
+            return self._send(200, _act.report(
+                row, act, twins, _STORE.claim_attempts(row["receipt"]),
+                # A staff-only route, so the key travels: a marker reading a transcript wants the
+                # expected answer beside the given one. Nothing compares them.
+                questions=_STORE.questions_for_code(row["code"])))
 
         self._send(404, {"error": f"No endpoint at {p} for {self.command}."})
 
@@ -466,6 +500,12 @@ class Handler(BaseHTTPRequestHandler):
                                                         b.get("role", "teacher")))
             if p == "/api/staff/delete":
                 return self._send(200, _ACCTS.remove_staff(b.get("username", "")))
+            if p == "/api/staff/reset":
+                # `by` is taken from the SESSION, never from the body — it decides whether this is
+                # a self-reset, which is refused, and a caller must not get to answer that.
+                me = self._who() or {}
+                return self._send(200, _ACCTS.reset_staff(b.get("username", ""),
+                                                          by=me.get("who", "")))
             if p == "/api/staff/role":
                 return self._send(200, _ACCTS.set_role(b.get("username", ""),
                                                        b.get("role", "teacher")))
@@ -507,6 +547,8 @@ class Handler(BaseHTTPRequestHandler):
 
         if p == "/api/activities/save":
             return self._send(200, self._save_activity(course, b))
+        if p == "/api/activities/newlink":
+            return self._send(200, self._new_link(course, b))
         if p == "/api/activities/release":
             return self._send(200, self._set_released(course, b, True))
         if p == "/api/activities/unrelease":
@@ -552,23 +594,59 @@ class Handler(BaseHTTPRequestHandler):
             mins = _number(b.get("session_minutes"), prev.get("session_minutes"), 60, int)
         except ValueError:
             return {"ok": False, "error": "Minutes per attempt must be a number."}
-        if mins <= 0:
-            return {"ok": False, "error": "Minutes per attempt must be more than zero."}
+        if mins < 0:
+            # 0 is ALLOWED and meaningful: it means "no timed attempt — the lab is due when
+            # vending stops". Rejecting it (as this did) left a teacher no way to run a lab with a
+            # fixed hand-in time; they had to guess a duration and every student got a different
+            # effective deadline. See activities.valid_until_for.
+            return {"ok": False, "error": "Minutes per attempt cannot be negative. "
+                                          "Use 0 for a lab that is simply due at the deadline."}
         try:
             grace = _number(b.get("grace_minutes"), prev.get("grace_minutes"), 0, int)
         except ValueError:
             return {"ok": False, "error": "The grace period must be a number of minutes."}
         if grace < 0:
             return {"ok": False, "error": "The grace period cannot be negative."}
+        try:
+            show_n = _number(b.get("show_n"), prev.get("show_n"), 0, int)
+        except ValueError:
+            return {"ok": False, "error": "How many questions to ask must be a number."}
+        questions = [q for q in (b.get("questions") or [])
+                     if isinstance(q, dict) and str(q.get("prompt", "")).strip()]
+        if show_n < 0:
+            return {"ok": False, "error": "How many questions to ask cannot be negative."}
+        if show_n > len(questions):
+            return {"ok": False,
+                    "error": f"You asked to show {show_n} questions but wrote "
+                             f"{len(questions)}."}
         _STORE.activity_put({
-            "id": aid, "course": course, "lab": lab,
+            "id": aid, "course": course, "lab": lab, "show_n": show_n,
+            # Minted on first save and kept. An edit must NOT rotate it: the link is already in a
+            # course announcement, and silently invalidating it would look like the server broke.
+            # Rotating is a deliberate act — see /api/activities/newlink.
+            "release_code": prev.get("release_code") or _act.mint_release_code(),
             "title": b.get("title") or prev.get("title") or lab,
             "brief": b.get("brief", prev.get("brief", "")),
             "status": prev.get("status", "draft"),
             "vend_until": vend, "session_minutes": mins, "grace_minutes": grace,
             "created": prev.get("created") or time.time(),
             "released": prev.get("released", 0)})
+        _STORE.questions_put(aid, questions)
         return {"ok": True, "activity": aid, "status": prev.get("status", "draft")}
+
+    def _new_link(self, course: str, b: dict) -> dict:
+        """Rotate one lab's release code. Every link already handed out stops working.
+
+        Separate from Save precisely because Save must NOT do it: a teacher fixing a typo in a
+        brief would otherwise silently break a link that is already in a course announcement. This
+        is the button for "that link leaked" — a deliberate act, with the consequence stated.
+        """
+        aid = _act.activity_id(course, (b.get("lab") or "").strip().lower())
+        if not _STORE.activity(aid):
+            return {"ok": False, "error": "No such lab."}
+        code = _act.mint_release_code()
+        _STORE.activity_set_release_code(aid, code)
+        return {"ok": True, "release_code": code}
 
     def _set_released(self, course: str, b: dict, on: bool) -> dict:
         aid = _act.activity_id(course, (b.get("lab") or "").strip().lower())
@@ -808,9 +886,34 @@ def _tls_context(cert: str, key: str) -> "ssl.SSLContext":
     return ctx
 
 
+def backfill_release_codes() -> list[str]:
+    """Give every pre-existing lab a release code. Returns the ids it touched.
+
+    Release codes are required, and a lab saved before they existed has none — which would leave
+    it either permanently unreachable or permanently unguarded depending on which way the check
+    fell. Backfilling makes the rule true of every row rather than of every row created from now
+    on.
+
+    THE LINKS ALREADY SENT TO STUDENTS STOP WORKING when this runs, and there is no way around
+    that: a code that the old links happen to satisfy is not a code. The teacher re-copies the link
+    from the console, which now shows it in full. Said out loud at startup so it is not discovered
+    from a student's email.
+    """
+    stale = _STORE.activities_missing_release_code()
+    for a in stale:
+        _STORE.activity_set_release_code(a["id"], _act.mint_release_code())
+    return [a["id"] for a in stale]
+
+
 def serve(host: str = "0.0.0.0", port: int = PORT,
           tls_cert: str = "", tls_key: str = "") -> None:
     MATERIALS.mkdir(parents=True, exist_ok=True)
+    touched = backfill_release_codes()
+    if touched:
+        print(f"Gave {len(touched)} existing lab(s) a release code. Their student links have "
+              f"CHANGED — re-copy each one from the console before sharing it:")
+        for aid in touched:
+            print(f"    {aid}")
 
     # TLS is not optional. It used to be, with a printed warning for the reachable case — and a
     # warning is not a control: the server still came up, staff still typed passwords into it, and

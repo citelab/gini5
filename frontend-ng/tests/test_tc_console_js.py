@@ -183,11 +183,27 @@ def test_the_console_notices_it_is_newer_than_its_server():
     Library tab rendering perfectly above "No endpoint at /api/references for GET", with nothing
     anywhere saying the answer is to restart the service."""
     js = scripts("console.html")
-    assert "BUILT_FOR" in js and "checkServerVersion" in js
+    assert "checkServerVersion" in js
     assert "boot()" in js or "async function boot" in js
     body = js.split("function checkServerVersion", 1)[1].split("\n}", 1)[0]
-    assert "ME.server" in body, "it must compare against what the SERVER reports"
+    assert "restart_needed" in body, "the SERVER decides; the page renders"
     assert "estart" in body, "the message has to say what to do about it"
+
+
+def test_the_page_does_not_carry_a_version_of_its_own():
+    """THE regression, and it shipped. The check used to compare against `BUILT_FOR = '6.4'`, a
+    literal typed into this file that every release had to remember to bump. 6.5.0 went out without
+    it, so the banner told every healthy server it was mid-upgrade, told its admin to restart, and
+    did not go away when they did — because nothing was wrong.
+
+    A version a human has to keep in sync is not a version check. There are two real versions and
+    only the server can see both, so the comparison lives there."""
+    js = scripts("console.html")
+    code = "\n".join(ln for ln in js.split("\n") if not ln.strip().startswith("//"))
+    assert "BUILT_FOR" not in code
+    import re
+    assert not re.search(r"""=\s*['"]\d+\.\d+""", code), \
+        "a version literal is back in the console"
 
 
 def test_the_version_check_runs_before_anything_asks_for_an_endpoint():
@@ -195,3 +211,31 @@ def test_the_version_check_runs_before_anything_asks_for_an_endpoint():
     js = scripts("console.html")
     boot = js.split("async function boot()", 1)[1].split("\n}", 1)[0]
     assert "checkServerVersion()" in boot
+
+
+# -- submissions are binned by lab -------------------------------------------------------------- #
+# One flat list of every submission in a course is unreadable in a real class: hundreds of rows
+# across a term's labs, with no way to see where marking is outstanding. Submissions are binned by
+# lab, and a bin opens on click. These are structural guards — the node parse above is what catches
+# a syntax error, and test_tc_console_behaviour drives the real DOM when jsdom is installed.
+
+def test_the_submissions_list_is_binned_by_lab():
+    js = scripts("console.html")
+    assert "function drawSubs(" in js, "the binned renderer is gone"
+    assert "function toggleBin(" in js, "a bin must open on click"
+    assert "SUB_OPEN" in js, "which bins are open has to survive the refresh timer"
+
+
+def test_loading_submissions_delegates_to_the_binned_renderer():
+    """loadSubs used to write the table itself. It must now fetch and hand off, or a bin toggled
+    open would be flattened by the next poll."""
+    js = scripts("console.html")
+    body = js.split("async function loadSubs(")[1].split("function drawSubs(")[0]
+    assert "drawSubs()" in body
+    assert "sub-list" not in body, "loadSubs is writing the table again instead of delegating"
+
+
+def test_a_bin_header_carries_the_counts_a_teacher_triages_on():
+    js = scripts("console.html")
+    body = js.split("function drawSubs(")[1]
+    assert "submitted" in body and "unclaimed" in body and "late" in body

@@ -8,7 +8,7 @@ new mapping appears. Renders from an injected provider (offline DemoVm here; GDB
 """
 from __future__ import annotations
 
-from PySide6.QtCore import Qt
+from PySide6.QtCore import Qt, Signal
 from PySide6.QtGui import QColor, QPainter
 from PySide6.QtWidgets import (
     QDialog, QFrame, QGridLayout, QHBoxLayout, QHeaderView, QLabel, QPushButton, QTableWidget,
@@ -16,10 +16,22 @@ from PySide6.QtWidgets import (
 )
 
 from ..domain.xv6_vm import (
-    PGSIZE, DemoVm, ad_str, classify_faults, region_for, shared_frames,
+    DemoVm,
+    ad_str,
+    classify_faults,
+    region_for,
+    shared_frames,
 )
+from .live_poll import LivePollMixin
+from .no_data import has_data, paint_placeholder, panel_state, placeholder_for, title_for
 from .theme import ThemeManager, icons
 from .theme.manager import scale_css as _scss
+
+#: How often the live face re-reads. One round is three dumps (/vm, /vmall, /faults) and the
+#: serial line is the scarce resource, not the CPU — below the ~0.5 s tick so a student sees
+#: motion, above the point where the wire saturates. A constant, so a term of use can tune it
+#: from one place.
+MEMORY_POLL_MS = 1500
 
 _REGION_ACCENT = {"text": "blue", "data": "green", "heap": "cyan", "guard": "slate",
                   "stack": "amber", "trapframe": "purple", "trampoline": "red"}
@@ -64,10 +76,12 @@ class RegionStrip(QWidget):
         super().__init__()
         self.theme = theme
         self._regions = []
+        self._note = ""
         self.setMinimumHeight(60)
 
-    def set_regions(self, regions) -> None:
+    def set_regions(self, regions, note: str = "") -> None:
         self._regions = list(regions)
+        self._note = note
         self.update()
 
     def paintEvent(self, _e) -> None:
@@ -75,6 +89,9 @@ class RegionStrip(QWidget):
         t = self.theme.theme
         p.fillRect(self.rect(), QColor(t.panel2))
         if not self._regions:
+            # Was a bare `return`: an empty strip with no explanation, which reads as "this
+            # process has no address space" — not a thing that can be true.
+            paint_placeholder(p, self.rect(), t, self._note)
             return
         floor = 0.07
         raw = [min(max(r.pages, 1), 64) for r in self._regions]   # clamp huge stacks
@@ -101,16 +118,21 @@ class PhysBar(QWidget):
         super().__init__()
         self.theme = theme
         self._frac = 0.0
+        self._note = ""
         self.setMinimumHeight(26)
 
-    def set_frac(self, frac) -> None:
+    def set_frac(self, frac, note: str = "") -> None:
         self._frac = max(0.0, min(1.0, frac))
+        self._note = note
         self.update()
 
     def paintEvent(self, _e) -> None:
         p = QPainter(self)
         t = self.theme.theme
         p.fillRect(self.rect(), QColor(t.panel))
+        if self._note:                     # unknown is not the same picture as empty
+            paint_placeholder(p, self.rect(), t, self._note)
+            return
         p.fillRect(0, 0, int(self.width() * self._frac), self.height(),
                    QColor(t.accent_for("amber")))
 
@@ -129,10 +151,12 @@ class FragBar(QWidget):
         super().__init__()
         self.theme = theme
         self._free = self._total = self._run = 0
+        self._note = ""
         self.setMinimumHeight(34)
 
-    def set_values(self, free, total, max_run) -> None:
+    def set_values(self, free, total, max_run, note: str = "") -> None:
         self._free, self._total, self._run = int(free), int(total), int(max_run)
+        self._note = note
         self.update()
 
     def paintEvent(self, _e) -> None:  # noqa: N802
@@ -141,9 +165,9 @@ class FragBar(QWidget):
         t = self.theme.theme
         p.fillRect(self.rect(), QColor(t.panel))
         if self._total <= 0:
-            p.setPen(QColor(t.faint))
-            p.drawText(self.rect(), Qt.AlignCenter,
-                       "page allocator not reported — rebuild the xv6 image")
+            paint_placeholder(p, self.rect(), t, self._note or
+                              "page allocator not reported by this kernel build — "
+                              "rebuild the xv6 image")
             return
         w, h = self.width(), self.height()
         used_frac = 1.0 - (self._free / self._total)
@@ -158,13 +182,22 @@ class FragBar(QWidget):
         p.drawRect(x + 1, 6, max(2, int(w * run_frac) - 2), h - 12)
 
 
-class MemoryLab(QDialog):
+class MemoryLab(LivePollMixin, QDialog):
+    #: Carries (payload, ok) from the poll worker to the GUI thread. See live_poll.
+    snap_ready = Signal(object)
+
     def __init__(self, parent, theme: ThemeManager, device=None, provider=None,
-                 on_play=None, play_games=None) -> None:
+                 on_play=None, play_games=None, state=None) -> None:
         super().__init__(parent)
         self.theme = theme
         self.device = device
         self.provider = provider or DemoVm()
+        # The MachineState, when the lab has one. Reads go through it so every face, the OS HUD
+        # and the Ask GINI card share one cache and one lock — see MachineState.refresh_vm.
+        self.state = state
+        # Decided here rather than in _build_faults_panel, because the header and the poll both
+        # need it before that runs. A live reader cannot fake a fault; a demo one can.
+        self._live = not hasattr(self.provider, "simulate_fault")
         self._on_play = on_play             # callable(game_id) opening a game; may be None
         self._play_games = play_games or []  # [(label, game_id)]
 
@@ -176,7 +209,8 @@ class MemoryLab(QDialog):
         self._build_header(root)
 
         self._strip = RegionStrip(theme)
-        root.addWidget(self._panel("Address space  ·  regions (low → high VA)", self._strip))
+        self._strip_panel = self._panel("Address space  ·  regions (low → high VA)", self._strip)
+        root.addWidget(self._strip_panel)
 
         grid = QGridLayout(); grid.setSpacing(10); root.addLayout(grid, 1)
         # A/D = the accessed + dirty bits the hardware maintains. Every page-replacement policy
@@ -191,8 +225,11 @@ class MemoryLab(QDialog):
         # the COW / sharing view + per-process resident-vs-virtual meters (uses all_procs())
         root.addWidget(self._build_sharing_panel())
 
-        self._render(self.provider.snapshot())
+        # One synchronous read at open — a window appearing is when a user expects a pause, and
+        # every later read is off the GUI thread.
+        self._render(self._snapshot())
         self._render_sharing()
+        self._init_poll(MEMORY_POLL_MS, live=self._live)
 
     # -- header/panels ---------------------------------------------------- #
     def _build_header(self, root) -> None:
@@ -214,6 +251,16 @@ class MemoryLab(QDialog):
         self._satp = QLabel(); self._satp.setStyleSheet(
             _scss(f"color:{t.muted};font-family:monospace;font-size:11px;"))
         head.addWidget(self._satp)
+        # Live mode gets a rate chip and a Pause. Pause is pedagogical rather than a nicety: a
+        # student reading a page table wants it to hold still while they read it.
+        self._chip = QLabel("live")
+        self._chip.setStyleSheet(_scss(f"color:{t.accent_for('green')};font-size:11px;"))
+        self._pause = QPushButton("Pause"); self._pause.setCheckable(True)
+        self._pause.setStyleSheet(self._btn_css())
+        self._pause.toggled.connect(self._on_pause)
+        for w in (self._chip, self._pause):
+            w.setVisible(self._live)
+            head.addWidget(w)
         root.addLayout(head)
         hint = QLabel("The process address space, its leaf page-table mappings (VA→PA with "
                       "R/W/X/U), and the physical allocator. Simulate a fault to watch demand "
@@ -229,6 +276,7 @@ class MemoryLab(QDialog):
         h = QLabel(title); h.setStyleSheet(
             _scss(f"color:{t.muted};font-size:11px;font-weight:600;border:none;"))
         v.addWidget(h)
+        f.title_label = h                  # so _render can mark it "(derived)"
         inner.setStyleSheet((inner.styleSheet() or "") + "border:none;")
         v.addWidget(inner, 1 if fill else 0)
         return f
@@ -268,15 +316,21 @@ class MemoryLab(QDialog):
     def _build_faults_panel(self) -> QFrame:
         t = self.theme.theme
         f, v = self._framed("Page faults  ·  live ring (classified)")
+        # "is my page-fault handler being called at all?" — the first question a student
+        # debugging the vm shadow needs answered, parsed since the counters existed and never
+        # once displayed. handled == 0 with faults falling through is THE failure state, so it
+        # goes amber: legible from across a lab room.
+        self._vmf_lbl = f.note_label
         self._fault_tbl = self._table(["pid", "VA", "cause", "kind"])
         v.addWidget(self._fault_tbl, 1)
-        self._live = not hasattr(self.provider, "simulate_fault")   # live reader can't fake a fault
-        btn = QPushButton("  Refresh" if self._live else "  Simulate page fault")
+        btn = QPushButton("  Refresh now" if self._live else "  Simulate page fault")
         btn.setToolTip("Re-read the live fault ring + page tables (launch `alloc` from the "
                        "scheduler window to make real faults)" if self._live else
                        "Grow the stack by one page via a simulated demand fault")
         btn.setIcon(icons.icon("send", t.accent_for("amber"), 14))
-        btn.clicked.connect(self._on_fault)
+        # Live: kick the poll, which reads OFF the GUI thread. The old wiring ran the whole
+        # three-dump round inline and froze the window for it.
+        btn.clicked.connect((lambda: self._tick()) if self._live else self._on_fault)
         btn.setStyleSheet(self._btn_css())
         v.addWidget(btn)
         return f
@@ -319,21 +373,61 @@ class MemoryLab(QDialog):
         v = QVBoxLayout(f); v.setContentsMargins(10, 8, 10, 10)
         h = QLabel(title); h.setStyleSheet(
             _scss(f"color:{t.muted};font-size:11px;font-weight:600;border:none;"))
-        v.addWidget(h)
+        # Title left, an optional live note right — the fault panel puts the vm-shadow counters
+        # there, where they sit beside the thing they describe rather than below it.
+        note = QLabel(); note.setStyleSheet(_scss(f"color:{t.muted};font-size:11px;border:none;"))
+        row = QHBoxLayout(); row.setContentsMargins(0, 0, 0, 0)
+        row.addWidget(h); row.addStretch(1); row.addWidget(note)
+        v.addLayout(row)
+        f.title_label, f.note_label = h, note
         return f, v
 
     # -- actions ---------------------------------------------------------- #
     def _on_fault(self) -> None:
         fn = getattr(self.provider, "simulate_fault", None)
-        self._render(fn() if callable(fn) else self.provider.snapshot())
+        self._render(fn() if callable(fn) else self._snapshot())
         self._render_sharing()
 
     def _on_cow(self) -> None:
         fn = getattr(self.provider, "simulate_cow_write", None)
         if callable(fn):
             fn()
-        self._render(self.provider.snapshot())
+        self._render(self._snapshot())
         self._render_sharing()
+
+    def _on_pause(self, on: bool) -> None:
+        self.set_paused(on)
+        self._pause.setText("Resume" if on else "Pause")
+        self._chip.setText(self.poll_caption())
+
+    def _snapshot(self):
+        """One read of the VM face, through MachineState when there is one (shared cache + lock)."""
+        if self.state is not None:
+            return self.state.refresh_vm()
+        return self.provider.snapshot()
+
+    def _read(self):
+        """OFF the GUI thread — one coalesced round: page table, all-procs, fault ring.
+
+        These three used to be fetched from INSIDE _render and _render_sharing, i.e. on the GUI
+        thread, each one a dump over the serial. Moving them here is the whole point of the poll;
+        leaving one behind would defeat it.
+        """
+        snap = self._snapshot()
+        if snap is None:
+            return None
+        return (snap, self._all_procs(), self._all_procs_faults())
+
+    def _render_live(self, payload, fresh: bool) -> None:
+        if payload is None:                       # nothing good has ever arrived
+            self._chip.setText("no reading yet")
+            return
+        snap, procs, faults = payload
+        self._render(snap, procs, faults)
+        self._render_sharing(procs)
+        # "stale" says the picture is real but old. A failed read must never blank a good one —
+        # a face that flickers between data and an error is worse than one that holds still.
+        self._chip.setText(self.poll_caption() + ("" if fresh else "  ·  stale"))
 
     def _all_procs(self) -> dict:
         fn = getattr(self.provider, "all_procs", None)
@@ -342,11 +436,17 @@ class MemoryLab(QDialog):
         except Exception:
             return {}
 
-    def _fault_rows(self, snap):
-        """(pid, va, cause, kind) rows. Live: the classified fault RING; demo: the simulated log."""
+    def _fault_rows(self, snap, procs=None, faults=None):
+        """(pid, va, cause, kind) rows. Live: the classified fault RING; demo: the simulated log.
+
+        `procs`/`faults` arrive pre-read from the poll worker. None means "fetch them here",
+        which is the button and demo path — and on the GUI thread, which is why the poll passes
+        them in rather than letting this reach for the wire.
+        """
         if self._live:
-            faults = classify_faults(self._all_procs_faults(), self._all_procs())
-            return [(f.pid, f.va, f.cause, f.kind) for f in faults]
+            procs = self._all_procs() if procs is None else procs
+            faults = self._all_procs_faults() if faults is None else faults
+            return [(f.pid, f.va, f.cause, f.kind) for f in classify_faults(faults, procs)]
         return [(getattr(f, "pid", None), f.va, f.cause, "") for f in snap.faults]
 
     def _all_procs_faults(self):
@@ -356,9 +456,9 @@ class MemoryLab(QDialog):
         except Exception:
             return []
 
-    def _render_sharing(self) -> None:
+    def _render_sharing(self, procs=None) -> None:
         t = self.theme.theme
-        procs = self._all_procs()
+        procs = self._all_procs() if procs is None else procs
         # per-process resident-vs-virtual meters (rebuild)
         while self._proc_box.count():
             w = self._proc_box.takeAt(0).widget()
@@ -391,10 +491,15 @@ class MemoryLab(QDialog):
                     it.setForeground(QColor(t.accent_for("purple")))
                 self._share_tbl.setItem(r, c, it)
 
-    def _render(self, snap) -> None:
+    def _render(self, snap, procs=None, faults=None) -> None:
         t = self.theme.theme
         self._satp.setText(f"satp = {hex(snap.satp)}")
-        self._strip.set_regions(snap.regions)
+        # -- address space ---------------------------------------------------- #
+        rstate = panel_state(snap, "regions")
+        self._strip.set_regions(snap.regions if has_data(snap, "regions") else [],
+                                placeholder_for(rstate, "address-space map"))
+        self._strip_panel.title_label.setText(
+            title_for("Address space  ·  regions (low → high VA)", rstate))
         # page table
         leaves = sorted(snap.leaves, key=lambda p: p.va)
         self._pt_tbl.setRowCount(len(leaves))
@@ -410,27 +515,45 @@ class MemoryLab(QDialog):
                 elif c == 3:                       # touched pages stand out from cold ones
                     it.setForeground(QColor(t.accent_for("amber") if "A" in ad else t.faint))
                 self._pt_tbl.setItem(r, c, it)
-        # physical memory
+        # -- physical memory -------------------------------------------------- #
+        # NEVER a zero here. "0 used / 0 free of 0 pages" is not an empty allocator, it is an
+        # unread one, and it was on screen beside a working fragmentation gauge fed by the very
+        # same KA line — the two panels contradicting each other about free memory.
         ph = snap.phys
-        self._phys_bar.set_frac(ph.used_frac)
-        self._phys_lbl.setText(
-            f"{ph.used_pages:,} used / {ph.free_pages:,} free of {ph.total_pages:,} pages "
-            f"({ph.used_frac * 100:.1f}% used · {ph.free_pages * 4 // 1024} MB free)")
-        # S3: the allocator's own bitmap counters (0 on a kernel without the page bitmap)
+        if has_data(snap, "phys"):
+            self._phys_bar.set_frac(ph.used_frac)
+            self._phys_lbl.setText(
+                f"{ph.used_pages:,} used / {ph.free_pages:,} free of {ph.total_pages:,} pages "
+                f"({ph.used_frac * 100:.1f}% used · {ph.free_pages * 4 // 1024} MB free)")
+        else:
+            why = placeholder_for(panel_state(snap, "phys"), "physical memory")
+            self._phys_bar.set_frac(0.0, why)
+            self._phys_lbl.setText(why)
+        # S3: the allocator's own bitmap counters
         free, total = getattr(snap, "free_pages", 0), getattr(snap, "total_pages", 0)
         run = getattr(snap, "max_free_run", 0)
-        self._frag_bar.set_values(free, total, run)
-        if total:
+        if has_data(snap, "frag") and total:
+            self._frag_bar.set_values(free, total, run)
             frag = 1.0 - (run / free) if free else 0.0
             self._frag_lbl.setText(
                 f"largest contiguous free run: {run:,} pages ({run * 4 // 1024} MB) of "
                 f"{free:,} free — {frag * 100:.0f}% of free memory is NOT in that run"
                 + ("   ·   healthy" if frag < 0.15 else "   ·   fragmented"))
         else:
-            self._frag_lbl.setText(
-                "fragmentation needs the page-allocator bitmap — rebuild the xv6 image")
+            why = placeholder_for(panel_state(snap, "frag"), "page allocator")
+            self._frag_bar.set_values(0, 0, 0, why)
+            self._frag_lbl.setText(why)
+        # -- the vm shadow's own scoreboard ------------------------------------ #
+        if "vmfault" in (getattr(snap, "have", ()) or ()):
+            hd, fell = snap.vmf_handled, snap.vmf_fell
+            self._vmf_lbl.setText(f"your handler: {hd:,} handled  ·  {fell:,} fell through")
+            self._vmf_lbl.setStyleSheet(_scss(
+                f"color:{t.accent_for('amber') if (hd == 0 and fell) else t.muted};"
+                f"font-size:11px;border:none;"))
+        else:
+            self._vmf_lbl.setText("")
         # faults — the live classified ring (or the simulated demo log)
-        rows = self._fault_rows(snap)
+        rows = self._fault_rows(snap, procs, faults)
         self._fault_tbl.setRowCount(len(rows))
         for r, (pid, va, cause, kind) in enumerate(rows):
             cells = ["" if pid is None else str(pid), hex(va), cause, kind]

@@ -1,8 +1,13 @@
 # GINI — project context
 
-Orientation for anyone (human or agent) working in this repo. Written 2026-09-09 against
-`a15a2d4` (`master`, 11 commits past tag `v6.4.0`). Facts here were verified against the tree and
-git history, not copied from the README — where a doc in the repo is stale, this file says so.
+Orientation for anyone (human or agent) working in this repo. Written 2026-09-09, and refreshed
+the same day against `origin/master` at tag **v6.11.2** after merging 50 upstream commits into
+this branch. Facts here were verified against the tree and git history, not copied from the
+README — where a doc in the repo is stale, this file says so.
+
+> **Counts go stale fast.** This tree moved 2,956 → 3,389 tests in the 50 commits between
+> 2026-08-31 and 2026-09-09. Re-derive a number before relying on it; do not cite this file
+> as the source for one.
 
 ---
 
@@ -74,10 +79,10 @@ scripts/            dev.sh · release.sh · images.sh
 `gini/__init__.py`. The CI workflows assert this on the built wheels. Installing one without the
 other gives a working install of a broken import.
 
-Sizes: ~66k lines of Python across the three packages; ~23k lines of C in the gRouter;
-2,956 tests.
+Sizes: ~70k lines of Python across the three packages; ~23k lines of C in the gRouter;
+3,389 tests.
 
-### `core/src/gini/domain/` — 71 modules, all pure and unit-testable
+### `core/src/gini/domain/` — 72 modules, all pure and unit-testable
 
 The substrate everything else reasons over. Highlights:
 
@@ -93,7 +98,7 @@ The substrate everything else reasons over. Highlights:
 
 ### `frontend-ng/src/gini/` — the app
 
-- `ui/` (58 modules) — `main_window.py` (4,083 lines, the god object), `canvas.py`, `inspector.py`,
+- `ui/` (62 modules) — `main_window.py` (4,210 lines, the god object), `canvas.py`, `inspector.py`,
   `assistant.py` (Ask GINI panel), and the **Labs**: `machine_lab.py` (xv6), `router_lab.py`,
   `memory_lab.py`, `storage_lab.py`, `trap_lab.py`, `syscall_lab.py`, `lock_lab.py`, `cpu_lab.py`,
   plus the HUDs (`routing_hud`, `flow_hud`, `os_hud`, `mcast_hud`).
@@ -168,7 +173,8 @@ inversion — it's what makes rebuild-without-restarting-the-container possible)
 *running* machine and hot-rebuilds, without forking xv6.
 
 `docs/manual/` (17 pages) is an excellent, honest reference for all of this — architecture, wire
-protocol, every face, and a **verified known-issues page**. Read it before touching xv6.
+protocol, every face, and a **known-issues page carrying 17 verified entries**. Read it before
+touching xv6 — and read **§17** before adding a background read to any UI face.
 
 ### The AI layer
 
@@ -319,13 +325,33 @@ The code behind each door still compiles, is still refactored, and is still test
    Python attribute still reads fine after the C++ object is gone, so the guard was never load-
    bearing here. This was ownership, not a check.
 
-   The fix is `run_off_gui()` in `ui/worker_host.py` (rule 4) — it pins the owner in a GUI-thread
-   registry for the duration of the call and releases it through a singleton reaper, so the widget
-   is always destroyed on the GUI thread. All 72 call sites across 20 files now go through it;
-   `grep 'threading.Thread(' src/gini/ui/` should stay empty. After: 0 crashes in 30 runs, and the
-   full suite is green (2,934 passed / 22 skipped / 0 failed).
-   (Measured with Python 3.13.13 / PySide6 6.11.2 / macOS offscreen. The project targets 3.10–3.12;
-   the ownership bug is version-independent, but how loudly it crashes is not.)
+   **Upstream found the same bug independently, and there are now two remedies in the tree — a
+   decision is owed before this branch merges.**
+
+   *Upstream's* (`39ef5c8`, and `docs/manual/os-15-known-issues.md` **§17**, which states the bug
+   class properly and is the canonical write-up): `ui/live_poll.py`'s `LivePollMixin` sets
+   `_closed` first and **joins** the worker in `stop_polling()`; the one-shot catch worker holds a
+   weakref plus a bounded join. A join is a real guarantee, and it also closes the *other* death
+   mode — `deleteLater()` destroying the dialog under an in-flight `emit()`. Upstream applied it to
+   the Trap, Memory and File System faces and **deliberately deferred the face-by-face sweep**.
+
+   *This branch's*: `run_off_gui()` in `ui/worker_host.py` (rule 4) pins the owner in a GUI-thread
+   registry for the call and releases it through a singleton reaper, so the widget is always
+   destroyed on the GUI thread. It is a one-line change per call site, which is what let it cover
+   every remaining face at once — 74 sites across 20 files.
+
+   **Be clear about the limit:** `run_off_gui` fixes destruction-on-the-worker-thread. It does
+   **not** fix an `emit()` into a dialog that `deleteLater()` is destroying, because C++ teardown
+   ignores Python references. The join does. So the two are not equivalent, and the sweep is not a
+   substitute for §17's rule — it is a cheap floor under the faces nobody has converted yet.
+   `trap_lab.py` here is **exactly upstream's**; `grep 'threading.Thread(' src/gini/ui/` should show
+   only `worker_host.py` and `live_poll.py`.
+
+   Measured before the merge: 0 crashes in 30 runs of the file that crashed 20/30. Full suite after
+   the merge: 3,369 passed / 20 skipped / 0 failed, including upstream's suite-wide
+   `_no_leaked_threads` fixture.
+   (Python 3.13.13 / PySide6 6.11.2 / macOS offscreen. The project targets 3.10–3.12; the ownership
+   bug is version-independent, how loudly it crashes is not.)
 
 4. **CI runs the tests — added on this branch** (`.github/workflows/tests.yml`). Until then
    `.github/workflows/` held three *publish* workflows and nothing else, so the only gate was
@@ -349,9 +375,9 @@ The code behind each door still compiles, is still refactored, and is still test
    is the common case on a runner and was the actual cause here. The two are indistinguishable
    from outside, which is why the answer is to stop letting apt decide and ask Qt instead.
 
-   **A runner has no Docker, so the expected result there is 2,931 passed / 25 skipped**, not the
-   2,934 / 22 you get locally with Docker up. Three tests skip rather than run. Verified by
-   re-running the suite with `docker` off `PATH`.
+   **A runner has no Docker**, so three Docker-gated tests skip rather than run and its totals sit
+   three below a local run with Docker up. Verified by re-running the suite with `docker` off
+   `PATH`. Don't hard-code the pair of numbers here — see the staleness note at the top.
 
    One more thing the workflow taught, worth keeping because it is not about CI at all:
    `test_packaging.py` enumerates `.github/workflows/*.yml` and asserts things about publishing.
@@ -367,7 +393,7 @@ The code behind each door still compiles, is still refactored, and is still test
 
 - ~~`ARCHITECTURE.md` describes the Zig build~~ — **rewritten on this branch.** It had drifted
   badly: `build.zig` / "`zig build`" and "still being ported to Zig (Z3/Z4)" (Zig was removed
-  2026-07-16), "35 passing" tests (2,956), and a `frontend-ng/` layout with `domain/` inside it
+  2026-07-16), "35 passing" tests (3,389), and a `frontend-ng/` layout with `domain/` inside it
   (moved to `core/` on 2026-08-28). It now covers all three distributions, the four container
   images, the namespace split and the run pipeline, and every count in it was checked against the
   tree. The README calls it "the full map", so it is worth keeping honest.
@@ -409,9 +435,11 @@ Present: `docs/REASONING_2.0_DESIGN.md`, `docs/LEARNER_MODEL_DESIGN.md`,
   `01ab521` incident: it swept up the maintainer's unstaged manual pages and untracked design doc
   into an agent's commit, under the agent's authorship. **Stage deliberately.** Check
   `git status` before any commit, and never commit files you did not write.
-- The repo is a **snapshot**, not a live clone of upstream: local `master` == `origin/master` ==
-  `a15a2d4`, local tags stop at `v6.4.0`, but **PyPI's `gini-core` is already at 6.7.0**. Upstream
-  has moved on. Fetch before starting real work, and expect to rebase.
+- **Fetch before you start.** When this file was first written the checkout was 50 commits and
+  seven tags behind `origin/master` without any local sign of it — `git status` said clean, and the
+  only tell was PyPI's `gini-core` being four minor versions ahead of the newest local tag. That
+  gap is merged into this branch now (upstream at `v6.11.2`), but the habit is the point: `git
+  fetch --all --tags` first, every time.
 - **This machine's environment is not a dev install.** Only `gini-core 6.7.0` (from PyPI) is
   installed, plus a `gbuilder` in `~/.local/bin`. That PyPI core *shadows* `core/src` unless you run
   `./scripts/dev.sh install` in a venv. `pytest-qt` is missing, so 86 `qtbot` tests error out
@@ -421,6 +449,7 @@ Present: `docs/REASONING_2.0_DESIGN.md`, `docs/LEARNER_MODEL_DESIGN.md`,
   so `git log` will not explain design decisions from before 2026-06-15 — the docstrings will.
 - **Branches**: work has been landing on `os-improvements` and merged to `master` via PRs
   (#70–#85). `cloud-sdn` carried the June/July work.
-- Baseline for "did I break something": **2,934 passed, 22 skipped, 0 failed** on this machine
-  (`QT_QPA_PLATFORM=offscreen`, ~3m). Install `pytest-qt` first or 86 tests error out with
-  "fixture 'qtbot' not found" — that is the environment, not the code.
+- Baseline for "did I break something": **3,369 passed, 20 skipped, 0 failed** on this machine
+  (`QT_QPA_PLATFORM=offscreen`, ~4m) at `origin/master` + this branch. Install `pytest-qt` first or
+  86 tests error out with "fixture 'qtbot' not found" — that is the environment, not the code.
+  Re-derive the number rather than trusting this line; it moved by 400 in nine days.

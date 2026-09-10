@@ -50,6 +50,12 @@ def plan(app_version: str | None, *, run=subprocess.run, backend_hint: str | Non
     os_name = runtime.detect_os()
     rt_state = runtime.docker_state(run=run)          # "ok" | "stopped" | "missing"
     have_docker = rt_state == "ok"
+    # The daemon answers but the Compose plugin is absent: images CAN be fetched and nothing can
+    # be Run. A fourth state rather than folding it into "stopped", for the same reason "stopped"
+    # was split from "missing" — the advice is different, and the wrong advice sends somebody to
+    # start an engine that is already running.
+    if have_docker and not runtime.compose_available(run=run):
+        rt_state = "no_compose"
     backend = images.find_backend(backend_hint)
     done = marker.is_setup_done()
     stale = marker.needs_update(app_version or "")
@@ -59,7 +65,14 @@ def plan(app_version: str | None, *, run=subprocess.run, backend_hint: str | Non
     absent = (images.missing_locally(images.image_refs(app_version), run=run)
               if (have_docker and done and not stale) else [])
 
-    if rt_state == "stopped":
+    if rt_state == "no_compose":
+        rp = runtime.runtime_plan(os_name)
+        state, why = NEEDS_RUNTIME, (
+            "Docker is installed and running, but the Compose plugin it needs is missing — so "
+            "nothing can be started. `docker compose version` fails on this machine.\n\n"
+            f"{rp.get('compose', '')}\n\nBuilding and reading topologies works meanwhile; Run "
+            f"does not.")
+    elif rt_state == "stopped":
         # Installed, but the engine is not answering. Distinct from "missing" because the advice is
         # the opposite: telling somebody to install Docker when they already have it sends them to
         # fix the wrong thing, and never names the one action that works.
@@ -103,7 +116,7 @@ def plan(app_version: str | None, *, run=subprocess.run, backend_hint: str | Non
         "os": os_name,
         "arch": arch(),                    # shown, never used to choose an image
         "docker": have_docker,
-        "runtime_state": rt_state,   # "ok" | "stopped" | "missing"
+        "runtime_state": rt_state,   # "ok" | "stopped" | "missing" | "no_compose"
         "missing": absent,           # images the marker claimed but Docker lacks
         "source": str(backend) if backend else "",
         "app_version": app_version or "",
@@ -113,18 +126,25 @@ def plan(app_version: str | None, *, run=subprocess.run, backend_hint: str | Non
     }
 
 
-def execute(p: dict, *, on_step=None, run=subprocess.run) -> dict:
+def execute(p: dict, *, on_step=None, on_progress=None, run=subprocess.run) -> dict:
     """Carry out a plan. Returns `{ok, done, failed, message}`.
 
-    `on_step(text)` is called before each image so a UI can show progress. This blocks — the caller
-    runs it on a worker thread; a pull is minutes long and freezing the window for it would be a
-    worse first impression than the missing images.
+    `on_step(text)` is called before each image and `on_progress(fraction, text)` as it downloads,
+    so a UI can show where it has got to. This blocks — the caller runs it on a worker thread; a
+    pull is minutes long and freezing the window for it would be a worse first impression than the
+    missing images.
+
+    `on_progress` is what turns the panel's bar from indeterminate into a real one. It is optional
+    because passing it switches the pull from waited to STREAMED, and every test of this path
+    drives a fake `run` that never spawns anything — see `images.pull_one`.
     """
     state = p.get("state")
     if state in (READY, NEEDS_RUNTIME):
         return {"ok": state == READY, "done": [], "failed": [], "message": p.get("why", "")}
 
     say = on_step or (lambda _t: None)
+    tell = on_progress or (lambda _f, _t: None)
+    reasons: dict[str, str] = {}          # ref -> what docker actually said
 
     if state == BUILD:
         backend = Path(p["source"])
@@ -134,9 +154,22 @@ def execute(p: dict, *, on_step=None, run=subprocess.run) -> dict:
             results += images.build_images(backend, names=[name], run=run)
     else:
         results = []
-        for ref in p["refs"]:
-            say(f"Downloading {ref.rsplit('/', 1)[-1]}…")
-            results += images.pull_images([ref], run=run)
+        refs = list(p["refs"])
+        for i, ref in enumerate(refs):
+            short = ref.rsplit("/", 1)[-1]
+            say(f"Downloading {short}…   ({i + 1} of {len(refs)})")
+
+            def each(done, total, _i=i, _s=short, _n=len(refs)):
+                # Overall, not per-image: the images finished already count, and the one in flight
+                # contributes its own layer fraction. A bar that restarted at every image would
+                # look like four downloads rather than one job with four parts.
+                whole = (_i + (done / total if total else 0.0)) / _n
+                tell(whole, f"Downloading {_s}…   layer {done} of {total}"
+                            if total else f"Downloading {_s}…")
+
+            results += images.pull_images(
+                [ref], run=run, on_progress=each if on_progress else None,
+                on_error=lambda r, text: reasons.setdefault(r, text))
 
     done = [n for n, ok in results if ok]
     failed = [n for n, ok in results if not ok]
@@ -146,20 +179,34 @@ def execute(p: dict, *, on_step=None, run=subprocess.run) -> dict:
                              "tag": p.get("image_tag", ""),
                              "arch": p.get("arch", ""),
                              "images": done})
-    return {"ok": not failed, "done": done, "failed": failed,
-            "message": _outcome(state, done, failed, p)}
+    return {"ok": not failed, "done": done, "failed": failed, "reasons": reasons,
+            "message": _outcome(state, done, failed, p, reasons)}
 
 
-def _outcome(state: str, done: list, failed: list, p: dict) -> str:
+def _outcome(state: str, done: list, failed: list, p: dict, reasons: dict | None = None) -> str:
+    """What to tell someone when a setup run ends.
+
+    The failure text used to GUESS: "If this version was never published for arm64, that is the
+    likely reason." A student on an M3 met that on three separate versions while arm64 was
+    published and pulling fine elsewhere. The real cause was Docker's credential helper — printed
+    by docker on the very first attempt, and thrown away inside `pull_one` before anyone saw it.
+
+    Now it quotes docker. A reported reason is worth more than any explanation composed here,
+    because it is the only part of this that cannot be wrong — and, as that case showed, the cause
+    is often not GINI at all, which is precisely what a guess written here can never say.
+    """
     if not failed:
         return (f"{len(done)} image{'' if len(done) == 1 else 's'} ready. GINI can run topologies "
                 f"now.")
+    said = (reasons or {}).get(failed[0], "")
     if not done:
         verb = "build" if state == BUILD else "download"
-        extra = ("" if state == BUILD else
-                 f" If this version was never published for {p.get('arch')}, that is the likely "
-                 f"reason.")
-        return (f"None of the images could be {verb}ed.{extra} You can keep building and reading "
-                f"topologies; Run will not start until they are here.")
+        because = f"\n\n{said}" if said else (
+            "" if state == BUILD else
+            f"\n\nNo reason was reported. Check that Docker is running, then try "
+            f"`docker pull {failed[0]}` in a terminal — whatever that prints is the cause.")
+        return (f"None of the images could be {verb}ed.{because}\n\nYou can keep building and "
+                f"reading topologies; Run will not start until they are here.")
     return (f"{len(done)} ready, {len(failed)} could not be fetched: "
-            f"{', '.join(f.rsplit('/', 1)[-1] for f in failed)}.")
+            f"{', '.join(f.rsplit('/', 1)[-1] for f in failed)}."
+            + (f"\n\n{said}" if said else ""))

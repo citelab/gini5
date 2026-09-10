@@ -85,11 +85,56 @@ class Sim:
     def __init__(self) -> None:
         self.machines: dict[str, HostSim] = {}
         self._nodes: list = []
+        self._stop = threading.Event()
+        self._threads: list = []
 
     def start(self) -> None:
         for node in self._nodes:
-            threading.Thread(target=node.run, daemon=True).start()
+            t = threading.Thread(target=node.run, kwargs={"stop": self._stop}, daemon=True)
+            self._threads.append(t)
+            t.start()
         time.sleep(0.25)
+
+    def stop(self, timeout: float = 2.0) -> None:
+        """End every node's loop and wait for its thread.
+
+        A node's `run()` is a select loop meant to last as long as its container, so nothing here
+        ended on its own — and `simulate()` runs those nodes IN-PROCESS. In the test suite that
+        left a thread per node still selecting on live sockets for the rest of the session, which
+        showed up as a segfault inside an unrelated Qt test, minutes later and nowhere near the
+        cause. `test_integration.py` even documented the symptom ("the in-process sims don't
+        release their sockets") and skipped around it.
+
+        Also closes the ports, so the fixed UDP binds are free for the next sim rather than held
+        until the process exits.
+        """
+        self._stop.set()
+        for t in self._threads:
+            t.join(timeout=timeout)
+        self._threads.clear()
+        for node in self._nodes:
+            for port in getattr(node, "ports", None) or []:
+                try:
+                    port.sock.close()
+                except OSError:
+                    pass
+            for itf in getattr(node, "ifaces", None) or []:
+                try:
+                    itf.port.sock.close()
+                except OSError:
+                    pass
+            port = getattr(node, "port", None)
+            if port is not None:
+                try:
+                    port.sock.close()
+                except OSError:
+                    pass
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *_exc) -> None:
+        self.stop()
 
     def ping(self, src: str, dst_ip: str, timeout: float = 3.0) -> bool:
         host = self.machines[src]
@@ -778,6 +823,22 @@ def write_project(config: RuntimeConfig, workdir: str | Path, runtime_dir: str |
     return work
 
 
+def _yamlish(text: str) -> str:
+    """A value safe to drop inside SINGLE quotes in the generated compose file.
+
+    Two characters can leave that string, and both became reachable the moment the controller's
+    App turned into a box somebody types into:
+
+      '   ends the scalar. YAML's own escape for it inside single quotes is to double it.
+      $   is substituted by Compose BEFORE the YAML is parsed, so `--pass=$x` silently becomes
+          `--pass=` with a warning nobody reads. `$$` is the documented literal.
+
+    Neither appears in a plausible POX argument, which is exactly why it would have gone
+    unnoticed until the one student who typed one.
+    """
+    return str(text).replace("$", "$$").replace("'", "''")
+
+
 def _hostpath(p) -> str:
     """A host path for use inside the compose file: always forward slashes.
 
@@ -916,7 +977,7 @@ def _compose(config: RuntimeConfig, auto_internet: bool = True,
             "    networks: [gini]",
             "    ports:", term,
             "    environment:",
-            f"      POX_APP: '{c['app']}'",
+            f"      POX_APP: '{_yamlish(c['app'])}'",
             f"      POX_PORT: '{c['port']}'",
             *_term_env(c["name"]),
         ]
@@ -1170,6 +1231,9 @@ class Orchestrator:
 
     def up(self, config: RuntimeConfig, workdir: str | Path,
            auto_internet: bool = True, laptop_id: str = "") -> tuple[bool, str]:
+        ok, msg = self._ensure_compose()            # the thing that launches everything below
+        if not ok:
+            return False, msg
         if config.routers or config.ovs_switches:   # routers & OVS use the gRouter image
             ok, msg = self._ensure_grouter_image()
             if not ok:
@@ -1258,29 +1322,134 @@ class Orchestrator:
         except Exception:                                # noqa: BLE001 — no config = not enabled
             return False
 
+    @staticmethod
+    def _image_present(name: str, tries: int = 3, pause: float = 1.5) -> bool:
+        """Whether Docker holds this image — asked more than once, and that is the whole point.
+
+        Docker Desktop's Resource Saver pauses the VM when the machine goes idle. The first command
+        after it wakes reaches a daemon that ANSWERS — so this is not a connection failure and no
+        "is Docker running?" check catches it — out of an image store that has not finished
+        loading, and `docker image inspect gini-grouter` comes back "No such image" for an image
+        that is sitting right there. Seconds later the same command succeeds.
+
+        Concluding absence from one answer turned a two-second wake into "the gRouter image isn't
+        built yet", followed by a `docker build` command pointing into a `backend/` that a wheel
+        does not contain — so the advice was impossible to follow as well as wrong. Intermittently,
+        which is the worst way for it to be wrong.
+        """
+        for attempt in range(max(1, tries)):
+            r = subprocess.run(["docker", "image", "inspect", name],
+                               capture_output=True, text=True, encoding="utf-8",
+                               errors="replace")
+            if r.returncode == 0:
+                return True
+            if attempt + 1 < tries:
+                time.sleep(pause)
+        # Still no. Before believing it, ask a DIFFERENT question — see `_retag_if_orphaned`.
+        return Orchestrator._retag_if_orphaned(name)
+
+    @staticmethod
+    def _retag_if_orphaned(name: str) -> bool:
+        """Repair a name Docker has lost track of, and say whether the image is really here.
+
+        The work is in `setup.images.repair_tag`, because the SAME defect strikes twice from two
+        directions: Run refuses to start a topology, and `missing_locally` decides the images are
+        gone and re-downloads all four on every launch. One repair, one place, one explanation.
+
+        It matters here beyond the check: compose resolves `image: gini-grouter` through the same
+        index, so a run waved past a laxer test would fail deeper in with a far less legible
+        message.
+        """
+        try:
+            from ..setup.images import repair_tag
+            return repair_tag(name)
+        except Exception:                            # noqa: BLE001 — a repair must not raise
+            return False
+
+    @staticmethod
+    def _no_image_advice(image: str, build_cmd: str, have_backend: bool) -> str:
+        """What to actually do about a missing image, which depends on how GINI was installed.
+
+        From a wheel (pip or pipx) there is no `backend/` and never was, so telling someone to cd
+        into one is advice they cannot take. `gini-setup` is the answer there: it pulls the
+        published images and tags them under the plain names the runtime resolves.
+        """
+        if have_backend:
+            return (f"The image '{image}' isn't built yet.\n"
+                    f"Build it once (takes a couple of minutes):\n  {build_cmd}\n"
+                    f"…then press Run again.\n"
+                    f"(Or tick Settings → Networking → \"Build missing lab images "
+                    f"automatically\" and press Run — GINI will build it for you.)")
+        return (f"The image '{image}' is not on this machine.\n"
+                f"Fetch the lab images once:\n  gini-setup\n"
+                f"…then press Run again.")
+
+    def _docker_not_ready(self) -> str:
+        """"" when Docker can serve a lab, otherwise what is wrong with it.
+
+        Checked only on the failure path, and only to tell two different problems apart: a daemon
+        that is down needs starting, and a missing image needs fetching. The same distinction
+        `setup/runtime.docker_state` already draws, for the same reason — telling somebody who has
+        Docker to install Docker sends them off to fix the wrong thing.
+        """
+        try:
+            from ..setup.runtime import docker_state
+            state = docker_state()
+        except Exception:                                # noqa: BLE001
+            return ""
+        if state == "missing":
+            return "docker not found — is Docker installed?"
+        if state == "stopped":
+            return ("Docker is installed but its engine is not answering.\n"
+                    "Start Docker Desktop (or `colima start`), give it a moment, and press Run "
+                    "again.")
+        return ""
+
+    def _ensure_compose(self) -> tuple[bool, str]:
+        """Compose is what actually launches a topology, and it goes missing far more often than
+        Docker does.
+
+        Without this the failure surfaces as Docker's own argument parser, which names nothing:
+
+            Run failed: unknown flag: --build
+            Usage:  docker [OPTIONS] COMMAND [ARG...]
+
+        `docker compose up --build -d` on a CLI with no `compose` subcommand makes the TOP-LEVEL
+        parser reject the first flag it does not recognise. Nobody would read "install a plugin"
+        out of that, and a student who has just watched `docker ps` work has every reason to
+        believe Docker is fine — it is; Compose is a separate package on Linux and Ubuntu's
+        `docker.io` does not carry it.
+
+        Checked here as well as at first run because Docker can change underneath an install, and
+        this is where it actually bites.
+        """
+        from ..setup.runtime import compose_available, detect_os, runtime_plan
+        if compose_available():
+            return True, ""
+        rp = runtime_plan(detect_os())
+        return False, ("Docker is running, but `docker compose` is not available on this machine, "
+                       "so nothing can be started.\n\n" + rp.get("compose", "")
+                       + "\n\nCheck it with:  docker compose version")
+
     def _ensure_grouter_image(self) -> tuple[bool, str]:
         """The real gRouter runs from a locally-built image. Check it exists and, if we
         can find the backend, offer to build it — otherwise return the exact command."""
         if shutil.which("docker") is None:
             return False, "docker not found — is Docker installed and running?"
-        present = subprocess.run(["docker", "image", "inspect", GROUTER_IMAGE],
-                                 capture_output=True, text=True, encoding="utf-8", errors="replace")
-        if present.returncode == 0:
+        if self._image_present(GROUTER_IMAGE):
             return True, "image present"
         # locate the backend (repo_root/backend) relative to this file
         backend = Path(__file__).resolve().parents[4] / "backend"
         dockerfile = backend / "grouter-build" / "Dockerfile"
         build_cmd = (f"cd {backend} && docker build -f grouter-build/Dockerfile "
                      f"-t {GROUTER_IMAGE} .")
-        if not dockerfile.exists():
-            return False, (f"The real gRouter image '{GROUTER_IMAGE}' isn't built yet, and "
-                           f"I can't find the backend to build it.\nBuild it once:\n  {build_cmd}")
-        if not self._autobuild_enabled("GROUTER"):
-            return False, (f"The real gRouter image '{GROUTER_IMAGE}' isn't built yet.\n"
-                           f"Build it once (takes a couple of minutes):\n  {build_cmd}\n"
-                           f"…then press Run again.\n"
-                           f"(Or tick Settings → Networking → \"Build missing lab images "
-                           f"automatically\" and press Run — GINI will build it for you.)")
+        # Asked only now that the image looks absent, because a daemon that cannot answer looks
+        # exactly like one that has nothing — and the two need opposite advice.
+        down = self._docker_not_ready()
+        if down:
+            return False, down
+        if not dockerfile.exists() or not self._autobuild_enabled("GROUTER"):
+            return False, self._no_image_advice(GROUTER_IMAGE, build_cmd, dockerfile.exists())
         # opt-in auto-build
         b = subprocess.run(["docker", "build", "-f", "grouter-build/Dockerfile",
                             "-t", GROUTER_IMAGE, "."], cwd=str(backend),
@@ -1293,20 +1462,15 @@ class Orchestrator:
         """The SDN controller runs from a locally-built POX image."""
         if shutil.which("docker") is None:
             return False, "docker not found — is Docker installed and running?"
-        present = subprocess.run(["docker", "image", "inspect", POX_IMAGE],
-                                 capture_output=True, text=True, encoding="utf-8", errors="replace")
-        if present.returncode == 0:
+        if self._image_present(POX_IMAGE):
             return True, "image present"
         sdn = Path(__file__).resolve().parents[4] / "backend" / "sdn"
         build_cmd = f"cd {sdn} && docker build -t {POX_IMAGE} ."
-        if not (sdn / "Dockerfile").exists():
-            return False, (f"The POX image '{POX_IMAGE}' isn't built yet, and I can't find "
-                           f"backend/sdn to build it.\nBuild it once:\n  {build_cmd}")
-        if not self._autobuild_enabled("POX"):
-            return False, (f"The SDN controller image '{POX_IMAGE}' isn't built yet.\n"
-                           f"Build it once:\n  {build_cmd}\n…then press Run again.\n"
-                           f"(Or tick Settings → Networking → \"Build missing lab images "
-                           f"automatically\" and press Run — GINI will build it for you.)")
+        down = self._docker_not_ready()
+        if down:
+            return False, down
+        if not (sdn / "Dockerfile").exists() or not self._autobuild_enabled("POX"):
+            return False, self._no_image_advice(POX_IMAGE, build_cmd, (sdn / "Dockerfile").exists())
         b = subprocess.run(["docker", "build", "-t", POX_IMAGE, "."], cwd=str(sdn),
                            capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=1800)
         if b.returncode != 0:
@@ -1381,7 +1545,11 @@ class Orchestrator:
             if line.startswith("  ") and line.rstrip().endswith(":") and not line.startswith("   "):
                 in_block = (line.strip().rstrip(":") == service)
             if in_block and line.strip().startswith("POX_APP:"):
-                out.append(f"      POX_APP: '{app}'")
+                # Same escaping as when the file was generated. This path rewrites the compose
+                # file in place for a live app switch, so an App typed in the Inspector reaches
+                # YAML here too — by a different route, which is how one of two writers ends up
+                # forgotten.
+                out.append(f"      POX_APP: '{_yamlish(app)}'")
                 replaced = True
                 continue
             out.append(line)

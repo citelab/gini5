@@ -1121,8 +1121,11 @@ class RuntimeCompiler:
             # DIRECTORY (editors save via rename, which breaks a single-file mount). It lives under
             # the GINI home (~/.gini/xv6-shadows/<name>/) so it's stable + discoverable and the
             # student's edits PERSIST across Stop/Run (unlike the ephemeral compose workdir).
-            _sane = "".join(c if (c.isalnum() or c in "_.-") else "-" for c in d.name)
-            _shadows_host = _gini_home() / "xv6-shadows" / _sane
+            # ONE definition of this path. It is also what a submission gathers, and two copies
+            # of the rule would let GINI ship an empty directory while the student's real work sat
+            # somewhere else — with nothing anywhere looking wrong.
+            from .xv6_shadows import shadow_dir as _shadow_dir
+            _shadows_host = _shadow_dir(d.name)
             try:
                 _shadows_host.mkdir(parents=True, exist_ok=True)   # exists + user-owned before `up`
             except OSError:

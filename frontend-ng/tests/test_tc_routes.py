@@ -24,6 +24,14 @@ from pathlib import Path
 
 import pytest
 
+
+def _rc(lab: str = "lab1", course: str = "comp535") -> str:
+    """The lab's release code. A student link will not vend without it — see
+    `test_tc_release_code.py`. Imported lazily because each fixture rebuilds the server module."""
+    from gini_teaching_center import server
+    return ((server._STORE.activity(f"{course}/{lab}") or {}).get("release_code") or "")
+
+
 _TC = Path(__file__).resolve().parents[2] / "teaching-center" / "src"
 pytestmark = pytest.mark.skipif(not _TC.exists(), reason="teaching-center not checked out")
 if str(_TC) not in sys.path:
@@ -110,7 +118,7 @@ def test_the_student_endpoints_are_reachable_without_a_session(tc):
     first or no student can start or submit anything."""
     tc.signin("boss", "correct-horse")
     _released_lab(tc)
-    status, r = tc.call("/api/activity?course=comp535&lab=lab1", token="")
+    status, r = tc.call("/api/activity?course=comp535&lab=lab1&rc=" + _rc(), token="")
     assert status == 200 and r["ok"], r
     assert r["code"]
 
@@ -140,6 +148,41 @@ def test_a_teacher_cannot_reach_the_staff_routes(tc):
     assert tc.call("/api/staff", token=claimed["session"])[0] == 403
     assert tc.call("/api/staff", {"username": "eve"}, token=claimed["session"])[0] == 403
     assert tc.call("/api/courses", {"id": "x"}, token=claimed["session"])[0] == 403
+
+
+def test_only_an_admin_can_reset_a_password(tc):
+    """A reset ends every session and hands out a token that claims the account. A teacher who
+    could press it on another teacher would have a way to take over their colleague's courses."""
+    tc.signin("boss", "correct-horse")
+    _, added = tc.call("/api/staff", {"username": "ada", "role": "teacher"})
+    _, ada = tc.call("/auth/claim", {"id": "ada", "claim_token": added["claim_token"],
+                                     "password": "a-good-password"})
+    tc.call("/api/staff", {"username": "bob", "role": "teacher"})
+    assert tc.call("/api/staff/reset", {"username": "bob"}, token=ada["session"])[0] == 403
+    assert tc.call("/api/staff/reset", {"username": "bob"}, token="")[0] == 401
+
+
+def test_a_reset_signs_the_account_out_of_the_console(tc):
+    """Not just "the password no longer works" — the session they are holding right now stops
+    working on the next request, which is what a reset has to mean."""
+    tc.signin("boss", "correct-horse")
+    _, added = tc.call("/api/staff", {"username": "ada", "role": "teacher"})
+    _, ada = tc.call("/auth/claim", {"id": "ada", "claim_token": added["claim_token"],
+                                     "password": "a-good-password"})
+    assert tc.call("/auth/whoami", token=ada["session"])[0] == 200
+    _, r = tc.call("/api/staff/reset", {"username": "ada"})
+    assert r["ok"] and r["sessions_ended"] == 1
+    assert tc.call("/auth/whoami", token=ada["session"])[0] == 401
+
+
+def test_the_server_decides_whose_account_this_is_not_the_caller(tc):
+    """Self-reset is refused, and `by` therefore has to come from the SESSION. Taking it from the
+    body would let an admin send somebody else's name and reset themselves anyway — or, worse,
+    send their own and be refused a reset they were entitled to make."""
+    tc.signin("boss", "correct-horse")
+    _, r = tc.call("/api/staff/reset", {"username": "boss", "by": "somebody_else"})
+    assert not r["ok"] and "your own" in r["error"]
+    assert tc.call("/auth/whoami")[0] == 200        # still signed in; nothing half-applied
 
 
 def test_an_account_cannot_be_claimed_without_its_token(tc):
@@ -187,13 +230,29 @@ def test_staffing_a_course_grants_access(tc):
 
 
 # -- vending ------------------------------------------------------------------ #
-def test_a_draft_lab_vends_nothing(tc):
+def test_a_draft_lab_vends_nothing_to_a_guessed_url(tc):
+    """A draft is the teacher's private working copy and its brief describes an assignment nobody
+    has been set. Reaching it now takes the release code — the URL alone is not enough, and the
+    refusal names nothing, so trying tells a student neither that the lab exists nor that it is
+    a draft."""
     tc.signin("boss", "correct-horse")
     tc.call("/api/courses", {"id": "comp535", "title": "Networks"})
     tc.call("/api/activities/save", {"course": "comp535", "lab": "lab1", "title": "t",
                                      "vend_until": time.time() + HOUR})
-    _, r = tc.call("/api/activity?course=comp535&lab=lab1", token="")
-    assert not r["ok"] and r["reason"] == "not_released"
+    for rc in ("", "AAAA"):
+        _, r = tc.call(f"/api/activity?course=comp535&lab=lab1&rc={rc}", token="")
+        assert not r["ok"] and not r.get("title"), rc
+
+
+def test_a_draft_lab_DOES_vend_to_the_release_link(tc):
+    """The other half, and the reason the code exists at all: the lab reaches its TAs by exactly
+    the route a student will take, before anyone else can reach it."""
+    tc.signin("boss", "correct-horse")
+    tc.call("/api/courses", {"id": "comp535", "title": "Networks"})
+    tc.call("/api/activities/save", {"course": "comp535", "lab": "lab1", "title": "t",
+                                     "vend_until": time.time() + HOUR})
+    _, r = tc.call("/api/activity?course=comp535&lab=lab1&rc=" + _rc(), token="")
+    assert r["ok"] and r["draft"] is True
 
 
 def test_a_lab_cannot_be_released_without_a_vending_deadline(tc):
@@ -209,14 +268,14 @@ def test_a_lab_cannot_be_released_without_a_vending_deadline(tc):
 def test_nothing_vends_after_the_deadline(tc):
     tc.signin("boss", "correct-horse")
     _released_lab(tc, vend_until=time.time() - 1)
-    _, r = tc.call("/api/activity?course=comp535&lab=lab1", token="")
+    _, r = tc.call("/api/activity?course=comp535&lab=lab1&rc=" + _rc(), token="")
     assert not r["ok"] and r["reason"] == "vending_closed"
 
 
 def test_every_visit_vends_a_different_code(tc):
     tc.signin("boss", "correct-horse")
     _released_lab(tc)
-    codes = {tc.call("/api/activity?course=comp535&lab=lab1", token="")[1]["code"]
+    codes = {tc.call("/api/activity?course=comp535&lab=lab1&rc=" + _rc(), token="")[1]["code"]
              for _ in range(5)}
     assert len(codes) == 5
 
@@ -232,7 +291,7 @@ def test_an_unknown_code_is_refused_without_saying_more(tc):
 def test_a_vended_code_describes_the_activity_and_no_plan(tc):
     tc.signin("boss", "correct-horse")
     _released_lab(tc)
-    _, v = tc.call("/api/activity?course=comp535&lab=lab1", token="")
+    _, v = tc.call("/api/activity?course=comp535&lab=lab1&rc=" + _rc(), token="")
     _, armed = tc.call("/api/activity?code=" + v["code"], token="")
     assert armed["ok"] and armed["title"] == "lab1 title"
     assert armed["session_minutes"] == 60
@@ -267,7 +326,7 @@ def _submit(tc, code, *, devices=None, t0=None):
 def test_a_student_submits_with_no_account_and_gets_a_receipt(tc):
     tc.signin("boss", "correct-horse")
     _released_lab(tc)
-    _, v = tc.call("/api/activity?course=comp535&lab=lab1", token="")
+    _, v = tc.call("/api/activity?course=comp535&lab=lab1&rc=" + _rc(), token="")
     status, r = _submit(tc, v["code"])
     assert status == 200 and r["ok"] and r["receipt"]
 
@@ -283,8 +342,8 @@ def test_someone_elses_proof_file_is_refused(tc):
     from gini_teaching_center import activities as ACT
     tc.signin("boss", "correct-horse")
     _released_lab(tc)
-    _, david = tc.call("/api/activity?course=comp535&lab=lab1", token="")
-    _, paul = tc.call("/api/activity?course=comp535&lab=lab1", token="")
+    _, david = tc.call("/api/activity?course=comp535&lab=lab1&rc=" + _rc(), token="")
+    _, paul = tc.call("/api/activity?course=comp535&lab=lab1&rc=" + _rc(), token="")
     stolen = _chain(david["code"], t0=time.time())
 
     status, r = tc.call("/api/activity/submit", {"code": paul["code"], "proof": stolen}, token="")
@@ -295,7 +354,7 @@ def test_a_proof_cannot_be_submitted_twice_under_its_own_code(tc):
     """The plain double-submit: the code is spent on first use."""
     tc.signin("boss", "correct-horse")
     _released_lab(tc)
-    _, v = tc.call("/api/activity?course=comp535&lab=lab1", token="")
+    _, v = tc.call("/api/activity?course=comp535&lab=lab1&rc=" + _rc(), token="")
     t0 = time.time()
     assert _submit(tc, v["code"], t0=t0)[1]["ok"]
     status, r = _submit(tc, v["code"], t0=t0)
@@ -305,7 +364,7 @@ def test_a_proof_cannot_be_submitted_twice_under_its_own_code(tc):
 def test_a_spent_code_cannot_be_used_again(tc):
     tc.signin("boss", "correct-horse")
     _released_lab(tc)
-    _, v = tc.call("/api/activity?course=comp535&lab=lab1", token="")
+    _, v = tc.call("/api/activity?course=comp535&lab=lab1&rc=" + _rc(), token="")
     assert _submit(tc, v["code"])[1]["ok"]
     assert not _submit(tc, v["code"],
                        devices=[{"id": "9", "name": "S9", "type": "Switch"}])[1].get("ok")
@@ -314,7 +373,7 @@ def test_a_spent_code_cannot_be_used_again(tc):
 def test_the_teacher_reads_a_narration_back_from_the_receipt(tc):
     tc.signin("boss", "correct-horse")
     _released_lab(tc)
-    _, v = tc.call("/api/activity?course=comp535&lab=lab1", token="")
+    _, v = tc.call("/api/activity?course=comp535&lab=lab1&rc=" + _rc(), token="")
     _, sub = _submit(tc, v["code"])
     status, rep = tc.call("/api/receipt?receipt=" + sub["receipt"])
     assert status == 200
@@ -327,8 +386,8 @@ def test_the_same_topology_under_two_codes_is_flagged_not_refused(tc):
     rather than acted on."""
     tc.signin("boss", "correct-horse")
     _released_lab(tc)
-    _, a = tc.call("/api/activity?course=comp535&lab=lab1", token="")
-    _, b = tc.call("/api/activity?course=comp535&lab=lab1", token="")
+    _, a = tc.call("/api/activity?course=comp535&lab=lab1&rc=" + _rc(), token="")
+    _, b = tc.call("/api/activity?course=comp535&lab=lab1&rc=" + _rc(), token="")
     t0 = time.time()
     _, one = _submit(tc, a["code"], t0=t0)
     _, two = _submit(tc, b["code"], t0=t0 + 900)          # same artifact, different chain
@@ -340,7 +399,7 @@ def test_the_same_topology_under_two_codes_is_flagged_not_refused(tc):
 def test_a_receipt_from_another_course_is_not_readable(tc):
     tc.signin("boss", "correct-horse")
     _released_lab(tc, "comp535", "lab1")
-    _, v = tc.call("/api/activity?course=comp535&lab=lab1", token="")
+    _, v = tc.call("/api/activity?course=comp535&lab=lab1&rc=" + _rc(), token="")
     _, sub = _submit(tc, v["code"])
     _, added = tc.call("/api/staff", {"username": "ada"})
     _, ada = tc.call("/auth/claim", {"id": "ada", "claim_token": added["claim_token"],
@@ -378,7 +437,7 @@ def test_a_material_cannot_escape_its_course_directory(tc):
 def test_no_response_on_the_student_path_carries_an_identity(tc):
     tc.signin("boss", "correct-horse")
     _released_lab(tc)
-    _, v = tc.call("/api/activity?course=comp535&lab=lab1", token="")
+    _, v = tc.call("/api/activity?course=comp535&lab=lab1&rc=" + _rc(), token="")
     _, sub = _submit(tc, v["code"])
     blob = json.dumps([v, sub]).lower()
     for word in ("student", "email", "sis_id", "username"):
@@ -398,7 +457,7 @@ def test_v1_runs_with_the_aop_modules_unimportable(tc, monkeypatch):
     monkeypatch.setattr(builtins, "__import__", deny)
     tc.signin("boss", "correct-horse")
     _released_lab(tc)
-    _, v = tc.call("/api/activity?course=comp535&lab=lab1", token="")
+    _, v = tc.call("/api/activity?course=comp535&lab=lab1&rc=" + _rc(), token="")
     assert v["ok"]
     assert _submit(tc, v["code"])[1]["ok"]
 
@@ -423,7 +482,7 @@ def test_the_submissions_list_shows_what_arrived_without_needing_a_receipt(tc):
     code."""
     tc.signin("boss", "correct-horse")
     _released_lab(tc)
-    _, v = tc.call("/api/activity?course=comp535&lab=lab1", token="")
+    _, v = tc.call("/api/activity?course=comp535&lab=lab1&rc=" + _rc(), token="")
     _, sub = _submit(tc, v["code"])
     _, rows = tc.call("/api/submissions?course=comp535")
     assert [r["receipt"] for r in rows] == [sub["receipt"]]
@@ -497,12 +556,28 @@ def test_a_deadline_the_server_cannot_read_is_refused_not_a_crash(tc):
     assert "deadline" in r["error"]
 
 
-def test_minutes_must_be_a_number_and_must_be_positive(tc):
+def test_minutes_must_be_a_number_and_may_not_be_negative(tc):
     tc.signin("boss", "correct-horse")
     tc.call("/api/courses", {"id": "comp535", "title": "Networks"})
     base = {"course": "comp535", "lab": "lab1", "title": "t"}
     assert "number" in tc.call("/api/activities/save", {**base, "session_minutes": "sixty"})[1]["error"]
-    assert "zero" in tc.call("/api/activities/save", {**base, "session_minutes": -5})[1]["error"]
+    assert "negative" in tc.call("/api/activities/save", {**base, "session_minutes": -5})[1]["error"]
+
+
+def test_zero_minutes_is_accepted_and_means_due_at_the_deadline(tc):
+    """0 used to be REFUSED ("must be more than zero"), which left no way to run a lab with a fixed
+    hand-in time — a teacher had to invent a duration, and every student then got a different
+    effective deadline. Now 0 is a real setting: the code expires exactly when vending stops."""
+    tc.signin("boss", "correct-horse")
+    tc.call("/api/courses", {"id": "comp535", "title": "Networks"})
+    vend = 2_000_000_000.0
+    ok, body = tc.call("/api/activities/save", {"course": "comp535", "lab": "fixed", "title": "t",
+                                                "session_minutes": 0, "vend_until": vend})
+    assert body.get("ok"), body
+    # and it SURVIVES the round trip — a 0 quietly re-defaulted to 60 on read would be the bug
+    rows = tc.call("/api/activities?course=comp535")[1]
+    row = next(r for r in rows if r["lab"] == "fixed")
+    assert row["session_minutes"] == 0
 
 
 def test_a_null_field_keeps_what_was_already_saved(tc):
@@ -546,7 +621,7 @@ def test_an_explicit_zero_clears_the_deadline(tc):
 def _finished_work(tc):
     """A released lab, a code taken, work submitted. Returns the receipt."""
     _released_lab(tc)
-    _, v = tc.call("/api/activity?course=comp535&lab=lab1", token="")
+    _, v = tc.call("/api/activity?course=comp535&lab=lab1&rc=" + _rc(), token="")
     _, sub = _submit(tc, v["code"])
     return sub["receipt"]
 
@@ -705,7 +780,7 @@ def test_a_lab_with_submissions_CANNOT_be_deleted(tc):
     warning. Closing is how you retire it."""
     tc.signin("boss", "correct-horse")
     _released_lab(tc)
-    _, v = tc.call("/api/activity?course=comp535&lab=lab1", token="")
+    _, v = tc.call("/api/activity?course=comp535&lab=lab1&rc=" + _rc(), token="")
     _submit(tc, v["code"])
     _, r = tc.call("/api/activities/delete",
                    {"course": "comp535", "lab": "lab1", "confirm": "lab1"})
@@ -718,7 +793,7 @@ def test_the_refusal_counts_the_submissions_it_is_protecting(tc):
     tc.signin("boss", "correct-horse")
     _released_lab(tc)
     for dev in ("A", "B", "C"):
-        _, v = tc.call("/api/activity?course=comp535&lab=lab1", token="")
+        _, v = tc.call("/api/activity?course=comp535&lab=lab1&rc=" + _rc(), token="")
         _submit(tc, v["code"], devices=[{"id": dev, "name": dev, "type": "Router"}])
     _, r = tc.call("/api/activities/delete",
                    {"course": "comp535", "lab": "lab1", "confirm": "lab1"})
@@ -731,7 +806,7 @@ def test_deleting_a_lab_takes_its_vended_codes_with_it(tc):
     tc.signin("boss", "correct-horse")
     _released_lab(tc)
     for _ in range(3):
-        tc.call("/api/activity?course=comp535&lab=lab1", token="")
+        tc.call("/api/activity?course=comp535&lab=lab1&rc=" + _rc(), token="")
     _, r = tc.call("/api/activities/delete",
                    {"course": "comp535", "lab": "lab1", "confirm": "lab1"})
     assert r["codes"] == 3
@@ -743,7 +818,7 @@ def test_an_outstanding_code_stops_working_once_its_lab_is_gone(tc):
     """A student holding a code for a deleted lab must be told plainly, not handed a traceback."""
     tc.signin("boss", "correct-horse")
     _released_lab(tc)
-    _, v = tc.call("/api/activity?course=comp535&lab=lab1", token="")
+    _, v = tc.call("/api/activity?course=comp535&lab=lab1&rc=" + _rc(), token="")
     tc.call("/api/activities/delete", {"course": "comp535", "lab": "lab1", "confirm": "lab1"})
     status, r = tc.call("/api/activity?code=" + v["code"], token="")
     assert status == 403 and not r["ok"]
@@ -783,7 +858,7 @@ def _a_full_site(tc):
     import base64
     _released_lab(tc, "comp535", "lab1")
     _released_lab(tc, "comp557", "lab1")
-    _, v = tc.call("/api/activity?course=comp535&lab=lab1", token="")
+    _, v = tc.call("/api/activity?course=comp535&lab=lab1&rc=" + _rc(), token="")
     _, sub = _submit(tc, v["code"])
     tc.call("/api/submissions/claim",
             {"course": "comp535", "receipt": sub["receipt"], "student_id": "260123456"})
@@ -929,7 +1004,109 @@ def test_the_site_works_normally_after_a_reset(tc):
     tc.call("/api/site/reset", {"confirm": "RESET", "password": "correct-horse",
                                 "courses": True, "staff": True})
     _released_lab(tc, "comp999", "lab1")
-    _, v = tc.call("/api/activity?course=comp999&lab=lab1", token="")
+    _, v = tc.call("/api/activity?course=comp999&lab=lab1&rc=" + _rc("lab1", "comp999"),
+                   token="")
     assert v["ok"]
     _, sub = _submit(tc, v["code"])
     assert sub["ok"]
+
+
+# -- upgraded without a restart ------------------------------------------------ #
+# `_page` reads console.html off disk on EVERY request, so `pip install --upgrade` swaps the UI the
+# instant it lands while the process keeps the old Python in `sys.modules`. The console then asks
+# for endpoints the running code has never heard of.
+#
+# The first version of this check compared the server's version against a literal typed into
+# console.html. 6.5.0 shipped without anyone bumping it, so every healthy server was accused of
+# being mid-upgrade and told to restart — which changed nothing, because nothing was wrong.
+def test_whoami_reports_the_running_version_and_the_one_on_disk(tc):
+    tc.signin("boss", "correct-horse")
+    _, me = tc.call("/auth/whoami")
+    assert me["server"], "the running version"
+    assert "on_disk" in me and "restart_needed" in me
+
+
+def test_a_server_that_matches_its_files_asks_for_nothing(tc):
+    """The case that was broken: an ordinary, healthy, just-restarted server."""
+    tc.signin("boss", "correct-horse")
+    _, me = tc.call("/auth/whoami")
+    assert me["restart_needed"] is False
+    assert me["on_disk"] == me["server"]
+
+
+def test_an_upgrade_under_a_running_process_is_noticed(tc, monkeypatch):
+    """The real failure, simulated the way it actually happens: the files on disk move on while
+    the imported module does not."""
+    from gini_teaching_center import server as srv
+    monkeypatch.setattr(srv, "__name__", srv.__name__)          # keep the module identity
+    import gini_teaching_center.version as V
+    monkeypatch.setattr(V, "on_disk", lambda: "9.9.9")
+    tc.signin("boss", "correct-horse")
+    _, me = tc.call("/auth/whoami")
+    assert me["restart_needed"] is True
+    assert me["on_disk"] == "9.9.9" and me["server"] != "9.9.9"
+
+
+def test_a_source_checkout_is_not_a_mismatch(tc, monkeypatch):
+    """`on_disk` returns "" when it cannot tell — no `_version.py` in a raw checkout. Treating
+    "no opinion" as "they differ" is exactly the conflation that produced the false alarm."""
+    import gini_teaching_center.version as V
+    monkeypatch.setattr(V, "on_disk", lambda: "")
+    tc.signin("boss", "correct-horse")
+    _, me = tc.call("/auth/whoami")
+    assert me["restart_needed"] is False
+
+
+def test_the_version_on_disk_is_read_as_a_file_not_imported():
+    """Importing `_version` would return whatever is already in `sys.modules` — the RUNNING
+    version, the very thing this has to tell itself apart from — or cache the new one and break
+    the check for the rest of the process's life."""
+    import inspect
+
+    from gini_teaching_center import version as V
+    src = inspect.getsource(V.on_disk)
+    assert "read_text" in src
+    assert "import" not in src.split('"""')[-1], "it must not import _version"
+
+
+def test_it_reads_the_real_version_file(tmp_path, monkeypatch):
+    """Against the shape setuptools-scm actually writes, not an invented one."""
+    from gini_teaching_center import version as V
+    real = (
+        "# file generated by vcs-versioning\n"
+        "from __future__ import annotations\n"
+        "version: str\n"
+        "__version__: str\n"
+        "__version__ = version = '6.5.1'\n"
+        "__version_tuple__ = version_tuple = (6, 5, 1)\n")
+    f = tmp_path / "_version.py"
+    f.write_text(real)
+    monkeypatch.setattr(V, "__file__", str(tmp_path / "version.py"))
+    assert V.on_disk() == "6.5.1"
+
+
+def test_an_unreadable_version_file_is_no_opinion(tmp_path, monkeypatch):
+    from gini_teaching_center import version as V
+    monkeypatch.setattr(V, "__file__", str(tmp_path / "nothing" / "version.py"))
+    assert V.on_disk() == ""
+
+
+def test_the_version_file_is_read_correctly_when_it_has_windows_line_endings(tmp_path,
+                                                                             monkeypatch):
+    """`_version.py` is generated at build time, so on a Windows build it carries CRLF.
+
+    Two things could go wrong and neither does: `read_text` opens in universal-newline mode, and
+    the pattern captures only what is inside the quotes — so a trailing "\\r" cannot ride along
+    into the version string. If it did, `on_disk()` would return "6.5.2\\r", never equal the
+    running "6.5.2", and every Windows console would show the upgrade banner for ever. Which is
+    precisely the bug this whole comparison was rewritten to stop doing."""
+    from gini_teaching_center import version as V
+    (tmp_path / "_version.py").write_bytes(
+        b"# file generated by vcs-versioning\r\n"
+        b"from __future__ import annotations\r\n"
+        b"__version__ = version = '6.5.2'\r\n"
+        b"__version_tuple__ = version_tuple = (6, 5, 2)\r\n")
+    monkeypatch.setattr(V, "__file__", str(tmp_path / "version.py"))
+    got = V.on_disk()
+    assert got == "6.5.2"
+    assert "\r" not in got and "\n" not in got

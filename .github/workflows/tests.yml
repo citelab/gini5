@@ -1,7 +1,7 @@
 # Runs the test suite on every push and pull request.
 #
 # The fourth workflow, and the first that is not a publish. Until now nothing automated ran the
-# 2,956 tests: `release.sh` runs them locally before it tags, which is a real gate but only for the
+# suite (3,389 tests and growing): `release.sh` runs them locally before it tags, which is a real gate but only for the
 # person cutting the release, and only on their machine. Everything merged between two releases was
 # covered by whoever remembered. A tag then publishes to PyPI on the strength of that.
 #
@@ -114,7 +114,7 @@ jobs:
         run: ./scripts/dev.sh test
 
       # A runner has no container runtime, and the suite is written for that: `test_bootstrap`
-      # checks `shutil.which("docker")` first. Three tests skip instead of running, so the expected
-      # result here is 2931 passed / 25 skipped rather than the 2934 / 22 seen on a developer
-      # machine with Docker up. Recorded so a future drop in the count reads as a change, not as
-      # noise.
+      # checks `shutil.which("docker")` first. Three tests therefore SKIP here that run on a
+      # developer machine, so this job's totals sit three below a local run. Deliberately not
+      # writing the exact pair of numbers down: the suite gained ~400 tests in nine days, and a
+      # hard-coded count in a comment is a lie with a timestamp on it.

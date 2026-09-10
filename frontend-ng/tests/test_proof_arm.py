@@ -102,3 +102,36 @@ def test_an_unreachable_server_still_records_locally():
     strip._on_arm_checked(CODE, {})                  # {} == could not ask
     assert strip.recorder.armed
     assert "recording locally" in _hint(strip).lower()
+
+
+# -- when the lab is due ------------------------------------------------------------------------ #
+# The strip discarded `valid_until` and `session_minutes` too, which was survivable only while
+# every lab was a timed attempt ("you have 60 minutes", said by the page that vended the code).
+# A duration of 0 now means the lab is due at a fixed WALL-CLOCK time, so the deadline is the whole
+# story — and gBuilder was the one place that never mentioned it.
+
+def _due(**answer):
+    return ProofStrip._due_phrase(answer)
+
+
+def test_a_fixed_hand_in_time_is_announced_as_a_due_moment():
+    import datetime as dt
+    when = dt.datetime(2031, 5, 15, 21, 0)
+    phrase = _due(valid_until=when.timestamp(), session_minutes=0)
+    assert "Due" in phrase
+    assert when.strftime("%H:%M") in phrase          # the actual moment, in local time
+    assert "min" not in phrase                       # no attempt window to speak of
+
+
+def test_a_timed_attempt_still_leads_with_the_minutes():
+    import datetime as dt
+    when = dt.datetime(2031, 5, 15, 21, 0)
+    phrase = _due(valid_until=when.timestamp(), session_minutes=45)
+    assert "45 min" in phrase                        # what the student acts on
+    assert when.strftime("%H:%M") in phrase          # the backstop, still named
+
+
+def test_a_lab_with_no_deadline_says_nothing_rather_than_inventing_one():
+    assert _due(valid_until=0, session_minutes=0) == ""
+    assert _due(session_minutes=60) == ""             # field absent entirely
+    assert _due(valid_until="not a number") == ""     # unreadable is not a deadline

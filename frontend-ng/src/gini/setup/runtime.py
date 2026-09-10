@@ -32,6 +32,29 @@ def docker_state(run=subprocess.run) -> str:
         return "stopped"
 
 
+def compose_available(run=subprocess.run) -> bool:
+    """Is `docker compose` (the v2 plugin) here? Asked SEPARATELY from the daemon, on purpose.
+
+    They fail independently, and on Linux they constantly do: `apt install docker.io` gives a
+    working engine and CLI with NO compose plugin. `docker info` then answers happily, preflight
+    declares the machine ready, a student draws a topology, presses Run — and gets
+
+        Run failed: unknown flag: --build
+        Usage:  docker [OPTIONS] COMMAND [ARG...]
+
+    because `docker compose up --build -d` reaches a CLI with no `compose` subcommand, and the
+    top-level parser rejects the first flag it does not know. Nothing in that names the cause,
+    and nobody would guess "install a plugin" from it.
+
+    Invisible on macOS, which is why it lasted: Docker Desktop and Colima both bundle compose v2.
+    """
+    try:
+        return (run(["docker", "compose", "version"],
+                    capture_output=True, timeout=15).returncode == 0)
+    except Exception:            # noqa: BLE001 — no CLI, no plugin; either way it cannot run
+        return False
+
+
 def docker_available(run=subprocess.run) -> bool:
     """True if a Docker-compatible CLI is present AND a daemon answers (Colima/Desktop/Engine/Podman)."""
     return docker_state(run=run) == "ok"
@@ -49,6 +72,10 @@ _PLANS = {
                    "    brew install colima docker\n"
                    "    colima start --cpu 2 --memory 4 --disk 30"),
         "start": "colima start --cpu 2 --memory 4 --disk 30\n(or just open Docker Desktop, if that is what you use)",
+        "compose": ("Install the Compose plugin:\n"
+                    "    brew install docker-compose\n"
+                    "then make sure `docker compose version` prints v2. Docker Desktop and Colima "
+                    "normally include it already."),
     },
     "linux": {
         "runtime": "Docker Engine",
@@ -58,6 +85,13 @@ _PLANS = {
                    "(https://docs.docker.com/engine/install/) and add your user to the 'docker' "
                    "group:  sudo usermod -aG docker $USER  (then log out/in). Podman also works."),
         "start": "sudo systemctl start docker",
+        # The common one. Ubuntu's own `docker.io` package does NOT carry compose, and Docker's
+        # repo splits it into its own package, so a perfectly working Docker often has no compose.
+        "compose": ("Install the Compose plugin, then log out and back in if needed:\n"
+                    "    sudo apt install docker-compose-plugin    # Docker's own apt repo\n"
+                    "    sudo apt install docker-compose-v2        # Ubuntu's docker.io package\n"
+                    "(Fedora/RHEL: sudo dnf install docker-compose-plugin)\n\n"
+                    "Check it with:  docker compose version"),
     },
     "windows": {
         "runtime": "Docker Desktop (or Podman Desktop)",
@@ -66,6 +100,8 @@ _PLANS = {
         "manual": ("Install Docker Desktop (https://www.docker.com/products/docker-desktop) or "
                    "Podman Desktop, then start it. (Colima is not available on Windows.)"),
         "start": "Start Docker Desktop (or Podman Desktop) from the Start menu.",
+        "compose": ("Docker Desktop includes Compose. If `docker compose version` fails, repair or "
+                    "reinstall Docker Desktop from https://www.docker.com/products/docker-desktop"),
     },
 }
 

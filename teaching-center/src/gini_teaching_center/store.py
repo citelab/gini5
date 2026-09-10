@@ -65,8 +65,43 @@ CREATE TABLE IF NOT EXISTS activity (
   vend_until      REAL DEFAULT 0,
   session_minutes INTEGER DEFAULT 60,
   grace_minutes   INTEGER DEFAULT 0,       -- after valid_until: still accepted, tagged LATE
+  show_n          INTEGER DEFAULT 0,       -- how many of this lab's questions each student gets
+  -- Four symbols the student link must carry. Without it /getcode?course=X&lab=lab3 is guessable:
+  -- a student who has lab3's link can read lab4's brief before it is set. It also gates a DRAFT,
+  -- so a lab can be handed to TAs to run end to end before anyone else can reach it.
+  release_code    TEXT DEFAULT '',
   created         REAL DEFAULT 0,
   released        REAL DEFAULT 0
+);
+
+-- Short questions a teacher writes with the lab, and the answer they expect. A student sees SOME
+-- of them (activity.show_n of however many exist), chosen when their code is vended.
+--
+-- `answer` is the marker's key and NEVER leaves this server: the arm-time reply carries prompts
+-- only. It is stored so a teaching assistant reading a transcript has the expected answer beside
+-- the given one — not so anything can compare them. Short free text is precisely where automatic
+-- marking produces confidently wrong grades on real work.
+--
+-- `retired` rather than DELETE, for the same reason a lab holding submissions cannot be deleted:
+-- codes already vended name their questions by id, and removing one would leave a report unable to
+-- say what was asked.
+CREATE TABLE IF NOT EXISTS activity_question (
+  id       TEXT PRIMARY KEY,          -- "<activity>#<n>"
+  activity TEXT NOT NULL,
+  ord      INTEGER DEFAULT 0,
+  prompt   TEXT DEFAULT '',
+  answer   TEXT DEFAULT '',           -- the key. Staff-only, always.
+  retired  INTEGER DEFAULT 0
+);
+
+-- Which questions THIS code was given. Recorded at vend time rather than chosen in gBuilder: a
+-- client-side choice could be re-rolled, would differ after a restart, and the code's chain is
+-- resumed on re-arm — so the pair a student sees must be fixed the moment the code exists.
+CREATE TABLE IF NOT EXISTS code_question (
+  code     TEXT NOT NULL,
+  question TEXT NOT NULL,
+  ord      INTEGER DEFAULT 0,
+  PRIMARY KEY (code, question)
 );
 
 CREATE TABLE IF NOT EXISTS activity_code (
@@ -74,7 +109,8 @@ CREATE TABLE IF NOT EXISTS activity_code (
   activity    TEXT NOT NULL,
   issued      REAL DEFAULT 0,
   valid_until REAL DEFAULT 0,   -- absolute: vend_until + session, so hoarding gains nothing
-  used        INTEGER DEFAULT 0
+  used        INTEGER DEFAULT 0,
+  draft       INTEGER DEFAULT 0    -- vended from an unreleased lab: a TA rehearsal, not a student
 );
 
 CREATE TABLE IF NOT EXISTS activity_submission (
@@ -90,7 +126,10 @@ CREATE TABLE IF NOT EXISTS activity_submission (
   data          TEXT DEFAULT '',        -- proof + artifact + narration
   late          INTEGER DEFAULT 0,      -- after the deadline, inside the grace window
   student_id    TEXT DEFAULT '',        -- who CLAIMED it; empty until they do
-  claimed_at    REAL DEFAULT 0
+  claimed_at    REAL DEFAULT 0,
+  -- Carried from the code. A TA rehearsing an unreleased lab produces a real, verifiable
+  -- submission, and it must not sit in the marking list looking like a student's.
+  draft         INTEGER DEFAULT 0
 );
 
 -- Course materials: notes, handouts, links. Files live on disk under COURSE_ROOT/materials/;
@@ -242,6 +281,43 @@ def _canonical_ddl(table: str) -> str:
     return ",\n".join(lines)
 
 
+def _addable_columns() -> dict[str, dict[str, str]]:
+    """table -> {column: DDL fit for `ALTER TABLE … ADD COLUMN`}, read from `_SCHEMA`.
+
+    DERIVED, not restated. This used to be a dict typed out in `_migrate`, and keeping two lists in
+    step is not something a person does reliably: `release_code`, `draft` and `draft` were added to
+    the schema and not to that list, so a FRESH database had them and every EXISTING one — which is
+    to say every real installation — died on the first write with
+    `table activity has no column named release_code`. A fresh temp directory is the one case where
+    that cannot go wrong, which is exactly why the tests were green.
+
+    Constraints are dropped on the way through, because SQLite cannot add a PRIMARY KEY or UNIQUE
+    column to an existing table, nor a NOT NULL one without a default. A column that already exists
+    is never touched, so an installation keeps whatever it was originally given.
+    """
+    fallback = {"TEXT": "TEXT DEFAULT ''", "REAL": "REAL DEFAULT 0",
+                "INTEGER": "INTEGER DEFAULT 0"}
+    out: dict[str, dict[str, str]] = {}
+    for table, block in re.findall(
+            r"CREATE TABLE IF NOT EXISTS (\w+) \((.*?)\n\);", _SCHEMA, re.S):
+        cols: dict[str, str] = {}
+        for raw in block.splitlines():
+            line = re.sub(r"\s*--.*$", "", raw).strip().rstrip(",")
+            up = line.upper()
+            if not line or up.startswith(("PRIMARY KEY", "UNIQUE", "FOREIGN KEY", "CHECK")):
+                continue
+            if "PRIMARY KEY" in up:
+                continue                      # cannot be added later, and never needs to be
+            parts = line.split()
+            name = parts[0]
+            typ = parts[1].upper() if len(parts) > 1 else "TEXT"
+            m = re.search(r"\bDEFAULT\s+(.+)$", line, re.I)
+            cols[name] = (f"{typ} DEFAULT {m.group(1).strip()}" if m
+                          else fallback.get(typ, "TEXT DEFAULT ''"))
+        out[table] = cols
+    return out
+
+
 def _canonical_columns() -> dict[str, list[str]]:
     """Table -> the column names v1 owns, in declaration order."""
     out: dict[str, list[str]] = {}
@@ -322,42 +398,9 @@ class Store:
         nothing a teacher already has is thrown away. Retired v0 tables are left in place for the
         same reason; they cost a few KB and they are somebody's archive.
         """
-        want = {                       # column -> DDL type, per table the schema owns
-            "account": {"role": "TEXT DEFAULT 'teacher'", "salt": "TEXT", "hash": "TEXT",
-                        "n": "INTEGER", "r": "INTEGER", "p": "INTEGER", "claimed_at": "INTEGER"},
-            "session": {"who": "TEXT", "role": "TEXT", "expires": "INTEGER"},
-            "course": {"title": "TEXT DEFAULT ''", "created": "REAL DEFAULT 0",
-                       "archived": "INTEGER DEFAULT 0"},
-            "activity": {"course": "TEXT DEFAULT ''", "lab": "TEXT DEFAULT ''",
-                         "title": "TEXT DEFAULT ''", "brief": "TEXT DEFAULT ''",
-                         "status": "TEXT DEFAULT 'draft'", "vend_until": "REAL DEFAULT 0",
-                         "session_minutes": "INTEGER DEFAULT 60", "created": "REAL DEFAULT 0",
-                         "grace_minutes": "INTEGER DEFAULT 0", "released": "REAL DEFAULT 0"},
-            "activity_code": {"activity": "TEXT DEFAULT ''", "issued": "REAL DEFAULT 0",
-                              "valid_until": "REAL DEFAULT 0", "used": "INTEGER DEFAULT 0"},
-            "activity_submission": {"code": "TEXT DEFAULT ''", "receipt": "TEXT DEFAULT ''",
-                                    "activity": "TEXT DEFAULT ''",
-                                    "artifact_hash": "TEXT DEFAULT ''", "ts": "REAL DEFAULT 0",
-                                    "started": "REAL DEFAULT 0", "finished": "REAL DEFAULT 0",
-                                    "verdict": "TEXT DEFAULT ''", "data": "TEXT DEFAULT ''",
-                                    "student_id": "TEXT DEFAULT ''",
-                                    "late": "INTEGER DEFAULT 0",
-                                    "claimed_at": "REAL DEFAULT 0"},
-            "material": {"course": "TEXT DEFAULT ''", "kind": "TEXT DEFAULT 'file'",
-                         "title": "TEXT DEFAULT ''", "filename": "TEXT DEFAULT ''",
-                         "url": "TEXT DEFAULT ''", "size": "INTEGER DEFAULT 0",
-                         "uploaded": "REAL DEFAULT 0"},
-            "reference": {"title": "TEXT DEFAULT ''", "source_url": "TEXT DEFAULT ''",
-                          "licence": "TEXT DEFAULT ''", "attribution": "TEXT DEFAULT ''",
-                          "indexed": "REAL DEFAULT 0", "sections": "INTEGER DEFAULT 0",
-                          "aside_titles": "TEXT DEFAULT ''"},
-            "reference_figure": {"ref": "TEXT DEFAULT ''", "section": "TEXT DEFAULT ''",
-                                 "filename": "TEXT DEFAULT ''", "caption": "TEXT DEFAULT ''",
-                                 "ord": "INTEGER DEFAULT 0"},
-            "reference_section": {"ref": "TEXT DEFAULT ''", "number": "TEXT DEFAULT ''",
-                                  "title": "TEXT DEFAULT ''", "url": "TEXT DEFAULT ''",
-                                  "body": "TEXT DEFAULT ''", "ord": "INTEGER DEFAULT 0"},
-        }
+        # Read from `_SCHEMA` rather than restated here — see `_addable_columns`. The list that
+        # used to live at this spot fell out of step with the schema and broke every upgrade.
+        want = _addable_columns()
         for table, cols in want.items():
             have = {r["name"] for r in self.db.execute(f"PRAGMA table_info({table})")}
             if not have:
@@ -461,6 +504,18 @@ class Store:
     def drop_session(self, token: str) -> None:
         self._run("DELETE FROM session WHERE token=?", (token,))
 
+    def drop_sessions_for(self, username: str) -> int:
+        """Every live session belonging to one account.
+
+        Resetting a password that leaves the old sessions working has not reset anything: a session
+        is a bearer token good for a working day, and the account may be being reset precisely
+        because someone else has one.
+        """
+        with self.lock:
+            cur = self.db.execute("DELETE FROM session WHERE who=?", (username,))
+            self.db.commit()
+        return cur.rowcount or 0
+
     # -- courses ---------------------------------------------------------- #
     def put_course(self, rec: dict) -> None:
         self._run("INSERT OR REPLACE INTO course(id,title,created,archived) VALUES(?,?,?,?)",
@@ -499,7 +554,8 @@ class Store:
     # -- activities ------------------------------------------------------- #
     def activity_put(self, rec: dict) -> None:
         cols = ("id", "course", "lab", "title", "brief", "status", "vend_until",
-                "session_minutes", "grace_minutes", "created", "released")
+                "session_minutes", "grace_minutes", "show_n", "release_code",
+                "created", "released")
         self._run(f"INSERT OR REPLACE INTO activity({','.join(cols)}) "
                   f"VALUES({','.join('?' * len(cols))})", tuple(rec.get(c, "") for c in cols))
 
@@ -511,14 +567,22 @@ class Store:
             return self._all("SELECT * FROM activity WHERE course=? ORDER BY lab", (course,))
         return self._all("SELECT * FROM activity ORDER BY course, lab")
 
+    def activities_missing_release_code(self) -> list[dict]:
+        """Every lab that predates release codes. Backfilled at startup — see server._backfill."""
+        return self._all("SELECT * FROM activity WHERE release_code IS NULL OR release_code=''")
+
+    def activity_set_release_code(self, activity_id: str, code: str) -> None:
+        self._run("UPDATE activity SET release_code=? WHERE id=?", (code, activity_id))
+
     def activity_delete(self, activity_id: str) -> None:
         self._run("DELETE FROM activity WHERE id=?", (activity_id,))
 
     def code_put(self, rec: dict) -> None:
-        self._run("INSERT OR REPLACE INTO activity_code(code,activity,issued,valid_until,used) "
-                  "VALUES(?,?,?,?,?)",
+        self._run("INSERT OR REPLACE INTO activity_code"
+                  "(code,activity,issued,valid_until,used,draft) VALUES(?,?,?,?,?,?)",
                   (rec["code"], rec["activity"], rec.get("issued", 0.0),
-                   rec.get("valid_until", 0.0), int(rec.get("used", 0))))
+                   rec.get("valid_until", 0.0), int(rec.get("used", 0)),
+                   int(rec.get("draft", 0))))
 
     def code(self, code: str) -> dict | None:
         return self._one("SELECT * FROM activity_code WHERE code=?", (code,))
@@ -547,7 +611,7 @@ class Store:
         check-then-insert, and the loser must be rejected rather than silently overwriting.
         """
         cols = ("code", "receipt", "activity", "artifact_hash",
-                "ts", "started", "finished", "verdict", "data", "late")
+                "ts", "started", "finished", "verdict", "data", "late", "draft")
         try:
             self._run(f"INSERT INTO activity_submission({','.join(cols)}) "
                       f"VALUES({','.join('?' * len(cols))})", tuple(rec.get(c, "") for c in cols))
@@ -613,6 +677,88 @@ class Store:
         return self._all(
             "SELECT code,receipt,activity,ts FROM activity_submission "
             "WHERE artifact_hash=? AND code<>? ORDER BY ts", (artifact_hash, exclude_code))
+
+    # -- lab questions ----------------------------------------------------- #
+    def questions_put(self, activity: str, rows: list[dict]) -> int:
+        """Replace a lab's question set.
+
+        A question that has already been VENDED is retired, never removed: codes name their
+        questions by id, and deleting one would leave a report unable to say what was asked. The
+        same rule a lab holding submissions lives by.
+        """
+        with self.lock:
+            self.db.execute(
+                "UPDATE activity_question SET retired=1 WHERE activity=? AND retired=0",
+                (activity,))
+            for i, r in enumerate(rows, 1):
+                # A row that arrives WITH an id is an edit of that question, and keeps it. Only a
+                # new row is given one, so fixing a typo does not retire a question and mint a
+                # replacement — which would leave an issued code naming something withdrawn.
+                qid = r.get("id") or self._new_question_id(activity)
+                self.db.execute(
+                    "INSERT OR REPLACE INTO activity_question"
+                    "(id,activity,ord,prompt,answer,retired) VALUES(?,?,?,?,?,0)",
+                    (qid, activity, i, str(r.get("prompt", "")), str(r.get("answer", ""))))
+            # A retired question nobody was ever asked is genuinely gone; one that was vended
+            # stays, so an old report can still say what it asked.
+            #
+            # A SUBQUERY, not a list of ids bound in. The list form was written first and was
+            # silently wrong when it was empty — `id NOT IN ()` has no SQL spelling, `NOT IN
+            # (NULL)` is unknown rather than true, and a lab whose questions had never been vended
+            # therefore cleaned up nothing at all while appearing to work.
+            self.db.execute(
+                "DELETE FROM activity_question WHERE activity=? AND retired=1 "
+                "AND id NOT IN (SELECT question FROM code_question)", (activity,))
+            self.db.commit()
+        return len(rows)
+
+    def _new_question_id(self, activity: str) -> str:
+        """An id no question in this lab has held, including retired ones.
+
+        Numbering by position would reuse the id of a question that was deleted, and a code issued
+        against the old one would report the new question's text as what it asked.
+        """
+        n = self._one("SELECT MAX(CAST(substr(id, ?) AS INTEGER)) AS hi "
+                      "FROM activity_question WHERE activity=?",
+                      (len(activity) + 2, activity)) or {}
+        return f"{activity}#{int(n.get('hi') or 0) + 1}"
+
+    def questions(self, activity: str, include_retired: bool = False) -> list[dict]:
+        where = "" if include_retired else " AND retired=0"
+        return self._all(f"SELECT * FROM activity_question WHERE activity=?{where} ORDER BY ord",
+                         (activity,))
+
+    def pick_questions(self, code: str, activity: str, show_n: int) -> list[dict]:
+        """Choose this code's questions and record the choice. Idempotent per code.
+
+        At VEND time, so the pair is fixed the moment the code exists: a client-side choice could
+        be re-rolled, would differ after a restart, and re-arming a code RESUMES its chain — so the
+        questions a student sees must not change under them.
+        """
+        already = self.questions_for_code(code)
+        if already:
+            return already
+        pool = self.questions(activity)
+        n = max(0, min(int(show_n or 0), len(pool)))
+        if not n:
+            return []
+        import random
+        chosen = random.sample(pool, n)
+        with self.lock:
+            for i, q in enumerate(chosen, 1):
+                self.db.execute(
+                    "INSERT OR IGNORE INTO code_question(code,question,ord) VALUES(?,?,?)",
+                    (code, q["id"], i))
+            self.db.commit()
+        return self.questions_for_code(code)
+
+    def questions_for_code(self, code: str) -> list[dict]:
+        """What this code was asked, in the order asked — ANSWERS INCLUDED. A caller talking to a
+        student must strip `answer`; only the report is allowed to see it."""
+        return self._all(
+            "SELECT q.*, cq.ord AS asked_ord FROM code_question cq "
+            "JOIN activity_question q ON q.id = cq.question "
+            "WHERE cq.code=? ORDER BY cq.ord", (code,))
 
     # -- materials -------------------------------------------------------- #
     def material_put(self, rec: dict) -> None:

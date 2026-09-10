@@ -29,6 +29,9 @@ class FirstRunDialog(QDialog):
     """Explains what is missing, does it on request, and stays out of the way otherwise."""
 
     stepped = Signal(str)
+    #: (fraction 0..1, caption). Emitted from the pull's worker thread; Qt marshals it to the GUI
+    #: thread, which is the only place a widget may be touched.
+    progressed = Signal(float, str)
     finished_setup = Signal(dict)
 
     def __init__(self, plan: dict, parent=None, on_tour=None) -> None:
@@ -55,9 +58,11 @@ class FirstRunDialog(QDialog):
         # rather than a button that would only fail.
         if plan["state"] == bootstrap.NEEDS_RUNTIME:
             rp = plan.get("runtime_plan") or {}
-            # A stopped engine needs the START command; an absent one needs the INSTALL steps.
-            hint = (rp.get("start", "") if plan.get("runtime_state") == "stopped"
-                    else rp.get("manual", "") or rp.get("needs", ""))
+            # A stopped engine needs the START command, a missing plugin the plugin's install
+            # line, and an absent Docker the full INSTALL steps. Three causes, three answers.
+            hint = {"stopped": rp.get("start", ""),
+                    "no_compose": rp.get("compose", "")}.get(
+                        plan.get("runtime_state"), rp.get("manual", "") or rp.get("needs", ""))
             if hint:
                 man = QLabel(hint)
                 man.setWordWrap(True)
@@ -71,7 +76,12 @@ class FirstRunDialog(QDialog):
         root.addWidget(self.detail)
 
         self.bar = QProgressBar()
-        self.bar.setRange(0, 0)           # indeterminate: docker gives us no usable percentage
+        # Determinate, in per-mille. `docker pull` into a pipe gives no byte counts — the
+        # "Downloading [===> ] 12MB/50MB" redraws are a TTY affectation and never arrive here —
+        # but it does announce every layer and report each one finishing, which is a real count.
+        # The bar moves in layer-sized steps across the whole job, images finished included.
+        self.bar.setRange(0, 1000)
+        self.bar.setValue(0)
         self.bar.hide()
         root.addWidget(self.bar)
 
@@ -96,6 +106,7 @@ class FirstRunDialog(QDialog):
         root.addLayout(row)
 
         self.stepped.connect(self._on_step)
+        self.progressed.connect(self._on_progress)
         self.finished_setup.connect(self._on_done)
 
     # -- text ---------------------------------------------------------------- #
@@ -125,13 +136,41 @@ class FirstRunDialog(QDialog):
         self.detail.setText("Starting…")
 
         def work():
-            result = bootstrap.execute(self.plan, on_step=self.stepped.emit)
+            # The emit is OUTSIDE the try, and that is the whole point of the try. An exception in
+            # here used to kill this thread silently: no signal, so the panel sat on "Starting…"
+            # for ever with no message and no way to retry — the one failure that reports NOTHING,
+            # on the one screen every new student meets. `execute` is written not to raise, but
+            # "written not to" is not a guarantee; a full disk hitting `write_marker` is enough.
+            try:
+                result = bootstrap.execute(self.plan, on_step=self.stepped.emit,
+                                           on_progress=lambda f, t: self.progressed.emit(f, t))
+            except Exception as e:            # noqa: BLE001 — report it, never swallow it
+                result = {"ok": False, "done": [], "failed": [], "reasons": {},
+                          "message": f"Setup stopped unexpectedly.\n\n{type(e).__name__}: {e}"
+                                     f"\n\nYou can keep building and reading topologies; Run "
+                                     f"will not start until the images are here."}
             self.finished_setup.emit(result)
 
         run_off_gui(self, work)
 
     def _on_step(self, text: str) -> None:
         self.detail.setText(text)
+
+    def _on_progress(self, fraction: float, text: str) -> None:
+        """Both the bar and the line under it, from the worker thread via a signal.
+
+        The line matters as much as the bar: "which image" was already printed to the console,
+        where it got buried under everything else launching. Here it sits next to the thing that
+        is moving.
+        """
+        # Clamped as a FLOAT before it becomes an int: `int(inf * 1000)` raises OverflowError,
+        # and this arrives from a worker thread's signal — an exception here would kill the pull's
+        # only sign of life while the download carried on invisibly behind it.
+        f = float(fraction)
+        f = 0.0 if f != f else max(0.0, min(1.0, f))          # f != f catches NaN
+        self.bar.setValue(int(f * self.bar.maximum()))
+        if text:
+            self.detail.setText(text)
 
     def _on_done(self, result: dict) -> None:
         self.bar.hide()

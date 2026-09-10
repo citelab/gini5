@@ -106,16 +106,20 @@ def test_trap_lab_step_without_catch_opens_authored(app):
 
 
 def test_journey_seeded_frame_shows_live_banner_and_scause(app):
-    from gini.domain.cpu_journey import JOURNEYS
+    """A store page fault used to open the SYSTEM CALL walkthrough (this test indexed into it),
+    which is the bug B3 fixed: it now opens the page-fault walkthrough. The intent here is
+    unchanged — the captured scause must reach the caption, not just the banner."""
     from gini.domain.xv6 import DemoScheduler
     from gini.ui.cpu_journey import CpuJourney
     fr = DemoScheduler().catch_trap()                      # a real-looking store page fault
     j = CpuJourney(None, _theme(app), _Dev(), frame=fr)
     assert "store page fault" in j._live.text() and "stval" in j._live.text()   # live banner
-    # at the usertrap stage the caption carries the REAL decoded scause, not just the template
-    j._i = next(i for i, s in enumerate(JOURNEYS["syscall"]) if s.title == "usertrap")
+    assert j._mode == "pagefault"                          # routed on scause 15, not defaulted
+    # the entry stage carries the REAL decoded scause and the faulting address
+    j._i = next(i for i, s in enumerate(j._stages) if s.title == "the access faults")
     j._render()
     assert "scause" in j._caption.text() and "store page fault" in j._caption.text()
+    assert "stval" in j._caption.text()                    # the number the student came for
     j.close()
 
 
@@ -164,3 +168,45 @@ def test_trap_lab_kind_selector_passes_kind_to_catch(app):
 def _mk_frame():
     from gini.domain.xv6 import TrapFrame
     return TrapFrame(scause="0x8000000000000005", kind=2, kind_name="timer", ok=True)
+
+
+def test_a_failed_catch_shows_the_reason_and_opens_no_journey(app):
+    """A catch that found nothing must say WHY, not open a journey of authored placeholders as if
+    a trap had been caught."""
+    from gini.domain.xv6 import TrapFrame
+    from gini.ui.trap_lab import TrapLab
+    got = []
+    lab = TrapLab(None, _theme(app), _Dev(), traps_source=lambda: "",
+                  catch_source=lambda kind="any": TrapFrame(ok=False, error="no timer in 10s"),
+                  on_step=lambda fr: got.append(fr))
+    lab._step()
+    _wait(app, lambda: "no timer" in lab._catch_msg.text())
+    assert got == [], "a failed catch opened the journey anyway"
+    assert "no timer in 10s" in lab._catch_msg.text()
+    lab.close()
+
+
+def test_closing_mid_catch_joins_the_worker_and_leaves_no_thread(app):
+    """Regression for the mid-test SIGSEGV: the catch worker was fire-and-forget, closing over
+    `self`, so dropping the dialog while a catch was in flight destroyed the QObject from under the
+    worker's emit (or ON the worker thread when the closure died). TrapLab now adopts LivePollMixin
+    and stop_polling() joins the catch worker; the worker holds only a weak ref. The suite-wide
+    _no_leaked_threads fixture fails this test if any thread survives close(); the crash itself was
+    a process-level segfault in ~1 of 20 two-module runs and is verified by re-running that pair."""
+    import threading
+    import time
+    from gini.ui.trap_lab import TrapLab
+    started = threading.Event()
+
+    def slow_catch(kind):
+        started.set()
+        time.sleep(0.3)                          # a catch still in flight when we close
+        return None
+
+    lab = TrapLab(None, _theme(app), _Dev(), traps_source=lambda: "",
+                  catch_source=slow_catch, on_step=lambda fr: None)
+    lab._step()
+    assert started.wait(1.0)                     # the worker is really running
+    lab.close()                                  # must JOIN it before returning
+    assert lab._catch_thread is None             # stop_polling took the thread and joined it
+    assert lab._closed

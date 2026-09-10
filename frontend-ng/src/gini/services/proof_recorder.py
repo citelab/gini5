@@ -78,6 +78,14 @@ class ProofRecorder:
         # the tutor know which of a course's activities the student is actually being marked on.
         self._activity = ""
         self._activity_title = ""
+        # What the lab ASKS FOR, in the teacher's own words. The server has always sent it with
+        # the arm reply and it was dropped on arrival, so the panel could name the lab but never
+        # say what it was for — the one thing a student most wants on screen while working.
+        self._activity_brief = ""
+        # The lab's questions, as the arm reply carried them. In memory only — see note_questions.
+        self._questions: list = []
+        # (device, face) already recorded under this code — see note_lab_open.
+        self._faces_seen: set = set()
         # Not every signal reaches us on the GUI thread. `rider_ran` is emitted from a rider's
         # reader thread, and Qt delivers to a plain (non-QObject) slot directly in the emitting
         # thread — so two appends really can race, and an interleaved append would compute `prev`
@@ -130,6 +138,7 @@ class ProofRecorder:
                 "submitted": bool(self._chain and self._chain.has_submitted()),
                 "activity": self._activity,
                 "activity_title": self._activity_title,
+                "activity_brief": self._activity_brief,
                 "error": self.last_error}
 
     # -- arming ------------------------------------------------------------- #
@@ -154,6 +163,10 @@ class ProofRecorder:
                 gini_version=gini_version())
             self.store.write_chain(tk.code, chain)
         self._chain, self._ticket = chain, tk
+        # A new code is a new lab. Without this, a face opened under the PREVIOUS code would count
+        # as already recorded and the new chain would never mention it — and the commonest path
+        # here is submit-then-arm-the-next-lab, which never goes through cancel().
+        self._faces_seen = set()
         self._snapshot()
         if fresh:
             # Say what the canvas already held, at the moment it was armed. A student who builds
@@ -173,15 +186,54 @@ class ProofRecorder:
         return True, (f"Recording under {tk.pretty}." if fresh else
                       f"Resumed recording under {tk.pretty} — {n} event(s) already in the chain.")
 
-    def note_activity(self, activity: str, title: str = "") -> None:
+    def note_activity(self, activity: str, title: str = "", brief: str = "") -> None:
         """Remember which lab the armed code belongs to, from the course server's arm reply.
 
         Set from OUTSIDE, because the recorder never talks to the network — a code is
         self-verifying, so a student with no connection still records perfectly well and simply
         has no activity to name.
+
+        `brief` is what the lab asks for. In memory only, like the questions and for the same
+        reason: the chain records what the student DID, and the assignment text is not that.
         """
         self._activity = str(activity or "")
         self._activity_title = str(title or "")
+        self._activity_brief = str(brief or "")
+
+    @property
+    def activity_title(self) -> str:
+        return self._activity_title
+
+    @property
+    def activity_brief(self) -> str:
+        return self._activity_brief
+
+    def note_questions(self, questions) -> None:
+        """The lab's questions, from the same arm reply. Held in memory, NOT written to the chain.
+
+        Set from outside for the same reason as `note_activity` — the recorder never talks to the
+        network. Not persisted, either: the chain is a record of what the student DID, and a list
+        of questions nobody has answered yet is not that. The cost is that a restart while armed
+        loses them until the next arm, which the panel handles by offering to fetch — the same path
+        it already needs for a code armed with no server in reach.
+
+        The ANSWERS are a different matter entirely, and those do go in the chain: see
+        `note_answer`.
+        """
+        self._questions = list(questions or [])
+
+    @property
+    def questions(self) -> list:
+        return list(getattr(self, "_questions", []))
+
+    def answers(self) -> dict:
+        """What has been answered so far, read back out of the chain.
+
+        The chain is the state. Anything held beside it is a second copy that can disagree with the
+        one that gets submitted and marked.
+        """
+        from gini.domain import lab_questions as _q
+        return _q.answers_in(self._chain.entries if self._chain else [])
 
     def cancel(self) -> None:
         """Leave recording mode. The chain stays on disk; entering the same code resumes it.
@@ -204,7 +256,12 @@ class ProofRecorder:
             self._record(ev.stopped(self._topology_dict()))
         self._chain = None
         self._ticket = None
-        self._activity = self._activity_title = ""
+        self._activity = self._activity_title = self._activity_brief = ""
+        # Cancel is the whole departure, so the questions go with it. A student who cancels and
+        # arms a DIFFERENT code must not be shown the last lab's questions with a fresh chain
+        # underneath them.
+        self._questions = []
+        self._faces_seen = set()
         self._changed()
 
 
@@ -425,6 +482,81 @@ class ProofRecorder:
     def _note_command(self, device: str, cmd: str, out: list) -> None:
         self._record(ev.command(device, cmd, out))
 
+    # -- the OS labs ------------------------------------------------------- #
+    #
+    # Called from the Machine Lab and its faces. Every one of them goes through `_guard`, which
+    # swallows whatever it throws: a Load that stopped working because the proof chain hiccuped
+    # would be a far worse bug than a missing entry, and Load is the most consequential button in
+    # the lab. Same reasoning as terminal_panel._pump.
+
+    def note_lab_open(self, device: str, face: str) -> None:
+        """A face was opened. Recorded ONCE per face per armed session.
+
+        The de-duplication lives here rather than in the widget because a face can be opened from
+        several places — a card, a menu, a keyboard shortcut — and each of them would otherwise
+        have to remember. Cleared on arm and disarm with everything else.
+        """
+        key = (str(device or ""), str(face or ""))
+        if key in self._faces_seen:
+            return
+        self._faces_seen.add(key)
+        self._guard(lambda: self._record(ev.lab_open(key[0], key[1])))
+
+    def note_tune(self, device: str, knob: str, before, after) -> None:
+        """A kernel knob moved on a running machine. No-ops are dropped by `ev.tune`."""
+        self._guard(lambda: self._record(ev.tune(str(device or ""), str(knob or ""),
+                                                 before, after)))
+
+    def note_spawn(self, device: str, what: str, action: str = "launch",
+                   pid: int | None = None) -> None:
+        """A program launched, or a process killed."""
+        self._guard(lambda: self._record(
+            ev.spawn(str(device or ""), str(what or ""), action, pid)))
+
+    def note_build(self, device: str, shadow: str, ok: bool, sources=None,
+                   log=None, action: str = "load") -> None:
+        """The student compiled their own kernel code — successes AND failures.
+
+        `sources` is `{filename: {"sha256", "lines"}}` as the files stood when the build ran. It
+        is what binds this entry to the code that travels with the submission.
+        """
+        self._guard(lambda: self._record(
+            ev.build(str(device or ""), str(shadow or ""), bool(ok), dict(sources or {}),
+                     list(log or []), action)))
+
+    def note_observed(self, device: str, kind: str, detail: str,
+                      pid: int | None = None) -> None:
+        """A phenomenon the kernel showed — from MachineState's watcher, off the poll thread.
+
+        The watcher is edge-triggered (once per condition per episode, re-arming when it clears),
+        which is what makes it safe to record from a path that runs every second.
+        """
+        self._guard(lambda: self._record(
+            ev.observe(str(device or ""), str(kind or ""), str(detail or ""), pid)))
+
+    def note_answer(self, question_id: str, prompt: str, text: str) -> bool:
+        """Record the student's answer to one of the lab's questions.
+
+        Returns whether it went in, so the panel can say so rather than guess. It does NOT go in
+        when nothing is being recorded, or when the work has already been handed in — an answer
+        appended after the `submit` entry is not in the proof that was sent, so accepting it would
+        let a student type into a box that no marker will ever read.
+
+        The prompt travels WITH the answer rather than being looked up later: a teacher may edit or
+        retire a question between the lab and the marking, and an answer whose question changed
+        underneath it is worse than no answer at all.
+
+        Answering twice appends twice, deliberately. The chain is append-only, a student may think
+        again, and the report shows the last pass and says how many there were.
+        """
+        if not self.armed or (self._chain and self._chain.has_submitted()):
+            return False
+        self._guard(self._note_answer, str(question_id or ""), str(prompt or ""), str(text or ""))
+        return True
+
+    def _note_answer(self, question_id: str, prompt: str, text: str) -> None:
+        self._record(ev.answer(question_id, prompt, text))
+
     def note_check(self, results, objectives=None) -> None:
         """Record what GINI measured when the student pressed Run / Check.
 
@@ -504,5 +636,19 @@ class ProofRecorder:
             self._complain(e)
             return {"ok": False, "message": f"Could not write the proof: {e}"}
         return {"ok": True, "path": str(path), "proof": proof, "topology": topology,
+                # An OS lab's deliverable. Scoped to the xv6 machines in THIS topology — the
+                # shadow directories are per-machine and outlive the topology that made them, so
+                # gathering everything under ~/.gini/xv6-shadows/ would put one lab's work into
+                # another lab's submission. Never fatal: a proof that could not be written is a
+                # failure, a proof whose sources could not be read is still a proof.
+                "shadows": self._collect_shadows(topology),
                 "receipt": _proof.receipt_code(proof),
                 "message": f"Proof written to {path}"}
+
+    def _collect_shadows(self, topology: dict) -> dict:
+        try:
+            from .xv6_shadows import collect, xv6_machines
+            return collect(xv6_machines(topology))
+        except Exception as e:                              # noqa: BLE001
+            self._complain(e)
+            return {}

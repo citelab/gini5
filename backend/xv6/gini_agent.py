@@ -10,7 +10,8 @@ Endpoints (GET unless noted):
   /faults    -> live page-fault ring (`FLT pid scause va epc`)
   /traps     -> trap-taxonomy counters + ring (`TC kind name count` + `TR pid kind cause epc tval`)
   /fs        -> {"sb": <text>, "log": <text>}
-  /step      (POST) -> break swtch; continue; delete   (advance one context switch)
+  /step      (POST) -> break swtch; continue; read regs+bt+procs WHILE HALTED; detach
+  #                    -> {"switched": bool, "registers","bt","procs","ticks"} (frozen at swtch)
   /trapcatch (POST) -> freeze the next user trap: CSRs (scause/sepc/stval) + saved user registers
   /control   (POST ?quantum=N | ?policy=N) -> write the kernel knob over gdb
 
@@ -26,9 +27,16 @@ import shutil
 import socket
 import subprocess
 import threading
+import sys
 import time
 from http.server import BaseHTTPRequestHandler, HTTPServer
 from urllib.parse import parse_qs, urlparse
+
+# console_mux ships beside this file (in the container both are /opt/*). Add our own directory so
+# `import console_mux` resolves in the container AND when a test loads gini_agent.py by path — the
+# arm bytes must come from the ONE proven encoder, never a second inline copy that could drift.
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+import console_mux                                                              # noqa: E402
 
 XV6_DIR = "/opt/xv6-riscv"
 SHADOW_FILE = XV6_DIR + "/kernel/shadows/gini_sched.c"
@@ -54,6 +62,8 @@ KERNEL = "/opt/xv6-riscv/kernel/kernel"
 STUB = "localhost:1234"
 SERIAL = ("127.0.0.1", 4444)
 TIMEOUT = 6          # keep gdb calls short so a stuck read can't wedge the stub/UI
+GINI_NPOLICY = 3     # scheduler policies 0..2 (RR/priority/lottery); mirrors defs.h GINI_NPOLICY.
+#                      Bounds ?policy=N so a bad value clamps instead of arming a partial entry.
 _LOCK = threading.Lock()   # one gdb at a time (defensive; also serialises stub access)
 
 # long-running programs the Machine Lab offers to launch (gini_patch.py adds spin/alloc/writer;
@@ -83,6 +93,11 @@ class SerialLink:
     shell commands (launch/kill) AND expose the console — the human console goes through here too,
     since a second raw client would be refused. Reconnects on drop; buffers recent output."""
 
+    #: Class-level default so an instance built by `__new__` (which the serial tests do, to get a
+    #: link with no reader thread) can never reach dump() without it and raise AttributeError.
+    #: False is also the SAFE default: it only ever permits the legacy raw-byte fallback.
+    _ever_framed = False
+
     def __init__(self, addr):
         self.addr = addr
         self.buf = collections.deque(maxlen=20000)   # RAW bytes (all), for the dump fallback
@@ -96,9 +111,30 @@ class SerialLink:
         self._cap = bytearray()
         self._last_dump = b""
         self._dump_seq = 0                           # bumps each time a dump completes
+        # Has this kernel EVER bracketed a dump? Latched, never cleared — see dump(). It decides
+        # whether a timeout may fall back to raw bytes, and only a pre-marker kernel may.
+        self._ever_framed = False
         self._sock = None
         self._lock = threading.Lock()
+        self._closed = threading.Event()      # see close(); never set in the container
         threading.Thread(target=self._reader, daemon=True).start()
+
+    def close(self):
+        """Stop the reader thread.
+
+        Nothing in the container calls this: the agent is its own process and the link lasts as
+        long as it does. It exists for the test suite, which constructs a SerialLink to feed
+        `_ingest` directly — and a reader that cannot stop kept retrying a connection nobody was
+        listening for, for the rest of the pytest session. Five tests were leaving one behind
+        each.
+        """
+        self._closed.set()
+        sock, self._sock = self._sock, None
+        if sock is not None:
+            try:
+                sock.close()
+            except OSError:
+                pass
 
     def _connect(self):
         try:
@@ -120,6 +156,7 @@ class SerialLink:
                     self._last_dump = bytes(self._cap)
                     self._cap = bytearray()
                     self._dump_seq += 1
+                    self._ever_framed = True     # this kernel frames; the fallback is now unsafe
                 else:
                     self._cap.append(b)
             elif b == DUMP_START:
@@ -130,11 +167,11 @@ class SerialLink:
                 self._console_total += 1
 
     def _reader(self):
-        while True:
+        while not self._closed.is_set():
             if self._sock is None:
                 self._connect()
                 if self._sock is None:
-                    time.sleep(1)
+                    self._closed.wait(1)      # sleep, but wake at once on close()
                     continue
             try:
                 data = self._sock.recv(4096)
@@ -224,6 +261,21 @@ class SerialLink:
                 time.sleep(poll)
             if self._dump_seq > seq0:                     # our framed dump arrived -> use it
                 return self._last_dump.decode(errors="replace")
+            if self._ever_framed:
+                # This kernel brackets its dumps, so a timeout means the dump did NOT arrive —
+                # not that it arrived unframed. Returning the raw window here hands the caller
+                # the console as if it were kernel data: walker's lap lines, grind's ABAB, and
+                # whatever partial frame was in flight. parse_procdump then finds fewer PROC
+                # lines than there are processes and a row vanishes from the table for one poll
+                # — the "process blinks out" report, exactly.
+                #
+                # And it fires precisely when a student is doing what the lab asked: a CPU-bound
+                # program delays the console interrupt and shares the UART with the dump's ~2 KB,
+                # which is what makes the frame miss its 0.35 s deadline in the first place.
+                #
+                # Say nothing instead. MachineState._ingest refuses an empty process list and
+                # keeps the last good snapshot, so the face holds still rather than lying.
+                return ""
             n = self._total - before                      # pre-marker kernel -> raw window
             if n <= 0:
                 return ""
@@ -521,42 +573,33 @@ def gdb_run(commands, timeout=TIMEOUT):
             return f"gdb-error: {e}"
 
 
-# Freeze the NEXT user trap: break at usertrap entry, then read the trap CSRs (scause/sepc/stval —
-# the trap facts, live at entry) plus the user registers uservec saved into the trapframe. The
-# current proc is cpus[$tp].proc ($tp = hartid in xv6). On an idle kernel with no user proc this
-# times out and the frontend falls back to the authored journey. gdb_run appends `detach`.
-_TF = "cpus[$tp].proc->trapframe"
-# gdb breakpoint predicates to catch a trap of a SPECIFIC kind (Phase 4). "any" = no condition.
-_TRAP_COND = {
-    "syscall": "$scause==8",
-    "pagefault": "($scause==12 || $scause==13 || $scause==15)",
-    "illegal": "$scause==2",
-    "timer": "$scause==0x8000000000000005",
-    "device": "($scause==0x8000000000000009)",
-}
+# One-shot trap capture, kernel-side (see gini_traprec + the CATCH dump line). The Traps face ARMS
+# a kind through the console mux; the kernel copies the next matching trap into gini_catch; we poll
+# the trapdump (Ctrl-R, non-perturbing) until CATCH is ready and its kind matches. This replaced a
+# gdb conditional breakpoint at usertrap that could only see USER-mode traps and, by halting the
+# guest to test its condition, drove the very timer it hunted into kernel mode (uncatchable). The
+# capture sees both modes and does not perturb what it measures. See docs/design/xv6-rebuild-batch
+# §11.
+_CATCH_KIND = {"syscall": 0, "pagefault": 1, "timer": 2, "device": 3,
+               "illegal": 4, "other": 5, "any": 9}     # 9 = "any" on the wire (kernel -> ANY)
+
+_CATCH_RE = re.compile(
+    r"^CATCH (\d+) (\d+) (\d+) "                                             # ready kind from_user
+    r"(0x[0-9a-fA-F]+) (0x[0-9a-fA-F]+) (0x[0-9a-fA-F]+) (-?\d+) "           # cause epc tval pid
+    r"(0x[0-9a-fA-F]+) (0x[0-9a-fA-F]+) (0x[0-9a-fA-F]+) (0x[0-9a-fA-F]+) "  # tf: epc ra sp a0
+    r"(0x[0-9a-fA-F]+) (0x[0-9a-fA-F]+) (0x[0-9a-fA-F]+) "                   # tf: a1 a2 a7
+    r"(-?\d+) (-?\d+) h(\d+)", re.M)                                         # qticks quantum hart
 
 
-def _trap_catch_cmds(kind="any"):
-    cond = _TRAP_COND.get(kind)
-    brk = f"tbreak usertrap if {cond}" if cond else "tbreak usertrap"
-    return [brk] + _TRAP_CATCH_TAIL
-
-
-_TRAP_CATCH_TAIL = [
-    "continue",
-    "echo ===TRAP===\\n",
-    "printf \"scause %p\\n\", $scause",
-    "printf \"sepc %p\\n\", $sepc",
-    "printf \"stval %p\\n\", $stval",
-    "printf \"pid %d\\n\", (cpus[$tp].proc ? cpus[$tp].proc->pid : -1)",
-    f"printf \"epc %p\\n\", {_TF}->epc",
-    f"printf \"ra %p\\n\", {_TF}->ra",
-    f"printf \"sp %p\\n\", {_TF}->sp",
-    f"printf \"a0 %p\\n\", {_TF}->a0",
-    f"printf \"a1 %p\\n\", {_TF}->a1",
-    f"printf \"a2 %p\\n\", {_TF}->a2",
-    f"printf \"a7 %p\\n\", {_TF}->a7",
-]
+def _catch_to_trapframe(m):
+    """A matched CATCH line -> the ===TRAP=== text `parse_trapframe` already accepts, plus the new
+    keys (from_user/hart/qticks/quantum). Keeps the frontend parser untouched and skew-safe."""
+    g = m.groups()
+    return ("===TRAP===\n"
+            f"scause {g[3]}\nsepc {g[4]}\nstval {g[5]}\npid {g[6]}\n"
+            f"from_user {g[2]}\nhart {g[16]}\nqticks {g[14]}\nquantum {g[15]}\n"
+            f"epc {g[7]}\nra {g[8]}\nsp {g[9]}\n"
+            f"a0 {g[10]}\na1 {g[11]}\na2 {g[12]}\na7 {g[13]}\n")
 
 
 class Handler(BaseHTTPRequestHandler):
@@ -576,8 +619,6 @@ class Handler(BaseHTTPRequestHandler):
         if path == "/health":
             # carries the wedge verdict so the Lab can tell the student to reboot (we never do)
             self._send({"ok": True, "wedge": _WEDGE.state()})
-        elif path == "/programs":
-            self._send({"programs": PROGRAMS})
         elif path == "/procs":                       # fast, NO-halt process table (Ctrl-P)
             txt = _SERIAL.procdump()
             _WEDGE.note_dump(txt)                    # the liveness heartbeat (~2/s)
@@ -606,8 +647,9 @@ class Handler(BaseHTTPRequestHandler):
             self._send(_SERIAL.dump(b"\x06"), ctype="text/plain")   # Ctrl-F -> gini_fsdump()
         elif path == "/sc":
             self._send(_SERIAL.dump(b"\x13"), ctype="text/plain")   # Ctrl-S -> gini_scdump()
-        elif path == "/shadows":                                    # Ctrl-W -> gini_shadowdump(),
-            self._send(_stamp_manifest(_SERIAL.dump(b"\x17")), ctype="text/plain")  # hash-stamped
+        elif path == "/shadows":              # Ctrl-W Ctrl-W -> gini_shadowdump() (mux self-escape;
+            #                                   bare Ctrl-W is now the command-mux prefix — §4f5)
+            self._send(_stamp_manifest(_SERIAL.dump(b"\x17\x17")), ctype="text/plain")  # hash-stamped
         elif path == "/vmall":
             self._send(_SERIAL.dump(b"\x01"), ctype="text/plain")   # Ctrl-A -> gini_vmdump_all()
         elif path == "/faults":
@@ -647,15 +689,72 @@ class Handler(BaseHTTPRequestHandler):
         u = urlparse(self.path)
         q = parse_qs(u.query)
         if u.path == "/step":
-            # temporary breakpoint auto-deletes on hit; if the kernel is idle (no context
-            # switch) this times out harmlessly and the next read resumes the guest.
-            self._send({"out": gdb_run(["tbreak swtch", "continue"])})
+            # ONE gdb session does BOTH halves: halt at swtch, then read registers + kernel
+            # backtrace + the proc walk WHILE STILL HALTED, then detach. The old code ran two
+            # sessions — `tbreak swtch; continue` here and a separate `/snapshot` afterwards —
+            # but gdb_run always appends `detach`, so the first session resumed the guest before
+            # the second could read, and the read landed on an arbitrary later instant instead
+            # of the switch. This is known issue #11: "Step does not freeze what it shows." A
+            # single session keeps the kernel stopped across the read, so the detail is frozen at
+            # the switch. The temporary breakpoint auto-deletes on hit.
+            #
+            # Timeout scales with the quantum: at the default slice TIMEOUT is fine, but the UI
+            # offers a 10-tick slice where gdb spawn + symbol load + waiting a whole slice for the
+            # next switch can exceed 6 s (the "second squeeze" in the writeup). Floor at TIMEOUT so
+            # the common case is unchanged; a truly idle kernel (no swtch at all) still times out.
+            try:
+                qt = int(q.get("quantum", ["1"])[0] or "1")
+            except ValueError:
+                qt = 1
+            step_timeout = min(20.0, TIMEOUT + 0.6 * max(0, qt - 1))
+            out = gdb_run(["tbreak swtch", "continue",
+                           "info registers", "echo ===BT===\\n", "bt",
+                           "echo ===PROCS===\\n", _PROC_WALK,
+                           "echo ===TICKS===\\n", "printf \"%d\\n\", ticks"],
+                          timeout=step_timeout)
+            # A switch was actually caught iff the read ran — a timeout returns the bare
+            # "gdb-timeout" string with none of the section markers. Reporting switched=False
+            # (rather than a snapshot that looks like a result) lets the UI say "no switch
+            # happened" instead of presenting the idle scheduler stack as a captured switch.
+            switched = "===BT===" in out
+            regs, _, rest = out.partition("===BT===")
+            bt, _, rest = rest.partition("===PROCS===")
+            procs, _, ticks = rest.partition("===TICKS===")
+            self._send({"switched": switched, "registers": regs, "bt": bt,
+                        "procs": procs, "ticks": ticks.strip()})
         elif u.path == "/trapcatch":
-            # freeze the next live user trap and read its CSRs + saved user registers. An optional
-            # ?kind= (pagefault/syscall/timer/illegal/device) conditions the breakpoint (Phase 4);
-            # default "any" catches the next trap of any kind (Phase 2).
-            kind = (q.get("kind", ["any"])[0] or "any").strip()
-            self._send({"out": gdb_run(_trap_catch_cmds(kind))})
+            # Arm the kernel-side capture for ?kind= (default any), then poll the trapdump until a
+            # matching trap is caught or ?wait= seconds elapse. No gdb: instant arm, no guest stall.
+            name = (q.get("kind", ["any"])[0] or "any").strip().lower()
+            if name not in _CATCH_KIND:
+                self._send({"ok": False, "error": "unknown kind %r; use one of %s"
+                            % (name, ", ".join(sorted(_CATCH_KIND)))})
+                return
+            want = _CATCH_KIND[name]
+            try:
+                wait = max(1.0, min(30.0, float(q.get("wait", ["10"])[0])))
+            except ValueError:
+                wait = 10.0
+            # ARM via the ONE proven encoder (console_mux). bytes are <0x80, so latin-1 round-trips
+            # through SerialLink.write's .encode().
+            _SERIAL.write(console_mux.encode("arm_trap", want).decode("latin-1"))
+            print(f"[trapcatch] armed {name} (wire {want}), wait {wait:.0f}s", flush=True)
+            deadline = time.time() + wait
+            while time.time() < deadline:
+                # Ctrl-R -> gini_trapdump: non-perturbing, and non-destructive (ready stays set).
+                m = _CATCH_RE.search(_SERIAL.dump(b"\x12") or "")
+                # ready AND the captured kind matches what we armed — the kind-match closes the mild
+                # re-arm race (a stale capture of another kind is ignored, not returned).
+                if m and m.group(1) == "1" and (want == 9 or int(m.group(2)) == want):
+                    print("[trapcatch] caught kind %s pid %s h%s"
+                          % (m.group(2), m.group(7), m.group(17)), flush=True)
+                    self._send({"ok": True, "out": _catch_to_trapframe(m)})
+                    return
+                time.sleep(0.25)
+            reason = (f"armed for {name}; no matching trap in {wait:.0f}s — the machine may be idle, "
+                      f"or the ticks are landing on another hart")
+            print(f"[trapcatch] timeout: {reason}", flush=True)
+            self._send({"ok": False, "error": reason})
         elif u.path == "/control":
             # set the time-slice quantum over the SERIAL (no gdb): Ctrl-\ resets it to 1, then
             # Ctrl-] bumps it up to the target. Reliable console input, unlike the gdb write.
@@ -670,15 +769,17 @@ class Handler(BaseHTTPRequestHandler):
                     _SERIAL.write("\x1d")             # Ctrl-]  -> sched_quantum++
                 out = f"quantum={n}"
             if "policy" in q:
-                # set sched_policy over the serial: Ctrl-B resets to 0 (round-robin), then Ctrl-G
-                # bumps up to the target (0=RR 1=priority 2=lottery). Same pattern as the quantum.
+                # set sched_policy over the serial: Ctrl-B then the digits then newline — ONE
+                # terminated entry the kernel's gini_polidx machine consumes atomically (0=RR
+                # 1=priority 2=lottery). The old scheme (Ctrl-B then N×Ctrl-G) drove policy up
+                # with Ctrl-G, but Ctrl-G is the shadow-index prefix, so every policy above 0
+                # silently toggled a shadow instead of switching policy (known issue #1). No
+                # pending state is left on the wire, so a following /procs poll cannot finish it.
                 try:
-                    pv = max(0, min(2, int(q["policy"][0])))
+                    pv = max(0, min(GINI_NPOLICY - 1, int(q["policy"][0])))
                 except ValueError:
                     pv = 0
-                _SERIAL.write("\x02")                 # Ctrl-B  -> sched_policy = 0
-                for _ in range(pv):
-                    _SERIAL.write("\x07")             # Ctrl-G  -> sched_policy++
+                _SERIAL.write("\x02" + str(pv) + "\n")   # Ctrl-B <digits> newline
                 out = (out + f" policy={pv}").strip()
             self._send({"ok": True, "out": out})
         elif u.path == "/run":                       # launch a program in the background
