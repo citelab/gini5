@@ -13,6 +13,8 @@ Endpoints (GET unless noted):
   /step      (POST) -> break swtch; continue; read regs+bt+procs WHILE HALTED; detach
   #                    -> {"switched": bool, "registers","bt","procs","ticks"} (frozen at swtch)
   /trapcatch (POST) -> freeze the next user trap: CSRs (scause/sepc/stval) + saved user registers
+  /traplast  -> the last caught trap again, without arming — how a trap that had not yet returned
+  #             when /trapcatch answered gets its return frame (the `tfout` line) later
   /control   (POST ?quantum=N | ?policy=N) -> write the kernel knob over gdb
 
 The kernel-side parsing stays on the Mac (already unit-tested); this agent just returns raw
@@ -801,15 +803,39 @@ _CATCH_RE = re.compile(
     r"(-?\d+) (-?\d+) h(\d+)", re.M)                                         # qticks quantum hart
 
 
-def _catch_to_trapframe(m):
+# The whole trapframe, as the trap entered (`in`) and as it is about to return (`out`): the token
+# that pairs them, then all 36 fields of struct trapframe in struct order (gini_tfprint). The kernel
+# prints `out` only once the caught trap has returned, and only for the same token as `in`.
+_CTF_RE = re.compile(r"^CTF (in|out) (\d+)((?: 0x[0-9a-fA-F]+){36})\s*$", re.M)
+
+#: How long /trapcatch waits, after catching a trap from user mode, for it to RETURN. A system call
+#: like write is back in microseconds; pause(1) needs a tick (half a second here). A read on an
+#: idle console may never return, and /traplast is how the frame is fetched later.
+_RETURN_WAIT = 1.5
+
+
+def _ctf(text):
+    """{"in": (token, "0x… 0x…"), "out": (…)} from a trapdump; missing keys for missing lines."""
+    return {m.group(1): (m.group(2), m.group(3).strip()) for m in _CTF_RE.finditer(text or "")}
+
+
+def _catch_to_trapframe(m, ctf=None):
     """A matched CATCH line -> the ===TRAP=== text `parse_trapframe` already accepts, plus the new
-    keys (from_user/hart/qticks/quantum). Keeps the frontend parser untouched and skew-safe."""
+    keys (from_user/hart/qticks/quantum, and the whole trapframe as `seq`/`tfin`/`tfout`). The
+    trapframe lines hold many values each, which an older parser's one-value pattern skips, so the
+    frontend stays skew-safe in both directions."""
     g = m.groups()
-    return ("===TRAP===\n"
+    text = ("===TRAP===\n"
             f"scause {g[3]}\nsepc {g[4]}\nstval {g[5]}\npid {g[6]}\n"
             f"from_user {g[2]}\nhart {g[16]}\nqticks {g[14]}\nquantum {g[15]}\n"
             f"epc {g[7]}\nra {g[8]}\nsp {g[9]}\n"
             f"a0 {g[10]}\na1 {g[11]}\na2 {g[12]}\na7 {g[13]}\n")
+    ctf = ctf or {}
+    if "in" in ctf:
+        text += f"seq {ctf['in'][0]}\ntfin {ctf['in'][1]}\n"
+        if "out" in ctf and ctf["out"][0] == ctf["in"][0]:
+            text += f"tfout {ctf['out'][1]}\n"
+    return text
 
 
 class Handler(BaseHTTPRequestHandler):
@@ -876,6 +902,15 @@ class Handler(BaseHTTPRequestHandler):
             self._send(_read_source(parse_qs(urlparse(self.path).query)), ctype="text/plain")
         elif path == "/traps":
             self._send(_SERIAL.dump(b"\x12"), ctype="text/plain")   # Ctrl-R -> gini_trapdump()
+        elif path == "/traplast":
+            # The last caught trap, re-read without arming (the dump is non-destructive), so a trap
+            # that was still in the kernel when /trapcatch answered can be shown returning later.
+            text = _SERIAL.dump(b"\x12") or ""
+            m = _CATCH_RE.search(text)
+            if m and m.group(1) == "1":
+                self._send({"ok": True, "out": _catch_to_trapframe(m, _ctf(text))})
+            else:
+                self._send({"ok": False, "error": "no trap has been caught on this machine"})
         elif path == "/board":                        # Ctrl-D -> gini_boarddump(): the kernel map
             # The board is by far the largest dump — 14 subsystem lines, the call matrix, our own
             # observation matrix, a 64-entry trail and, when armed, up to 128 path hops. On a slow
@@ -952,13 +987,26 @@ class Handler(BaseHTTPRequestHandler):
             deadline = time.time() + wait
             while time.time() < deadline:
                 # Ctrl-R -> gini_trapdump: non-perturbing, and non-destructive (ready stays set).
-                m = _CATCH_RE.search(_SERIAL.dump(b"\x12") or "")
+                text = _SERIAL.dump(b"\x12") or ""
+                m = _CATCH_RE.search(text)
                 # ready AND the captured kind matches what we armed — the kind-match closes the mild
                 # re-arm race (a stale capture of another kind is ignored, not returned).
                 if m and m.group(1) == "1" and (want == 9 or int(m.group(2)) == want):
                     print("[trapcatch] caught kind %s pid %s h%s"
                           % (m.group(2), m.group(7), m.group(17)), flush=True)
-                    self._send({"ok": True, "out": _catch_to_trapframe(m)})
+                    ctf = _ctf(text)
+                    # From user mode, on a kernel that records the whole trapframe: give the trap
+                    # a moment to come back, so the frame arrives with its return. The CATCH line
+                    # itself is unchanged by a re-read, so only the CTF lines are taken again.
+                    until = time.time() + _RETURN_WAIT
+                    while "in" in ctf and "out" not in ctf and time.time() < until:
+                        time.sleep(0.1)
+                        again = _ctf(_SERIAL.dump(b"\x12") or "")
+                        if again.get("in") == ctf["in"]:
+                            ctf = again
+                        else:
+                            break               # re-armed elsewhere: keep what we caught
+                    self._send({"ok": True, "out": _catch_to_trapframe(m, ctf)})
                     return
                 time.sleep(0.25)
             reason = (f"armed for {name}; no matching trap in {wait:.0f}s — the machine may be idle, "

@@ -430,6 +430,21 @@ class Xv6Bridge:
             return fr
         return parse_trapframe(reply.get("out", ""))
 
+    def trap_return(self, frame):
+        """The same caught trap read again, now that it may have returned — a new TrapFrame with
+        `tf_out` filled, or None. None also when the machine has caught a DIFFERENT trap since
+        (the seq no longer matches): another trap's return pasted under this one's entry would be
+        the one thing worse than no return at all."""
+        from ..domain.xv6 import parse_trapframe
+        seq = getattr(frame, "seq", 0)
+        if not seq:
+            return None
+        reply = self.agent.get_json("/traplast")
+        if not reply.get("ok"):
+            return None
+        fr = parse_trapframe(reply.get("out", ""))
+        return fr if fr.ok and fr.seq == seq else None
+
     def alarms(self) -> str:
         """Raw gini_dump text (contains the per-proc `ALARM …` lines) for the sigalarm-lab strip."""
         return self.agent.get_text("/procs")

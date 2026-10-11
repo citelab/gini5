@@ -840,8 +840,14 @@ class MachineLab(QDialog):
         procs = self.state.latest.procs if self.state.latest else None
         self._retire("_journey")
         self._rec("note_lab_open", self._dev_name(), "CPU Journey")
+        # The trapframe view can read a trap's return later (it may still be asleep in the kernel
+        # when caught), and names a call the student added from their own syscall.h.
+        from ..services.xv6_lab import active_spec, syscall_names
+        name = self._dev_name()
+        reread = getattr(self.state.provider, "trap_return", None)
         self._journey = CpuJourney(self, self.theme, device=self.device, cpu=cpu, frame=frame,
-                                   procs=procs)
+                                   procs=procs, reread=reread if callable(reread) else None,
+                                   names=syscall_names(active_spec(name), name))
         self._journey.show(); self._journey.raise_()
 
     def _open_games(self) -> None:

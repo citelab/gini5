@@ -22,8 +22,9 @@ keywords: [trap, interrupt, exception, scause, taxonomy, syscall, page fault, ti
 - **sigalarm strip** — shown when an alarm is armed: "⏰ pid N · every K ticks ·
   fires in R · handler 0x… · handler RUNNING" (parsed from `/procs` ALARM lines).
 - **"Step a trap ▸"** with a `catch:` combo (any / pagefault / syscall / timer /
-  illegal / device) → freezes a live trap via gdb and opens the **CPU Journey**
-  seeded with the frozen frame.
+  illegal / device) → catches the next live trap of that kind and opens the
+  **CPU Journey** seeded with it, including its whole trapframe on the way in
+  and on the way out (click the trapframe card).
 - Play → decode-the-trap game.
 
 ## What it is doing
@@ -57,9 +58,14 @@ Classification (`gini_kind`, mirrors `usertrap`'s own dispatch):
   the kernel-side hook **the device bucket stays empty**.
 - Deliberately never re-calls `devintr()` — classifying from scause alone means
   no interrupt is consumed by observation.
-- **Trap-catch** is the gdb path: `tbreak usertrap` conditioned on scause
-  (syscall→8, pagefault→12|13|15, illegal→2, timer/device→interrupt codes), then
-  prints scause/sepc/stval + pid + trapframe registers, and always detaches.
+- **Trap-catch** is kernel-side, with no gdb: the face arms a kind over the
+  console, and `gini_traprec()` copies the next matching trap — its CSRs, and
+  for a trap from user mode the **whole trapframe** (`gini_catch_tfin`) — with
+  one compare per trap while disarmed. `gini_catchret()`, hooked in
+  `prepare_return` after the line that loads sepc from the trapframe, copies the
+  same page again as userret will restore it (`gini_catch_tfout`). A token pairs
+  the two, so a return is never shown under another trap's entry. A trap that
+  never returns (exit, a killed process) simply has no return copy.
 - The kernel board's entry-class counting (system call / exception / device
   interrupt) is a separate, simpler classifier in `gini_doorrec()` — see
   [os-kernel-board](os-08-kernel-board.md); the taxonomy here is the six-bucket
@@ -67,7 +73,10 @@ Classification (`gini_kind`, mirrors `usertrap`'s own dispatch):
 
 ## Wire format
 
-`TC <kind> <name> <count>` (cumulative, all six kinds) ·
+`CATCH <ready> <kind> <from_user> <cause> <epc> <tval> <pid> <epc ra sp a0 a1 a2 a7>
+<qticks> <quantum> h<hart>` (the caught trap) · `CTF in|out <token> <36 fields>` (its
+whole trapframe in `struct trapframe` order; `out` only once it has returned, with
+the same token) · `TC <kind> <name> <count>` (cumulative, all six kinds) ·
 `TR <pid> <kind> <cause> <epc> <tval> <sstatus> <sie> <sip> <seq>` (ring of
 256, CSR triple optional on older images). `TrapEvent.came_from` decodes
 sstatus.SPP into user/kernel. See [os-wire-protocol](os-01-wire-protocol.md).

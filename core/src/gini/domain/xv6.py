@@ -767,16 +767,28 @@ class TrapFrame:
     qticks: int = 0
     quantum: int = 0
     error: str = ""
+    # The WHOLE trapframe (domain/trapframe.py), from a kernel that records it: `tf_in` as uservec
+    # left it, `tf_out` as userret is about to restore it — empty until the trap has returned, and
+    # forever for one that never does. Field name -> int. Both empty on an older image, which
+    # records only the seven `regs` above. `seq` pairs a later /traplast read with this capture.
+    seq: int = 0
+    tf_in: dict = field(default_factory=dict)
+    tf_out: dict = field(default_factory=dict)
 
 
 def parse_trapframe(text: str) -> TrapFrame:
     """Parse the agent's /trapcatch gdb output (`key 0x…` lines after a ===TRAP=== marker) into a
     TrapFrame. Missing/garbled fields are tolerated; ok=True only once we have a valid scause."""
+    from .trapframe import parse_fields
     fr = TrapFrame()
     body = (text or "").split("===TRAP===", 1)[-1]
     if "gdb-timeout" in (text or "") or "gdb-error" in (text or ""):
         return fr                                       # ok stays False -> authored fallback
     for line in body.splitlines():
+        head, _, rest = line.strip().partition(" ")
+        if head in ("tfin", "tfout"):                   # many values: not the one-value pattern
+            setattr(fr, "tf_in" if head == "tfin" else "tf_out", parse_fields(rest))
+            continue
         m = re.match(r"\s*([a-z]\w*)\s+(0x[0-9a-fA-F]+|-?\d+)\s*$", line)
         if not m:
             continue
@@ -795,11 +807,13 @@ def parse_trapframe(text: str) -> TrapFrame:
                 fr.from_user = int(val, 0) != 0
             except ValueError:
                 pass
-        elif key in ("hart", "qticks", "quantum"):
+        elif key in ("hart", "qticks", "quantum", "seq"):
             try:
                 setattr(fr, key, int(val, 0))
             except ValueError:
                 pass
+    if not fr.tf_in:
+        fr.tf_out = {}                                  # a return means nothing without its entry
     if fr.scause:
         fr.kind, fr.kind_name = decode_scause(fr.scause)
         fr.ok = True
@@ -906,6 +920,21 @@ _DEMO_META = {3: {"priority": 5, "tickets": 1},    # high priority, few tickets
               5: {"priority": 10, "tickets": 4}}    # low priority, most tickets
 
 
+def _demo_frame(scause, epc, stval, pid, kind, kind_name, regs, out) -> "TrapFrame":
+    """A demo TrapFrame with a whole trapframe: `regs` over a plain page on the way in, `out`
+    over that on the way out (empty: nothing changed — a timer tick, a page fault)."""
+    from .trapframe import FIELDS
+    tin = dict.fromkeys(FIELDS, 0)
+    tin.update(kernel_satp=0x8000000000087fff, kernel_sp=0x3fffffe000, kernel_trap=0x80001a3c,
+               epc=epc, ra=0x5a, sp=0x3f60, s0=0x3f80)
+    tin.update(regs)
+    tout = dict(tin, **out)
+    legacy = {k: f"0x{tin[k]:016x}" for k in ("epc", "ra", "sp", "a0", "a1", "a2", "a7")}
+    return TrapFrame(scause=scause, sepc=f"0x{epc:016x}", stval=f"0x{stval:016x}", pid=pid,
+                     regs=legacy, kind=kind, kind_name=kind_name, ok=True, seq=1,
+                     tf_in=tin, tf_out=tout)
+
+
 class DemoScheduler:
     """Deterministic policy-aware feed of Snapshots — the offline stand-in for the GDB bridge.
     Mirrors gini_pick(): round-robin / priority (aging) / lottery, so switching the policy in the
@@ -961,21 +990,23 @@ class DemoScheduler:
 
     def catch_trap(self, kind: str = "any") -> "TrapFrame":
         """Offline demo of /trapcatch — a plausible frozen trap, so the CPU journey can be seeded
-        with real-looking values without a container. Honours the requested `kind` where it can."""
+        with real-looking values without a container. Honours the requested `kind` where it can.
+
+        Each carries a WHOLE trapframe, in and out, shaped like the live ones: without it the
+        trapframe view would tell a student working offline to update a machine image they do not
+        have. The system call is writer's write(3, buf, 512) — the one C-Lab 2 is built around."""
         if kind == "syscall":
-            return TrapFrame(scause="0x0000000000000008", sepc="0x0000000000001d3c", stval="0x0",
-                             pid=2, regs={"epc": "0x1d3c", "a0": "0x0", "a7": "0x7"},
-                             kind=0, kind_name="ecall from U-mode (syscall)", ok=True)
+            return _demo_frame("0x0000000000000008", 0xbb8, 0x0, 4, kind=0,
+                               kind_name="ecall from U-mode (syscall)",
+                               regs={"a0": 3, "a1": 0x3fb0, "a2": 512, "a7": 16},
+                               out={"epc": 0xbbc, "a0": 512})
         if kind == "timer":
-            return TrapFrame(scause="0x8000000000000005", sepc="0x0000000000001050", stval="0x0",
-                             pid=5, regs={"epc": "0x1050", "sp": "0x3fffff9000"},
-                             kind=2, kind_name="supervisor timer interrupt", ok=True)
-        return TrapFrame(                                    # default / "pagefault": a store fault
-            scause="0x000000000000000f", sepc="0x0000000000001080",
-            stval="0x0000000000004000", pid=5,
-            regs={"epc": "0x0000000000001080", "ra": "0x0000000000001d3c",
-                  "sp": "0x0000003fffff9000", "a0": "0x0000000000000005", "a7": "0x000000000000000f"},
-            kind=1, kind_name="store page fault", ok=True)
+            return _demo_frame("0x8000000000000005", 0x1050, 0x0, 5, kind=2,
+                               kind_name="supervisor timer interrupt",
+                               regs={"a0": 1, "a1": 0x3fe0, "a2": 0x2027, "a7": 7}, out={})
+        return _demo_frame("0x000000000000000f", 0x1080, 0x4000, 5, kind=1,   # a store fault
+                           kind_name="store page fault",
+                           regs={"a0": 5, "a7": 15, "ra": 0x1d3c, "sp": 0x3fffff9000}, out={})
 
     def alarms(self) -> str:
         """Offline demo of the ALARM dump lines — one process with a periodic alarm whose

@@ -432,6 +432,26 @@ uint64 gini_catch_tf[7];          // epc ra sp a0 a1 a2 a7 — valid only when g
 int    gini_catch_qticks  = 0;    // this hart's quantum counter AT TRAP TIME
 int    gini_catch_quantum = 0;    // sched_quantum at trap time (did this tick preempt?)
 
+// The WHOLE trapframe, twice. `tfin` is the page as uservec left it, copied at the same instant
+// as the CSRs above; `tfout` is the same page as userret is about to restore it, copied when the
+// caught process next leaves for user mode. Seven registers was not enough to read a system call
+// off (a1 and a2 were captured and never shown), and one snapshot could not show the point of the
+// page at all: what the kernel CHANGED in it — epc += 4 and the return value laid over a0 for a
+// system call, nothing whatsoever for a timer tick. struct copies, so the field list is xv6's own
+// and a kernel that reorders struct trapframe still dumps by name (gini_tfprint).
+//
+// The two copies are paired by a TOKEN, the trap's event-clock stamp plus one (so 0 means none):
+// `pend` holds it while the caught trap is still in the kernel, the return hook claims it with a
+// CAS and stamps `outseq` with it, and the dump prints `out` only when outseq == inseq. A new
+// catch therefore can never be shown with an older trap's return. Two harts writing tfout at
+// once needs a re-arm inside the microseconds of another trap's return; that tear is accepted,
+// like the ring race (known issue #9).
+struct trapframe gini_catch_tfin, gini_catch_tfout;
+uint64 gini_catch_inseq   = 0;    // token of the trap whose entry frame is in tfin (0 = none)
+uint64 gini_catch_pend    = 0;    // token of a caught user trap that has not yet returned
+int    gini_catch_pendpid = 0;    // ...and whose process it is
+uint64 gini_catch_outseq  = 0;    // token of the trap whose return frame is in tfout
+
 static int
 gini_kind(uint64 c)
 {
@@ -499,17 +519,64 @@ gini_traprec(void)
     // quietly lies, so the user-register array is zeroed and filled only when we came from user.
     gini_catch_user = ((gini_catch.sstatus & SSTATUS_SPP) == 0);
     for(int i = 0; i < 7; i++) gini_catch_tf[i] = 0;
+    gini_catch_pend = 0;          // this catch supersedes any return still pending
+    gini_catch_inseq = 0;
     if(gini_catch_user && p && p->trapframe){
       gini_catch_tf[0] = p->trapframe->epc;  gini_catch_tf[1] = p->trapframe->ra;
       gini_catch_tf[2] = p->trapframe->sp;   gini_catch_tf[3] = p->trapframe->a0;
       gini_catch_tf[4] = p->trapframe->a1;   gini_catch_tf[5] = p->trapframe->a2;
       gini_catch_tf[6] = p->trapframe->a7;
+      // usertrap has just written epc, so this is the complete page as the trap left it — and
+      // BEFORE a system call's epc += 4, which is the change the return copy will show.
+      gini_catch_tfin = *p->trapframe;
+      gini_catch_inseq = gseq + 1;
+      gini_catch_pendpid = p->pid;
+      __sync_synchronize();       // pid before the token that makes the return hook look at it
+      gini_catch_pend = gseq + 1;
     }
     gini_catch_qticks  = gini_qticks[gini_catch.hart];
     gini_catch_quantum = sched_quantum;
     __sync_synchronize();        // publish the whole frame BEFORE ready is seen
     gini_catch_ready = 1;
   }
+}
+
+// The caught trap is about to return to user mode: copy the trapframe as userret will restore it.
+// Called from prepare_return() after every kernel field and sepc are set, so nothing the kernel
+// does to the page afterwards is missed. A process cannot trap again without first returning, and
+// xv6 never reuses a pid, so "the next return of this pid" is this trap's return. A trap that
+// never returns (exit, a killed process, a fatal fault) leaves the token pending, and the dump
+// simply has no `out` line — which is the truth about it.
+void
+gini_catchret(void)
+{
+  uint64 tok = gini_catch_pend;
+  if(tok == 0)
+    return;
+  struct proc *p = myproc();
+  if(p == 0 || p->trapframe == 0 || p->pid != gini_catch_pendpid)
+    return;
+  if(!__sync_bool_compare_and_swap(&gini_catch_pend, tok, 0))
+    return;
+  gini_catch_tfout = *p->trapframe;
+  __sync_synchronize();          // the frame before the token that pairs it
+  gini_catch_outseq = tok;
+}
+
+// One trapframe on ONE line, every field by name in struct order. A single PRINTF so another
+// hart's console output cannot land in the middle of it.
+static void
+gini_tfprint(char *tag, uint64 tok, struct trapframe *t)
+{
+  PRINTF("CTF %s %lu %p %p %p %p %p %p %p %p %p %p %p %p %p %p %p %p %p %p %p %p %p %p"
+         " %p %p %p %p %p %p %p %p %p %p %p %p %p %p\\n", tag, tok,
+         (void*)t->kernel_satp, (void*)t->kernel_sp, (void*)t->kernel_trap, (void*)t->epc,
+         (void*)t->kernel_hartid, (void*)t->ra, (void*)t->sp, (void*)t->gp, (void*)t->tp,
+         (void*)t->t0, (void*)t->t1, (void*)t->t2, (void*)t->s0, (void*)t->s1,
+         (void*)t->a0, (void*)t->a1, (void*)t->a2, (void*)t->a3, (void*)t->a4, (void*)t->a5,
+         (void*)t->a6, (void*)t->a7, (void*)t->s2, (void*)t->s3, (void*)t->s4, (void*)t->s5,
+         (void*)t->s6, (void*)t->s7, (void*)t->s8, (void*)t->s9, (void*)t->s10, (void*)t->s11,
+         (void*)t->t3, (void*)t->t4, (void*)t->t5, (void*)t->t6);
 }
 
 void
@@ -527,6 +594,17 @@ gini_trapdump(void)
          (void*)gini_catch_tf[3], (void*)gini_catch_tf[4], (void*)gini_catch_tf[5],
          (void*)gini_catch_tf[6],
          gini_catch_qticks, gini_catch_quantum, gini_catch.hart);
+  // The whole trapframe on the way in, and on the way out once the trap has returned. Separate
+  // lines rather than more CATCH fields: an older agent's CATCH regex keeps matching, and an
+  // older kernel simply has no CTF lines (see gini_catch_tfin).
+  uint64 in = gini_catch_inseq;
+  if(gini_catch_ready && in){
+    gini_tfprint("in", in, &gini_catch_tfin);
+    uint64 out = gini_catch_outseq;
+    __sync_synchronize();        // read the token before the frame it vouches for
+    if(out == in)
+      gini_tfprint("out", out, &gini_catch_tfout);
+  }
   for(int k = 0; k < GT_NKIND; k++)
     PRINTF("TC %d %s %lu\\n", k, kn[k], (uint64)gini_trapcount[k]);
   uint64 total = gini_traps_i;
@@ -1089,6 +1167,7 @@ append_once("kernel/defs.h", """
 // GINI-xv6 trap-taxonomy additions
 void            gini_traprec(void);      // classify + record a trap (called from usertrap)
 void            gini_trapdump(void);     // print per-kind counters + the trap ring to the console
+void            gini_catchret(void);     // the caught trap is returning: copy its trapframe
 // sstatus/sie/sip are captured AT TRAP TIME: the live CSR dump can only ever describe the console
 // interrupt that the dump itself caused, so honest interrupt state has to be recorded here.
 struct gini_trap { int pid; int kind; uint64 cause; uint64 epc; uint64 tval;
@@ -2018,6 +2097,14 @@ regex_once("kernel/trap.c",
            r"\1  gini_umark[cpuid()] = r_instret();  // GINI-xv6: user-instruction clock starts\n"
            "  gini_sub[cpuid()] = GSUB_USER;      // GINI-xv6: leaving the kernel entirely\n",
            "GINI-xv6: user instret mark")
+
+# The caught trap's RETURN copy (see gini_catchret). Same anchor as the instret mark — the one line
+# in prepare_return after which the kernel touches the trapframe no further — and it is the return
+# path for every trap from user mode, so no trap kind needs its own hook.
+regex_once("kernel/trap.c",
+           r"(  w_sepc\(p->trapframe->epc\);\n)",
+           r"\1  gini_catchret();                   // GINI-xv6: catch the return\n",
+           "GINI-xv6: catch the return")
 
 # Timer ticks that arrive while the CPU is already in the kernel. usertrap's sample is taken by
 # gini_doorrec (where the subsystem still reads USER); this is the kernel-side half, and without

@@ -4,7 +4,7 @@ title: CPU & Registers face + CPU Journey
 subsystem: cpu
 layer: [kernel-patch, agent, domain, ui]
 kernel_files: [kernel/trap.c]
-endpoints: [/procs, /traps, /trapcatch, /snapshot]
+endpoints: [/procs, /traps, /trapcatch, /traplast, /snapshot]
 keywords: [CPU, registers, CSR, sstatus, sie, sip, satp, Sv39, mode bar, user kernel idle, privilege, trapframe, context, swtch, journey, step, frozen trap, SPP, SPIE]
 ---
 
@@ -31,11 +31,27 @@ switch / preemption): stage chips, Prev/Step, a privilege-band line ("CPU is
 in: USER mode · process A · privilege change"), and two **save-area cards** —
 trapframe (all user registers, written on every TRAP) vs context (14
 callee-saved registers, written on every `swtch`) — the active one highlighted
-"▸ trapframe (writing)". With a frozen trap from the Trap Lab's "Step a trap"
+"trapframe (writing)". With a frozen trap from the Trap Lab's "Step a trap"
 it splices **real values** into the captions (saved ra/sp/a0/a7 at `uservec`;
 scause → kind, sepc, stval at `usertrap`; a7/a0 at `syscall()`); without one, a
 banner says "couldn't freeze a trap (kernel idle) — showing the reference
 walkthrough."
+
+**The trapframe card opens** (`trapframe_view.py`, `domain/trapframe.py`):
+every one of the 36 fields of the caught trap's trapframe, in two columns —
+*saved by uservec* and *restored by userret* — grouped (the pc, a0–a7, the
+pointers, s0–s11, the temporaries, the kernel's half), each with what it means
+in *this* trap (`a7` "which call — 16 is write", `a2` "argument 2: byte count",
+`a3` "not used by write"). Changed cells are marked, and the change is said in
+words above the table: a system call comes back with epc + 4 and the return
+value over a0; a page fault with epc unchanged; a timer tick with no register
+of the program changed at all. Stepping lights the copy and registers each
+stage touches (uservec the 31 registers, usertrap epc, `syscall()` a7 and the
+call's arguments, userret the restore). A trap still asleep in the kernel when
+caught (a `read` with no input) gets a "Read the return again" button
+(`/traplast`). A kernel-mode trap opens on an explanation instead: it wrote no
+trapframe. The context card stays a label — `swtch` is not a trap, so no
+context is captured.
 
 ## What it is doing
 
@@ -57,9 +73,12 @@ both.
   the face; the UI leans on `sie` (per-source enables) for honest state.
 - **REGS** lines are live trapframe registers per hart (`s0` added for the
   backtrace lab).
-- **Trap-catch** (gdb, `/trapcatch?kind=`) freezes a real trap:
-  conditioned `tbreak usertrap`, prints scause/sepc/stval + trapframe fields
-  from `cpus[$tp].proc->trapframe`, always detaches.
+- **Trap-catch** (`/trapcatch?kind=`) is kernel-side, not gdb: the next trap
+  of the armed kind is copied by `gini_traprec()` — CSRs plus, from user mode,
+  the whole trapframe — and its return copy by `gini_catchret()` in
+  `prepare_return`. The agent waits up to 1.5 s for the return before
+  answering; `/traplast` re-reads the same capture later. See
+  [os-traps](os-06-traps.md).
 - `/snapshot` (gdb) supplies registers + backtrace + a proc[] walk for the
   scheduler face's kernel-stack panel after a Step.
 
@@ -74,7 +93,11 @@ stvec scause sepc` · `REGS cpu pid pc sp ra s0 a0 a7 satp sz` — see
 - Poll-time CSRs describe the poll; trap-time CSRs (TR ring) describe the
   workload. The face uses both and labels which is which.
 - The mode bar's resolution is the 0.5 s tick — 2 samples/s.
-- Trap-catch halts the kernel briefly and can time out harmlessly when idle.
+- Trap-catch does not halt the kernel, but it can time out harmlessly when
+  idle, and the catch holds the single-threaded agent while it waits (known
+  issue #12).
+- A machine image older than the whole-trapframe capture records seven
+  registers on the way in; the view shows those and says so.
 
 ## Cross-references
 

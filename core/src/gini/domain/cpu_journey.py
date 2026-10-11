@@ -105,7 +105,7 @@ SYSCALL = [
 # pagefault — an exception this instruction caused. Two endings, decided by scause.
 # --------------------------------------------------------------------------------------------- #
 PAGEFAULT_MAPPED = [
-    Stage("the access faults", "user", "A", "trapframe",
+    Stage("the access faults", "user", "A", "",
           "{a} executed a load or a store to an address with no mapping. scause is 13 (load) or 15 "
           "(store) — bit 63 CLEAR, so this is an EXCEPTION: this very instruction caused it, "
           "synchronously. stval holds the faulting virtual address."),
@@ -134,7 +134,7 @@ PAGEFAULT_MAPPED = [
 ]
 
 PAGEFAULT_FATAL = [
-    Stage("instruction fetch faults", "user", "A", "trapframe",
+    Stage("instruction fetch faults", "user", "A", "",
           "{a} tried to EXECUTE from a page it may not execute — scause 12, an instruction page "
           "fault, with stval holding the address it jumped to. Bit 63 is CLEAR: an exception, "
           "caused by this instruction."),
@@ -308,7 +308,7 @@ DEVICE_KERNEL = [
 # machine does.
 # --------------------------------------------------------------------------------------------- #
 UNHANDLED_USER = [
-    Stage("the instruction traps", "user", "A", "trapframe",
+    Stage("the instruction traps", "user", "A", "",
           "{a} executed something the hardware refused — an illegal instruction is scause 2 — or "
           "raised an exception this kernel has no case for. Bit 63 is CLEAR: an EXCEPTION, caused "
           "by this instruction. stval carries whatever the hardware attached to it."),

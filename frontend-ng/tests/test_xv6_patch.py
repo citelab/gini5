@@ -22,6 +22,10 @@ uint64 usertrap(void){
     yield();
   return satp;
 }
+void prepare_return(void){
+  struct proc *p = myproc();
+  w_sepc(p->trapframe->epc);
+}
 void kerneltrap(){
   int which_dev = 0;
   uint64 scause = r_scause();
@@ -167,6 +171,12 @@ def test_patcher_applies_and_is_idempotent(tmp_path):
     assert "gini_catch = *e" not in trap, "capture must not copy the tearable ring slot"
     assert "#define GINI_CATCH_ANY (-2)" in defs
     assert "extern int      gini_catch_kind;" in defs
+    # ...and the WHOLE trapframe, in and out: the return copy is taken in prepare_return, after
+    # the line that loads sepc from it, so it is the page userret restores (test_trapframe.py).
+    assert "gini_catch_tfin = *p->trapframe;" in trap
+    assert trap.index("w_sepc(p->trapframe->epc);") < trap.index("gini_catchret();")
+    assert trap.index("gini_catchret();") < trap.index("void kerneltrap")
+    assert "void            gini_catchret(void);" in defs
 
     # Phase 4: kerneltrap also records (device interrupts), anchored on kerneltrap's `scause`; the
     # REGS dump gains s0 (the frame pointer, for the backtrace lab).

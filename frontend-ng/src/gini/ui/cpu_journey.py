@@ -14,26 +14,57 @@ and both cards stay dark for it.
 With a real capture the CAPTURE picks the path — where the trap was taken, which scause, whether
 the quantum was reached — so a caption never has to hedge about which case it is describing, and
 the lanes show the actual pid rather than "process A".
+
+The trapframe card OPENS: a click shows the whole page of the caught trap, as uservec saved it and
+as userret restores it (ui/trapframe_view.py), lit stage by stage as the student steps. It used to
+be a label only, with a "▸" that looked clickable and did nothing, while the C-Lab sent students to
+it to read a system call's arguments. The context card stays a label, and says why: swtch is not a
+trap, so nothing captures a context.
 """
 from __future__ import annotations
 
-from PySide6.QtCore import Qt
+from PySide6.QtCore import Qt, Signal
+from PySide6.QtGui import QCursor
 from PySide6.QtWidgets import (
     QButtonGroup, QDialog, QFrame, QHBoxLayout, QLabel, QPushButton, QVBoxLayout, QWidget,
 )
 
+from ..domain import trapframe as TF
 from ..domain.cpu_journey import (
     INTERRUPT_MODES, JOURNEY_HEADLINE, JOURNEY_SHORT, JOURNEY_TITLES, JOURNEYS, MODES, mode_for,
     stages_for,
 )
 from .theme import ThemeManager, icons
+from .trapframe_view import TrapframeView
 from .windowing import standalone
+from .worker_host import run_off_gui
+
+
+class _Card(QFrame):
+    """A save-area card. Clickable when `clicked` has somewhere to go."""
+    clicked = Signal()
+
+    def mousePressEvent(self, event) -> None:      # noqa: N802 — Qt's name
+        if event.button() == Qt.LeftButton and self.property("clickable"):
+            self.clicked.emit()
+            event.accept()
+            return
+        super().mousePressEvent(event)
 
 
 class CpuJourney(QDialog):
+    #: A re-read of the caught trap finished (a TrapFrame, or None). Emitted from the worker; the
+    #: bound slot runs on the GUI thread.
+    returned = Signal(object)
+
     def __init__(self, parent, theme: ThemeManager, device=None, cpu=None, frame=None,
-                 procs=None) -> None:
+                 procs=None, reread=None, names=None) -> None:
         super().__init__(parent)
+        self._closed = False
+        # `reread(frame) -> TrapFrame | None` — the bridge's trap_return, for a trap that had not
+        # come back yet when it was caught. `names` — {number: name} for calls the student added.
+        self._reread_src = reread if callable(reread) else None
+        self._names = names or None
         # Its own window, not an owned dialog: on Windows an owned dialog gets no
         # taskbar button and Alt+Tab skips it. See ui/windowing.
         standalone(self)
@@ -44,14 +75,14 @@ class CpuJourney(QDialog):
         # pid -> name, so a captured lane can say "pid 7 (spin)" instead of "process A". From the
         # live process table the Lab already holds; empty in reference mode (falls back to "process
         # A"). Accepts a {pid: name} dict or a list of Proc(.pid/.name).
-        self._names = {}
+        self._pnames = {}
         if isinstance(procs, dict):
-            self._names = {int(k): v for k, v in procs.items()}
+            self._pnames = {int(k): v for k, v in procs.items()}
         else:
             for p in (procs or []):
                 pid = getattr(p, "pid", None)
                 if pid is not None:
-                    self._names[int(pid)] = getattr(p, "name", "")
+                    self._pnames[int(pid)] = getattr(p, "name", "")
         # Derive the journey from what was CAUGHT, not a hardcoded "syscall". A timer opens the
         # preemption walkthrough, not a system-call one — the old default narrated every captured
         # trap as `ecall → syscall() → sret`, which is what "does not make sense" meant.
@@ -130,10 +161,26 @@ class CpuJourney(QDialog):
 
         save = QHBoxLayout()
         self._tf = self._save_card("trapframe",
-                                   "31 user registers + the user pc · saved on every trap from user mode")
-        self._ctx = self._save_card("context", "ra, sp, s0–s11 — 14 registers · saved on every swtch")
+                                   "31 user registers + the user pc · saved on every trap from "
+                                   "user mode · click to open")
+        self._tf.setProperty("clickable", True)
+        self._tf.setCursor(QCursor(Qt.PointingHandCursor))
+        self._tf.setToolTip("Open the trapframe: every register of this trap, as it went in and "
+                            "as it comes back out.")
+        self._tf.clicked.connect(self._toggle_trapframe)
+        self._ctx = self._save_card("context", "ra, sp, s0–s11 — 14 registers · saved on every "
+                                               "swtch · not captured: swtch is not a trap")
         save.addWidget(self._tf); save.addWidget(self._ctx)
         root.addLayout(save)
+
+        self._tfview = TrapframeView(theme, self)
+        self._tfview.setVisible(False)
+        self._tfview.reread.connect(self._reread)
+        self._tfview.set_frame(frame, self._names, can_reread=self._reread_src is not None,
+                               who=self._lane_label("A"))
+        root.addWidget(self._tfview, 2)
+        self._root = root
+        self.returned.connect(self._on_returned)
 
         nav = QHBoxLayout()
         self._prev = QPushButton("  Prev"); self._prev.setStyleSheet(self._btn_css())
@@ -156,14 +203,59 @@ class CpuJourney(QDialog):
                 f"QPushButton:disabled{{color:{t.faint};}}")
 
     def _save_card(self, name, sub) -> QFrame:
-        t = self.theme.theme
-        f = QFrame(); f.setObjectName(name)
+        f = _Card(); f.setObjectName(name)
         v = QVBoxLayout(f); v.setContentsMargins(10, 8, 10, 8)
         title = QLabel(name); title.setObjectName("t")
         sublbl = QLabel(sub); sublbl.setObjectName("s")
         v.addWidget(title); v.addWidget(sublbl)
         f._title, f._sub = title, sublbl
         return f
+
+    # -- the trapframe, opened ------------------------------------------------------------ #
+    def _toggle_trapframe(self) -> None:
+        show = not self._tfview.isVisible()
+        self._tfview.setVisible(show)
+        # the caption stops claiming the spare height while the table wants it
+        self._root.setStretchFactor(self._caption, 0 if show else 1)
+        if show and self.height() < 900:
+            self.resize(max(self.width(), 900), 900)
+        self._render()
+
+    def trapframe_open(self) -> bool:
+        return self._tfview.isVisible()
+
+    def _reread(self) -> None:
+        """Read the caught trap again, off the GUI thread: it may have returned since. The agent
+        call is one serial dump, but it shares the single-threaded agent with every other face."""
+        if self._reread_src is None or self.frame is None:
+            return
+        src, frame = self._reread_src, self.frame
+        self._tfview.set_rereading(True)
+
+        def work():
+            try:
+                fr = src(frame)
+            except Exception:                           # noqa: BLE001 — a failed read is "not yet"
+                fr = None
+            if not self._closed:
+                self.returned.emit(fr)
+        run_off_gui(self, work)
+
+    def _on_returned(self, fr) -> None:
+        if self._closed:
+            return
+        self._tfview.set_rereading(False)
+        seq = getattr(self.frame, "seq", 0)
+        if fr is not None and getattr(fr, "tf_out", None) and fr.seq == seq:
+            self.frame.tf_out = fr.tf_out
+            self._tfview.set_frame(self.frame, self._names,
+                                   can_reread=self._reread_src is not None,
+                                   who=self._lane_label("A"))
+            self._render()
+
+    def closeEvent(self, event) -> None:               # noqa: N802 — Qt's name
+        self._closed = True                            # no worker may emit after this
+        super().closeEvent(event)
 
     def _resolve_stages(self, mode):
         """The stage list to show for a mode. Preempt has two paths: the full trap+switch, and the
@@ -197,7 +289,7 @@ class CpuJourney(QDialog):
             return "process A"
         if pid == 0:
             return "the kernel (no process on this core)"
-        name = self._names.get(pid)
+        name = self._pnames.get(pid)
         return f"pid {pid}" + (f" ({name})" if name else "")
 
     def _set_mode(self, key) -> None:
@@ -316,6 +408,18 @@ class CpuJourney(QDialog):
             return f"live: a7={a7}  a0={a0}" if (a7 or a0) else ""
         return ""
 
+    def _focus_for(self, stage):
+        """What this stage does to the trapframe, for the opened view. Only the captured trap's
+        OWN walkthrough may light the captured registers; another walkthrough read as a reference
+        describes a different trap, so it lights nothing (its note still explains the stage)."""
+        fr = self.frame
+        own = fr is not None and getattr(fr, "ok", False) and self._mode == mode_for(
+            getattr(fr, "kind", -1))
+        fc = TF.focus(self._mode, stage.title, fr if own else None, self._names)
+        if not own and fr is not None and getattr(fr, "ok", False):
+            return TF.Focus("", frozenset(), fc.note)
+        return fc
+
     def _render(self) -> None:
         t = self.theme.theme
         stages = self._stages
@@ -330,7 +434,9 @@ class CpuJourney(QDialog):
                 "walkthrough above to read it as a reference; it will describe that kind of trap, "
                 "not this one.")
             for card, kind in ((self._tf, "trapframe"), (self._ctx, "context")):
-                card._title.setText(kind)
+                card._title.setText(("▾ " if self._tfview.isVisible() else "▸ ") + kind
+                                    if kind == "trapframe" else kind)
+            self._tfview.set_focus(None)
             self._pos.setText("")
             self._prev.setEnabled(False)
             self._next.setEnabled(False)
@@ -369,6 +475,8 @@ class CpuJourney(QDialog):
         self._caption.setText(s.caption.format(a=lane_a, b=lane_b) + (f"\n\n{note}" if note else ""))
         # highlight the active save-area — but a trap CAPTURED in kernel mode writes no trapframe,
         # so both cards stay unlit for it (§1.5/§1.6; the banner already says "no trapframe written").
+        fc = self._focus_for(s)
+        self._tfview.set_focus(fc)
         for card, kind in ((self._tf, "trapframe"), (self._ctx, "context")):
             on = (s.save == kind) and not kmode
             accent = t.accent_for("green" if kind == "trapframe" else "amber")
@@ -379,7 +487,12 @@ class CpuJourney(QDialog):
                 f"color:{accent if on else t.text};font-size:13px;font-weight:600;border:none;"
                 + (f"" if on else ""))
             card._sub.setStyleSheet(f"color:{t.muted};font-size:11px;border:none;")
-            card._title.setText(("▸ " if on else "") + kind + ("  (writing)" if on else ""))
+            doing = "  (restoring)" if (kind == "trapframe" and fc.column == "restored") \
+                else "  (writing)"
+            mark = ""
+            if kind == "trapframe":
+                mark = "▾ " if self._tfview.isVisible() else "▸ "
+            card._title.setText(mark + kind + (doing if on else ""))
         self._pos.setText(f"stage {self._i + 1} / {len(stages)}")
         self._prev.setEnabled(self._i > 0)
         self._next.setEnabled(self._i < len(stages) - 1)
