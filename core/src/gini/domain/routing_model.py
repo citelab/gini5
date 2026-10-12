@@ -36,6 +36,10 @@ class RouterNode:
     ips: set                      # every interface IP this router owns
     table: list                   # [RouteEntry] — the router's REAL table
     kind: str = KIND_ROUTER
+    # The IPs of interfaces the router reports DOWN (`ifconfig show` state D). Still owned, so
+    # they stay in `ips`, but nothing can be delivered to them: a failed link's address must not
+    # make its router look reachable (see TraceResult.reached_via).
+    down_ips: set = field(default_factory=set)
 
 
 @dataclass
@@ -110,6 +114,14 @@ class TraceResult:
     # important SDN failure -- rules pointing at each other after a broken spanning tree --
     # would render as an ordinary lit path.
     fault_edges: set = field(default_factory=set)
+    # L3 mode: routers the trace REACHES without crossing them, {rid: the router that delivers
+    # to it}. The tree is drawn per subnet, so an edge lights only when traffic to some subnet
+    # crosses it -- and a router with no LAN of its own, whose only live subnet is a link that
+    # its neighbour already has connected, is reached at that neighbour and lights nothing.
+    # After R1-R3 failed, R3 (on the R2-R3 link only) sat dark at the end of a lit R1->R2,
+    # perfectly reachable, and the panel read as broken. Recorded here so the HUD can MARK it
+    # without lighting a link that no route uses.
+    reached_via: dict = field(default_factory=dict)
 
 
 # -- longest-prefix match over real RouteEntry rows -------------------------------------------- #
@@ -384,6 +396,16 @@ def _is_netmask_or_zero(ip: str) -> bool:
     return ip == "0.0.0.0" or ip.startswith("255.")
 
 
+#: A gRouter interface-table row: `tun1  D  10.0.1.2  …` — device, state (U/D), address.
+_IFACE_ROW = re.compile(r"^\s*\S+\s+([UD])\s+(\d{1,3}(?:\.\d{1,3}){3})\b", re.M)
+
+
+def parse_iface_down(text: str) -> set:
+    """The IPs of interfaces the gRouter's `ifconfig show` reports DOWN (state D). Empty for a
+    format without a state column, which is the safe answer: nothing is assumed down."""
+    return {m.group(2) for m in _IFACE_ROW.finditer(text or "") if m.group(1) == "D"}
+
+
 def parse_iface_ips(text: str) -> set:
     """Interface IPs from the gRouter's `ifconfig show` / `interfaces` output. Prefers a CIDR
     (`10.0.1.1/24`), else the first non-netmask dotted-quad on the line. Tolerant of both the real
@@ -568,7 +590,8 @@ def assemble_model(router_infos, links=None, latency_of=None,
                   model must be able to tell which subnet one sits in to identify the
                   switch that delivers that subnet (see delivery_via).
     """
-    routers = [RouterNode(rid, name, parse_iface_ips(iface_text), parse_routes(route_text))
+    routers = [RouterNode(rid, name, parse_iface_ips(iface_text), parse_routes(route_text),
+                          down_ips=parse_iface_down(iface_text))
                for (rid, name, route_text, iface_text) in router_infos]
     ovs = []
     for info in (ovs_infos or []):
@@ -955,7 +978,39 @@ def forwarding_tree(model: RoutingModel, root: str) -> TraceResult:
         else:
             res.deadends.add(label)
             res.per_dest[label] = PathResult(label, "deadend", 0, None, [])
+    res.reached_via = _reached_at_delivery(model, root, res)
     return res
+
+
+def _reached_at_delivery(model: RoutingModel, root: str, res: TraceResult) -> dict:
+    """Routers reached at the END of a delivery: {rid: the router that delivers to it}.
+
+    A router counts when one of its UP interfaces sits in a subnet the trace reached, and it is
+    not already on a reaching path (those are visibly reached -- their edge is lit). The
+    deliverer is the last router of that subnet's path, which owns the subnet as connected. A
+    down interface's address does not count: the failed link is exactly what is not reachable.
+    """
+    on_path = {rid for pr in res.per_dest.values() for rid in pr.path}
+    out: dict = {}
+    for label, pr in sorted(res.per_dest.items()):
+        if pr.status != "ok" or not pr.path:
+            continue
+        try:
+            net = ipaddress.IPv4Network(label, strict=False)
+        except ValueError:
+            continue
+        deliverer = pr.path[-1]
+        for rid, r in model.routers.items():
+            if rid == root or rid in on_path or rid in out:
+                continue
+            for ip in r.ips - r.down_ips:
+                try:
+                    if ipaddress.IPv4Address(ip) in net:
+                        out[rid] = deliverer
+                        break
+                except ipaddress.AddressValueError:
+                    continue
+    return out
 
 
 def _forwarding_tree_by_router(model: RoutingModel, root: str) -> TraceResult:

@@ -279,13 +279,29 @@ class RoutingHud(QWidget):
                 why = (f"every destination is delivered locally "
                        f"({len(self._trace.per_dest)} known)")
             elif self._trace.per_dest:
-                why = "nothing reachable from here"
+                why = _unreached_text(self._trace)
             else:
                 why = "no rules programmed for any destination yet"
             p.setPen(QColor(t.faint))
             p.setFont(QFont(self.font().family(), 8))
             p.drawText(12, self.height() - _TL_H - 22, self.width() - 24, 14, Qt.AlignLeft,
                        f"{self._model.nodes[self._root].name}: {why}")
+        # Routers reached at the end of a delivery, not crossed: a dashed ring and who delivers.
+        # Their edge stays dark on purpose -- no route sends traffic THROUGH them -- but leaving
+        # them unmarked made a reachable router look cut off (TraceResult.reached_via).
+        reached = (getattr(self._trace, "reached_via", None) or {}) if self._trace else {}
+        for rid, via in reached.items():
+            pt = fit.get(rid)
+            if pt is None:
+                continue
+            p.setBrush(Qt.NoBrush)
+            p.setPen(QPen(QColor(t.accent), 2.2, Qt.DashLine))
+            p.drawEllipse(pt, _NODE_R + 4, _NODE_R + 4)
+            vname = self._model.nodes[via].name if via in self._model.nodes else "?"
+            p.setPen(QColor(t.muted))
+            p.setFont(QFont(self.font().family(), 7))
+            p.drawText(int(pt.x()) - 40, int(pt.y()) + _NODE_R + 5, 80, 11, Qt.AlignCenter,
+                       "directly attached" if via == self._root else f"reached via {vname}")
         # tapped node's table card — routes for a router, flows for a switch
         if self._table_rid in self._model.nodes and self._table_rid in fit:
             node = self._model.nodes[self._table_rid]
@@ -492,6 +508,20 @@ class RoutingHud(QWidget):
         if self._press_rid is not None and self._model is not None:
             self._table_rid = self._press_rid
             self.update()
+
+
+def _unreached_text(tr) -> str:
+    """Why nothing is lit when some destinations fail: name them. "Nothing reachable from here"
+    was shown for a router that still reached its own subnets and lacked a route to the rest --
+    the usual picture before a routing protocol has run -- which said the opposite of the truth."""
+    ok_local = [d for d, pr in tr.per_dest.items() if pr.status == "ok"]
+    bad = sorted(tr.deadends) + sorted(l for l in tr.loops if l not in tr.deadends)
+    shown = ", ".join(bad[:2]) + (f" +{len(bad) - 2} more" if len(bad) > 2 else "")
+    if tr.loops and not tr.deadends:
+        return f"forwarding loops for {shown}"
+    if ok_local:
+        return f"only its own subnets — no route to {shown}"
+    return f"nothing reachable — no route to {shown}"
 
 
 def _plen(netmask: str) -> int:

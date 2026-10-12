@@ -182,3 +182,80 @@ def test_trace_is_protocol_agnostic():
     ospf = forwarding_tree(model(_r(2, "10.0.9.0", "255.255.255.0", "10.0.7.2")), "R1")  # via R3
     assert rip.per_dest[far].path == ["R1", "R2"]        # RIP: 1 hop, but 50ms
     assert ospf.per_dest[far].path == ["R1", "R3", "R4"]  # OSPF: more hops, but 1+1ms
+
+
+# -- a router reached at the end of a delivery (R1-R3 failed; RIP via R2) ----------------------- #
+# The real `route show` / `ifconfig show` of the maintainer's lab, read off live routers after the
+# cheap R1-R3 link failed and RIP converged: R1 -- 5 -- R2 -- 1 -- R3, the R1-R3 link down at
+# both ends. R3 has no LAN; its only live subnet is the R2-R3 link, which R2 has connected.
+_HDR = ("Index\tNetwork\t\tNetmask\t\tNexthop\t\tInterface\tOrigin \n")
+_R1_ROUTES = _HDR + ("[0]\t10.0.3.0\t255.255.255.0\t10.0.2.2\t\ttun2\tD\n"
+                     "[1]\t10.0.2.0\t255.255.255.0\t0.0.0.0\t\ttun2\tC\n"
+                     "[2]\t10.0.4.0\t255.255.255.0\t0.0.0.0\t\ttun3\tC\n"
+                     "[3]\t10.0.6.0\t255.255.255.0\t0.0.0.0\t\ttun4\tC\n"
+                     "[4]\t10.0.5.0\t255.255.255.0\t10.0.2.2\t\ttun2\tD\n")
+_R2_ROUTES = _HDR + ("[0]\t10.0.2.0\t255.255.255.0\t0.0.0.0\t\ttun1\tC\n"
+                     "[1]\t10.0.3.0\t255.255.255.0\t0.0.0.0\t\ttun2\tC\n"
+                     "[2]\t10.0.5.0\t255.255.255.0\t0.0.0.0\t\ttun3\tC\n"
+                     "[3]\t10.0.4.0\t255.255.255.0\t10.0.2.1\t\ttun1\tD\n"
+                     "[4]\t10.0.6.0\t255.255.255.0\t10.0.2.1\t\ttun1\tD\n")
+_R3_ROUTES = _HDR + ("[0]\t10.0.3.0\t255.255.255.0\t0.0.0.0\t\ttun2\tC\n"
+                     "[1]\t10.0.2.0\t255.255.255.0\t10.0.3.2\t\ttun2\tD\n"
+                     "[2]\t10.0.4.0\t255.255.255.0\t10.0.3.2\t\ttun2\tD\n"
+                     "[3]\t10.0.5.0\t255.255.255.0\t10.0.3.2\t\ttun2\tD\n"
+                     "[4]\t10.0.6.0\t255.255.255.0\t10.0.3.2\t\ttun2\tD\n")
+_IFHDR = "Device\tState\tIP address\tMAC address\t\tMTU\tCost\n"
+_R1_IF = _IFHDR + ("tun1\tD\t10.0.1.2\t02:00:00:01:01:01\t1500\t3\n"
+                   "tun2\tU\t10.0.2.1\t02:00:00:02:01:02\t1500\t5\n"
+                   "tun3\tU\t10.0.4.1\t02:00:00:04:01:03\t1500\t10\n"
+                   "tun4\tU\t10.0.6.1\t02:00:00:06:01:04\t1500\t1\n")
+_R2_IF = _IFHDR + ("tun1\tU\t10.0.2.2\t02:00:00:02:01:05\t1500\t5\n"
+                   "tun2\tU\t10.0.3.2\t02:00:00:03:01:06\t1500\t1\n"
+                   "tun3\tU\t10.0.5.1\t02:00:00:05:01:07\t1500\t3\n")
+_R3_IF = _IFHDR + ("tun1\tD\t10.0.1.1\t02:00:00:01:01:08\t1500\t3\n"
+                   "tun2\tU\t10.0.3.1\t02:00:00:03:01:09\t1500\t1\n")
+
+
+def _failed_triangle(r1_routes=_R1_ROUTES):
+    from gini.domain.routing_model import assemble_model
+    return assemble_model([("r1", "R1", r1_routes, _R1_IF), ("r2", "R2", _R2_ROUTES, _R2_IF),
+                           ("r3", "R3", _R3_ROUTES, _R3_IF)])
+
+
+def test_a_down_interface_is_read_as_down():
+    from gini.domain.routing_model import parse_iface_down
+    assert parse_iface_down(_R1_IF) == {"10.0.1.2"}
+    assert parse_iface_down("10.0.1.1/24 eth0") == set()      # no state column: assume up
+
+
+def test_a_router_reached_only_at_delivery_is_marked_not_lit():
+    """R3 is reachable from R1 (via R2's connected R2-R3 link) but no route crosses R2->R3, so
+    the edge stays dark -- and R3 is recorded as reached, delivered by R2."""
+    from gini.domain.routing_model import trace
+    tr = trace(_failed_triangle(), "r1")
+    assert tr.edges_used == {("r1", "r2")}
+    assert tr.reached_via == {"r3": "r2"}
+    assert not tr.deadends
+
+
+def test_a_failed_links_address_does_not_count_as_reached():
+    """R3's dead tun1 sits in 10.0.1.0/24. Were that subnet still around (another router had it
+    connected), R3 must not be marked reached through an interface that is down."""
+    from gini.domain.routing_model import trace
+    extra = _R1_ROUTES + "[5]\t10.0.1.0\t255.255.255.0\t0.0.0.0\t\ttun1\tC\n"
+    m = _failed_triangle(extra)
+    m.routers["r3"].table = [e for e in m.routers["r3"].table if e.network != "10.0.3.0"]
+    m.routers["r2"].table = [e for e in m.routers["r2"].table if e.network != "10.0.3.0"]
+    assert "r3" not in trace(m, "r1").reached_via
+
+
+def test_before_rip_the_message_names_what_is_missing():
+    """R1 with only its connected routes: it reaches its own subnets and nothing beyond. The HUD
+    used to say "nothing reachable from here", the opposite of the truth."""
+    from gini.domain.routing_model import trace
+    from gini.ui.routing_hud import _unreached_text
+    only_connected = _HDR + "".join(l + "\n" for l in _R1_ROUTES.splitlines()[1:]
+                                    if l.endswith("\tC"))
+    tr = trace(_failed_triangle(only_connected), "r1")
+    assert not tr.edges_used and tr.deadends == {"10.0.3.0/24", "10.0.5.0/24"}
+    assert _unreached_text(tr) == "only its own subnets — no route to 10.0.3.0/24, 10.0.5.0/24"
