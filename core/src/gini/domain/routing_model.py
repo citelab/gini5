@@ -114,14 +114,6 @@ class TraceResult:
     # important SDN failure -- rules pointing at each other after a broken spanning tree --
     # would render as an ordinary lit path.
     fault_edges: set = field(default_factory=set)
-    # L3 mode: routers the trace REACHES without crossing them, {rid: the router that delivers
-    # to it}. The tree is drawn per subnet, so an edge lights only when traffic to some subnet
-    # crosses it -- and a router with no LAN of its own, whose only live subnet is a link that
-    # its neighbour already has connected, is reached at that neighbour and lights nothing.
-    # After R1-R3 failed, R3 (on the R2-R3 link only) sat dark at the end of a lit R1->R2,
-    # perfectly reachable, and the panel read as broken. Recorded here so the HUD can MARK it
-    # without lighting a link that no route uses.
-    reached_via: dict = field(default_factory=dict)
 
 
 # -- longest-prefix match over real RouteEntry rows -------------------------------------------- #
@@ -978,20 +970,30 @@ def forwarding_tree(model: RoutingModel, root: str) -> TraceResult:
         else:
             res.deadends.add(label)
             res.per_dest[label] = PathResult(label, "deadend", 0, None, [])
-    res.reached_via = _reached_at_delivery(model, root, res)
+    res.edges_used |= _delivery_hops(model, root, res)
     return res
 
 
-def _reached_at_delivery(model: RoutingModel, root: str, res: TraceResult) -> dict:
-    """Routers reached at the END of a delivery: {rid: the router that delivers to it}.
+def _delivery_hops(model: RoutingModel, root: str, res: TraceResult) -> set:
+    """The LAST hop to a router that the forwarding hops never reach: from the router that has
+    one of its subnets connected, across that subnet's segment to it.
 
-    A router counts when one of its UP interfaces sits in a subnet the trace reached, and it is
-    not already on a reaching path (those are visibly reached -- their edge is lit). The
-    deliverer is the last router of that subnet's path, which owns the subnet as connected. A
-    down interface's address does not count: the failed link is exactly what is not reachable.
+    Without these the tree stopped one hop short. After the cheap R1-R3 link failed, R1 reached
+    R3's only live subnet -- the R2-R3 link -- through R2, which has it connected, so the trace
+    lit R1->R2 and left R2->R3 dark: R3 looked cut off, though a packet from R1 to R3 crosses
+    exactly that link. A delivery is a real hop, so it is lit like any other.
+
+    Only toward a router nothing else lights. On a LAN shared by several routers, a hop to every
+    member would say traffic goes THROUGH them, which it does not. And the root delivers its own
+    subnets itself, so lighting all of its links would say nothing about which way traffic goes:
+    with R1's direct link to R3 still up but costlier, R1 -> R2 -> R3 lights and R1 -- R3 stays
+    dark; it lights when it is the only way. Of several deliveries, the shortest path wins.
+
+    An interface the router reports DOWN is not reached: a failed link's address must not make
+    its router look reachable.
     """
-    on_path = {rid for pr in res.per_dest.values() for rid in pr.path}
-    out: dict = {}
+    lit = {rid for e in res.edges_used for rid in e} | {root}
+    best: dict = {}                          # unlit router -> (by root?, hops, deliverer)
     for label, pr in sorted(res.per_dest.items()):
         if pr.status != "ok" or not pr.path:
             continue
@@ -1000,16 +1002,27 @@ def _reached_at_delivery(model: RoutingModel, root: str, res: TraceResult) -> di
         except ValueError:
             continue
         deliverer = pr.path[-1]
-        for rid, r in model.routers.items():
-            if rid == root or rid in on_path or rid in out:
+        for rid in _routers_on(model, net):
+            if rid in lit or rid == deliverer:
                 continue
-            for ip in r.ips - r.down_ips:
-                try:
-                    if ipaddress.IPv4Address(ip) in net:
-                        out[rid] = deliverer
-                        break
-                except ipaddress.AddressValueError:
-                    continue
+            # the root's own delivery is the fallback, never the first choice
+            cand = (deliverer == root, len(pr.path) - 1, deliverer)
+            if rid not in best or cand < best[rid]:
+                best[rid] = cand
+    return {(c[2], rid) for rid, c in best.items()}
+
+
+def _routers_on(model: RoutingModel, net) -> list:
+    """Routers with an UP interface inside `net`."""
+    out = []
+    for rid, r in model.routers.items():
+        for ip in r.ips - r.down_ips:
+            try:
+                if ipaddress.IPv4Address(ip) in net:
+                    out.append(rid)
+                    break
+            except ipaddress.AddressValueError:
+                continue
     return out
 
 

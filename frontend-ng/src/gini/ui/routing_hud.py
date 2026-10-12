@@ -286,32 +286,15 @@ class RoutingHud(QWidget):
             p.setFont(QFont(self.font().family(), 8))
             p.drawText(12, self.height() - _TL_H - 22, self.width() - 24, 14, Qt.AlignLeft,
                        f"{self._model.nodes[self._root].name}: {why}")
-        # Routers reached at the end of a delivery, not crossed (TraceResult.reached_via). The
-        # hop INTO such a router is drawn as a thin dashed line from the router that delivers,
-        # so R1 -> R2 -> R3 reads as one path, while staying unlike the solid edges a route table
-        # chose: nothing is forwarded THROUGH R3, it is simply where the subnet ends. A dashed
-        # RING was tried first and read as a fault -- dashed red rings already mean a loop.
-        reached = (getattr(self._trace, "reached_via", None) or {}) if self._trace else {}
-        for rid, via in reached.items():
-            pt = fit.get(rid)
-            if pt is None:
-                continue
-            src = fit.get(via)
-            if src is not None and via != rid:
-                dx, dy = pt.x() - src.x(), pt.y() - src.y()
-                d = math.hypot(dx, dy) or 1.0
-                k = (_NODE_R + 3) / d                     # stop at the rings, not the centres
-                p.setPen(QPen(QColor(t.accent), 1.8, Qt.DashLine))
-                p.drawLine(QPointF(src.x() + dx * k, src.y() + dy * k),
-                           QPointF(pt.x() - dx * k, pt.y() - dy * k))
-            p.setBrush(Qt.NoBrush)
-            p.setPen(QPen(QColor(t.accent), 1.6))
-            p.drawEllipse(pt, _NODE_R + 3, _NODE_R + 3)
-            vname = self._model.nodes[via].name if via in self._model.nodes else "?"
-            p.setPen(QColor(t.muted))
-            p.setFont(QFont(self.font().family(), 7))
-            p.drawText(int(pt.x()) - 40, int(pt.y()) + _NODE_R + 5, 80, 11, Qt.AlignCenter,
-                       "directly attached" if via == self._root else f"reached via {vname}")
+        elif (self._trace is not None and self._root in self._model.routers
+              and (self._trace.deadends or self._trace.loops)):
+            # Some destinations reached, some not. The lit tree shows the first kind and nothing
+            # shows the second -- dead ends used to be named only when NOTHING was lit, so a
+            # router reaching its neighbour but nothing beyond said nothing at all.
+            p.setPen(QColor(t.faint))
+            p.setFont(QFont(self.font().family(), 8))
+            p.drawText(12, self.height() - _TL_H - 22, self.width() - 24, 14, Qt.AlignLeft,
+                       f"{self._model.nodes[self._root].name}: {_unreached_text(self._trace)}")
         # tapped node's table card — routes for a router, flows for a switch
         if self._table_rid in self._model.nodes and self._table_rid in fit:
             node = self._model.nodes[self._table_rid]
@@ -524,14 +507,16 @@ def _unreached_text(tr) -> str:
     """Why nothing is lit when some destinations fail: name them. "Nothing reachable from here"
     was shown for a router that still reached its own subnets and lacked a route to the rest --
     the usual picture before a routing protocol has run -- which said the opposite of the truth."""
-    ok_local = [d for d, pr in tr.per_dest.items() if pr.status == "ok"]
+    ok = [pr for pr in tr.per_dest.values() if pr.status == "ok"]
     bad = sorted(tr.deadends) + sorted(l for l in tr.loops if l not in tr.deadends)
     shown = ", ".join(bad[:2]) + (f" +{len(bad) - 2} more" if len(bad) > 2 else "")
     if tr.loops and not tr.deadends:
         return f"forwarding loops for {shown}"
-    if ok_local:
+    if not ok:
+        return f"nothing reachable — no route to {shown}"
+    if all(pr.hop_count == 0 for pr in ok):
         return f"only its own subnets — no route to {shown}"
-    return f"nothing reachable — no route to {shown}"
+    return f"no route to {shown}"
 
 
 def _plen(netmask: str) -> int:

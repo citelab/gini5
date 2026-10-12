@@ -56,8 +56,10 @@ def test_deadend_when_no_route():
     t = forwarding_tree(m, "R1")
     assert t.per_dest[FAR].status == "deadend" and FAR in t.deadends
     assert t.per_dest[FAR].path == []                    # R1 drops it — no path
-    assert ("R2", "R3") not in t.edges_used              # nothing forwarded toward R3
     assert ("R1", "R2") in t.edges_used                  # R2's segment is still reachable
+    # ...and so is R3 itself, at 10.0.2.2 on that segment: R2 delivers to it. Its LAN behind it
+    # is the dead end, which the panel names (_unreached_text) -- the router is not.
+    assert ("R2", "R3") in t.edges_used
 
 
 def test_forwarding_loop_is_detected():
@@ -228,25 +230,74 @@ def test_a_down_interface_is_read_as_down():
     assert parse_iface_down("10.0.1.1/24 eth0") == set()      # no state column: assume up
 
 
-def test_a_router_reached_only_at_delivery_is_marked_not_lit():
-    """R3 is reachable from R1 (via R2's connected R2-R3 link) but no route crosses R2->R3, so
-    the edge stays dark -- and R3 is recorded as reached, delivered by R2."""
+def _rows(*rows):
+    return _HDR + "".join(f"[{i}]\t{n}\t255.255.255.0\t{nh}\t\t{dev}\t{o}\n"
+                          for i, (n, nh, dev, o) in enumerate(rows))
+
+
+_ALL_UP = {"r1": _R1_IF.replace("tun1\tD", "tun1\tU"), "r2": _R2_IF,
+           "r3": _R3_IF.replace("tun1\tD", "tun1\tU")}
+
+
+def _triangle(r1, r2, r3, ifs=None):
+    from gini.domain.routing_model import assemble_model
+    ifs = ifs or _ALL_UP
+    return assemble_model([("r1", "R1", r1, ifs["r1"]), ("r2", "R2", r2, ifs["r2"]),
+                           ("r3", "R3", r3, ifs["r3"])])
+
+
+def test_after_the_failure_the_path_to_r3_goes_through_r2():
+    """R3's only live subnet is the R2-R3 link, which R2 has connected. A packet from R1 to R3
+    crosses R2 -> R3, so that hop is lit: the tree used to stop at R2 and R3 looked cut off."""
     from gini.domain.routing_model import trace
     tr = trace(_failed_triangle(), "r1")
-    assert tr.edges_used == {("r1", "r2")}
-    assert tr.reached_via == {"r3": "r2"}
+    assert tr.edges_used == {("r1", "r2"), ("r2", "r3")}
     assert not tr.deadends
+
+
+def test_a_costlier_direct_link_leaves_r1_r3_dark_and_lights_the_way_round():
+    """The maintainer's case: R1 is wired to both, the R1-R3 link's cost goes up, and RIP sends
+    R1 to R3's side through R2. The direct link is still up -- R1 has its subnet connected -- but
+    the picture shows the way the routes go: R1 -> R2 -> R3."""
+    from gini.domain.routing_model import trace
+    r1 = _rows(("10.0.1.0", "0.0.0.0", "tun1", "C"), ("10.0.2.0", "0.0.0.0", "tun2", "C"),
+               ("10.0.4.0", "0.0.0.0", "tun3", "C"), ("10.0.6.0", "0.0.0.0", "tun4", "C"),
+               ("10.0.3.0", "10.0.2.2", "tun2", "D"), ("10.0.5.0", "10.0.2.2", "tun2", "D"))
+    r3 = _rows(("10.0.1.0", "0.0.0.0", "tun1", "C"), ("10.0.3.0", "0.0.0.0", "tun2", "C"))
+    tr = trace(_triangle(r1, _R2_ROUTES, r3), "r1")
+    assert tr.edges_used == {("r1", "r2"), ("r2", "r3")}
+
+
+def test_the_direct_link_lights_when_it_is_the_only_way():
+    from gini.domain.routing_model import trace
+    r1 = _rows(("10.0.1.0", "0.0.0.0", "tun1", "C"), ("10.0.2.0", "0.0.0.0", "tun2", "C"))
+    r2 = _rows(("10.0.2.0", "0.0.0.0", "tun1", "C"))
+    r3 = _rows(("10.0.1.0", "0.0.0.0", "tun1", "C"))
+    tr = trace(_triangle(r1, r2, r3), "r1")
+    assert tr.edges_used == {("r1", "r2"), ("r1", "r3")}
+
+
+def test_the_cheap_detour_lights_and_the_dear_direct_link_does_not():
+    """Before the failure: R1 reaches everything of R2's through R3 (3 + 1 < 5). R1 -> R3 -> R2,
+    and the direct R1 -- R2 link, though connected, stays dark."""
+    from gini.domain.routing_model import trace
+    r1 = _rows(("10.0.1.0", "0.0.0.0", "tun1", "C"), ("10.0.2.0", "0.0.0.0", "tun2", "C"),
+               ("10.0.3.0", "10.0.1.1", "tun1", "D"), ("10.0.5.0", "10.0.1.1", "tun1", "D"))
+    r3 = _rows(("10.0.1.0", "0.0.0.0", "tun1", "C"), ("10.0.3.0", "0.0.0.0", "tun2", "C"),
+               ("10.0.5.0", "10.0.3.2", "tun2", "D"))
+    tr = trace(_triangle(r1, _R2_ROUTES, r3), "r1")
+    assert tr.edges_used == {("r1", "r3"), ("r3", "r2")}
 
 
 def test_a_failed_links_address_does_not_count_as_reached():
     """R3's dead tun1 sits in 10.0.1.0/24. Were that subnet still around (another router had it
-    connected), R3 must not be marked reached through an interface that is down."""
+    connected), R3 must not light through an interface that is down."""
     from gini.domain.routing_model import trace
     extra = _R1_ROUTES + "[5]\t10.0.1.0\t255.255.255.0\t0.0.0.0\t\ttun1\tC\n"
     m = _failed_triangle(extra)
     m.routers["r3"].table = [e for e in m.routers["r3"].table if e.network != "10.0.3.0"]
     m.routers["r2"].table = [e for e in m.routers["r2"].table if e.network != "10.0.3.0"]
-    assert "r3" not in trace(m, "r1").reached_via
+    assert not any("r3" in e for e in trace(m, "r1").edges_used)
 
 
 def test_before_rip_the_message_names_what_is_missing():
@@ -257,5 +308,15 @@ def test_before_rip_the_message_names_what_is_missing():
     only_connected = _HDR + "".join(l + "\n" for l in _R1_ROUTES.splitlines()[1:]
                                     if l.endswith("\tC"))
     tr = trace(_failed_triangle(only_connected), "r1")
-    assert not tr.edges_used and tr.deadends == {"10.0.3.0/24", "10.0.5.0/24"}
+    assert tr.edges_used == {("r1", "r2")}             # R2 is reached, across their own link
+    assert tr.deadends == {"10.0.3.0/24", "10.0.5.0/24"}
     assert _unreached_text(tr) == "only its own subnets — no route to 10.0.3.0/24, 10.0.5.0/24"
+
+
+def test_some_routes_and_some_dead_ends_says_which_are_missing():
+    from gini.domain.routing_model import trace
+    from gini.ui.routing_hud import _unreached_text
+    partial = _R1_ROUTES.replace("[4]\t10.0.5.0\t255.255.255.0\t10.0.2.2\t\ttun2\tD\n", "")
+    tr = trace(_failed_triangle(partial), "r1")
+    assert tr.deadends == {"10.0.5.0/24"}
+    assert _unreached_text(tr) == "no route to 10.0.5.0/24"
