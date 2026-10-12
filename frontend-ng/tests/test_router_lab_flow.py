@@ -309,10 +309,21 @@ def test_an_old_router_image_is_named_not_silent(app):
 # the meter
 # --------------------------------------------------------------------------- #
 
-def test_two_readings_make_a_rate_in_the_header_and_on_the_rails(app):
+def test_two_readings_make_a_rate_in_the_header_and_on_the_rails(app, monkeypatch):
+    # The meter's clock is pinned. Backdating the first reading by 2 s against the REAL clock
+    # left the milliseconds the test itself took in the interval, and the header then read
+    # "999.9 kb/s" where 1.00 Mb/s was due -- intermittently at first, then on every run.
+    import time as _time
+    import types
+    from gini.ui import router_lab
+    clock = [1000.0]
+    fake = types.SimpleNamespace(**{k: getattr(_time, k) for k in dir(_time)
+                                    if not k.startswith("_")})
+    fake.monotonic = lambda: clock[0]
+    monkeypatch.setattr(router_lab, "time", fake)
     lab = _lab(app)
     lab._on_ifstat(IFS)
-    lab._ifstat_prev = (lab._ifstat_prev[0], lab._ifstat_prev[1] - 2.0)   # two seconds ago
+    clock[0] += 2.0                                                        # two seconds later
     later = {1: RW.IfStat(1, "tun1", "10.0.1.1", 250_000, 0, 0, 0),
              2: RW.IfStat(2, "tun2", "10.0.2.1", 0, 0, 125_000, 0)}
     lab._on_ifstat(later)
