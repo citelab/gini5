@@ -286,17 +286,27 @@ class RoutingHud(QWidget):
             p.setFont(QFont(self.font().family(), 8))
             p.drawText(12, self.height() - _TL_H - 22, self.width() - 24, 14, Qt.AlignLeft,
                        f"{self._model.nodes[self._root].name}: {why}")
-        # Routers reached at the end of a delivery, not crossed: a dashed ring and who delivers.
-        # Their edge stays dark on purpose -- no route sends traffic THROUGH them -- but leaving
-        # them unmarked made a reachable router look cut off (TraceResult.reached_via).
+        # Routers reached at the end of a delivery, not crossed (TraceResult.reached_via). The
+        # hop INTO such a router is drawn as a thin dashed line from the router that delivers,
+        # so R1 -> R2 -> R3 reads as one path, while staying unlike the solid edges a route table
+        # chose: nothing is forwarded THROUGH R3, it is simply where the subnet ends. A dashed
+        # RING was tried first and read as a fault -- dashed red rings already mean a loop.
         reached = (getattr(self._trace, "reached_via", None) or {}) if self._trace else {}
         for rid, via in reached.items():
             pt = fit.get(rid)
             if pt is None:
                 continue
+            src = fit.get(via)
+            if src is not None and via != rid:
+                dx, dy = pt.x() - src.x(), pt.y() - src.y()
+                d = math.hypot(dx, dy) or 1.0
+                k = (_NODE_R + 3) / d                     # stop at the rings, not the centres
+                p.setPen(QPen(QColor(t.accent), 1.8, Qt.DashLine))
+                p.drawLine(QPointF(src.x() + dx * k, src.y() + dy * k),
+                           QPointF(pt.x() - dx * k, pt.y() - dy * k))
             p.setBrush(Qt.NoBrush)
-            p.setPen(QPen(QColor(t.accent), 2.2, Qt.DashLine))
-            p.drawEllipse(pt, _NODE_R + 4, _NODE_R + 4)
+            p.setPen(QPen(QColor(t.accent), 1.6))
+            p.drawEllipse(pt, _NODE_R + 3, _NODE_R + 3)
             vname = self._model.nodes[via].name if via in self._model.nodes else "?"
             p.setPen(QColor(t.muted))
             p.setFont(QFont(self.font().family(), 7))
