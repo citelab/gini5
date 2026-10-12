@@ -246,6 +246,12 @@ def _triangle(r1, r2, r3, ifs=None):
                            ("r3", "R3", r3, ifs["r3"])])
 
 
+def _cost(model, costs):
+    """Label the model's edges as the HUD controller does from the topology's link costs."""
+    for e in model.edges:
+        e.cost = costs.get((e.a, e.b), costs.get((e.b, e.a)))
+
+
 def test_after_the_failure_the_path_to_r3_goes_through_r2():
     """R3's only live subnet is the R2-R3 link, which R2 has connected. A packet from R1 to R3
     crosses R2 -> R3, so that hop is lit: the tree used to stop at R2 and R3 looked cut off."""
@@ -264,7 +270,9 @@ def test_a_costlier_direct_link_leaves_r1_r3_dark_and_lights_the_way_round():
                ("10.0.4.0", "0.0.0.0", "tun3", "C"), ("10.0.6.0", "0.0.0.0", "tun4", "C"),
                ("10.0.3.0", "10.0.2.2", "tun2", "D"), ("10.0.5.0", "10.0.2.2", "tun2", "D"))
     r3 = _rows(("10.0.1.0", "0.0.0.0", "tun1", "C"), ("10.0.3.0", "0.0.0.0", "tun2", "C"))
-    tr = trace(_triangle(r1, _R2_ROUTES, r3), "r1")
+    m = _triangle(r1, _R2_ROUTES, r3)
+    _cost(m, {("r1", "r2"): 5, ("r2", "r3"): 1, ("r1", "r3"): 10})
+    tr = trace(m, "r1")
     assert tr.edges_used == {("r1", "r2"), ("r2", "r3")}
 
 
@@ -320,3 +328,41 @@ def test_some_routes_and_some_dead_ends_says_which_are_missing():
     tr = trace(_failed_triangle(partial), "r1")
     assert tr.deadends == {"10.0.5.0/24"}
     assert _unreached_text(tr) == "no route to 10.0.5.0/24"
+
+
+# -- the last hop goes the cheap way (the maintainer's Debug-networks lab, static routing) ------- #
+# R5 hangs off R4 by a cost-12 link and off R6 by a cost-1 one; R4 and R6 both hang off R2. R5
+# owns no LAN, so it is reached only across one of those two links -- and the HUD used to pick
+# R4 -> R5 for every root two hops from both, because "r4" sorted first. The routes were right.
+def _debug_networks():
+    from gini.domain.routing_model import assemble_model
+    r2 = _rows(("10.0.7.0", "0.0.0.0", "tun1", "C"), ("10.0.10.0", "0.0.0.0", "tun2", "C"),
+               ("10.0.8.0", "10.0.7.2", "tun1", "S"), ("10.0.9.0", "10.0.10.2", "tun2", "S"))
+    r4 = _rows(("10.0.7.0", "0.0.0.0", "tun1", "C"), ("10.0.8.0", "0.0.0.0", "tun2", "C"),
+               ("10.0.9.0", "10.0.7.1", "tun1", "S"), ("10.0.10.0", "10.0.7.1", "tun1", "S"))
+    r5 = _rows(("10.0.8.0", "0.0.0.0", "tun1", "C"), ("10.0.9.0", "0.0.0.0", "tun2", "C"),
+               ("10.0.7.0", "10.0.9.2", "tun2", "S"), ("10.0.10.0", "10.0.9.2", "tun2", "S"))
+    r6 = _rows(("10.0.9.0", "0.0.0.0", "tun1", "C"), ("10.0.10.0", "0.0.0.0", "tun2", "C"),
+               ("10.0.7.0", "10.0.10.1", "tun2", "S"), ("10.0.8.0", "10.0.9.1", "tun1", "S"))
+    ifs = {"r2": ("10.0.7.1", "10.0.10.1"), "r4": ("10.0.7.2", "10.0.8.1"),
+           "r5": ("10.0.8.2", "10.0.9.1"), "r6": ("10.0.9.2", "10.0.10.2")}
+    tables = {"r2": r2, "r4": r4, "r5": r5, "r6": r6}
+    m = assemble_model([(rid, rid.upper(), tables[rid],
+                         _IFHDR + "".join(f"tun{i + 1}\tU\t{ip}\t02:00:00:00:00:0{i}\t1500\t1\n"
+                                          for i, ip in enumerate(ifs[rid])))
+                        for rid in tables])
+    _cost(m, {("r2", "r4"): 1, ("r2", "r6"): 6, ("r4", "r5"): 12, ("r5", "r6"): 1})
+    return m
+
+
+def test_the_last_hop_into_a_router_takes_the_cheap_link_not_the_first_by_name():
+    from gini.domain.routing_model import trace
+    tr = trace(_debug_networks(), "r2")
+    assert tr.edges_used == {("r2", "r4"), ("r2", "r6"), ("r6", "r5")}
+
+
+def test_a_dear_direct_link_from_the_root_loses_to_the_cheap_way_round():
+    """R4 is wired straight to R5, but at cost 12; R4 -> R2 -> R6 -> R5 costs 8."""
+    from gini.domain.routing_model import trace
+    tr = trace(_debug_networks(), "r4")
+    assert ("r6", "r5") in tr.edges_used and ("r4", "r5") not in tr.edges_used

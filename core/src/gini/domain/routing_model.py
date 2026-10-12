@@ -987,13 +987,27 @@ def _delivery_hops(model: RoutingModel, root: str, res: TraceResult) -> set:
     member would say traffic goes THROUGH them, which it does not. And the root delivers its own
     subnets itself, so lighting all of its links would say nothing about which way traffic goes:
     with R1's direct link to R3 still up but costlier, R1 -> R2 -> R3 lights and R1 -- R3 stays
-    dark; it lights when it is the only way. Of several deliveries, the shortest path wins.
+    dark; it lights when it is the only way.
+
+    Of several deliveries, the CHEAPEST wins: the link costs along the path to the deliverer plus
+    the last segment, unweighted links counting 1. It used to be the fewest hops, then the
+    router id -- so in a lab where R5 hangs off R4 by a cost-12 link and off R6 by a cost-1 one,
+    every root two hops from both drew R4 -> R5, the path routing itself had priced out, because
+    "router-19" sorts before "router-21". Cost also retires the old rule that the root's own
+    delivery is only a fallback: a costlier direct link loses on cost, a cheaper one wins, and
+    an unweighted direct link is one hop and wins as it should.
 
     An interface the router reports DOWN is not reached: a failed link's address must not make
     its router look reachable.
     """
     lit = {rid for e in res.edges_used for rid in e} | {root}
-    best: dict = {}                          # unlit router -> (by root?, hops, deliverer)
+    cost = {frozenset((e.a, e.b)): e.cost for e in model.edges}
+
+    def price(a, b):
+        c = cost.get(frozenset((a, b)))
+        return c if isinstance(c, (int, float)) and c > 0 else 1
+
+    best: dict = {}                          # unlit router -> (cost, hops, deliverer)
     for label, pr in sorted(res.per_dest.items()):
         if pr.status != "ok" or not pr.path:
             continue
@@ -1002,11 +1016,11 @@ def _delivery_hops(model: RoutingModel, root: str, res: TraceResult) -> set:
         except ValueError:
             continue
         deliverer = pr.path[-1]
+        upto = sum(price(a, b) for a, b in zip(pr.path, pr.path[1:]))
         for rid in _routers_on(model, net):
             if rid in lit or rid == deliverer:
                 continue
-            # the root's own delivery is the fallback, never the first choice
-            cand = (deliverer == root, len(pr.path) - 1, deliverer)
+            cand = (upto + price(deliverer, rid), len(pr.path), deliverer)
             if rid not in best or cand < best[rid]:
                 best[rid] = cand
     return {(c[2], rid) for rid, c in best.items()}
