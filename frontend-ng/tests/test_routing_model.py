@@ -73,6 +73,8 @@ def test_forwarding_loop_is_detected():
     t = forwarding_tree(m, "R1")
     assert t.per_dest["R9"].status == "loop" and "R9" in t.loops
     assert ("R1", "R2") in t.edges_used and ("R2", "R1") in t.edges_used   # the cycle is highlighted
+    assert t.fault_edges == {("R1", "R2"), ("R2", "R1")}    # ...and painted as the fault
+    assert t.looping == {"R1", "R2"}
 
 
 def test_ecmp_becomes_a_dag():
@@ -434,3 +436,76 @@ def test_routers_behind_dead_ends_are_ringed_never_the_root():
     tr = trace(_failed_triangle(only_connected), "r1")
     assert tr.unreached == {"r2", "r3"} and "r1" not in tr.unreached
 
+
+
+def _counting_to_infinity(*drop):
+    """Debug-networks-2 under rip2.lua, 5 s after R3--R4 failed: real tables, captured live.
+    M2's LAN (10.0.6.0) is cut off and R2 and R3 each route it via the other, counting up;
+    10.0.5.0, the failed link's own subnet, loops the same way between R1 and R2. `drop`
+    removes networks from every table, to isolate one loop."""
+    from gini.domain.routing_model import assemble_model
+    tables = {
+        "r1": [("10.0.1.0", "0.0.0.0", "tun1", "C"), ("10.0.2.0", "0.0.0.0", "tun2", "C"),
+               ("10.0.4.0", "0.0.0.0", "tun3", "C"), ("10.0.3.0", "10.0.2.2", "tun2", "D"),
+               ("10.0.5.0", "10.0.2.2", "tun2", "D"), ("10.0.6.0", "10.0.2.2", "tun2", "D")],
+        "r2": [("10.0.2.0", "0.0.0.0", "tun1", "C"), ("10.0.3.0", "0.0.0.0", "tun2", "C"),
+               ("10.0.1.0", "10.0.2.1", "tun1", "D"), ("10.0.4.0", "10.0.2.1", "tun1", "D"),
+               ("10.0.5.0", "10.0.2.1", "tun1", "D"), ("10.0.6.0", "10.0.3.2", "tun2", "D")],
+        "r3": [("10.0.3.0", "0.0.0.0", "tun1", "C"), ("10.0.4.0", "0.0.0.0", "tun2", "C"),
+               ("10.0.6.0", "10.0.3.1", "tun1", "D"), ("10.0.2.0", "10.0.3.1", "tun1", "D"),
+               ("10.0.1.0", "10.0.3.1", "tun1", "D")],
+        "r4": [("10.0.6.0", "0.0.0.0", "tun2", "C")],
+    }
+    ifs = {"r1": [("tun1", "U", "10.0.1.1"), ("tun2", "U", "10.0.2.1"), ("tun3", "U", "10.0.4.1")],
+           "r2": [("tun1", "U", "10.0.2.2"), ("tun2", "U", "10.0.3.1")],
+           "r3": [("tun1", "U", "10.0.3.2"), ("tun2", "U", "10.0.4.2"), ("tun3", "D", "10.0.5.1")],
+           "r4": [("tun1", "D", "10.0.5.2"), ("tun2", "U", "10.0.6.1")]}
+    return assemble_model([(rid, rid.upper(), _rows(*[r for r in rows if r[0] not in drop]),
+                            _IFHDR + "".join(f"{d}\t{st}\t{ip}\t02:00:00:00:00:01\t1500\t1\n"
+                                             for d, st, ip in ifs[rid]))
+                           for rid, rows in tables.items()])
+
+
+def test_a_routing_loop_is_painted_as_a_fault_not_lit_as_a_path():
+    """Before, the trace lit R2--R3 like a working route; only a line of panel text said
+    "loop". The cycle is now a fault edge, as an L2 loop always was."""
+    from gini.domain.routing_model import trace
+    tr = trace(_counting_to_infinity(), "r1")
+    assert {"10.0.5.0/24", "10.0.6.0/24"} <= tr.loops
+    assert {("r2", "r3"), ("r3", "r2")} <= tr.fault_edges            # 10.0.6.0: R2 <-> R3
+    assert {("r1", "r2"), ("r2", "r1")} <= tr.fault_edges            # 10.0.5.0: R1 <-> R2
+    assert tr.looping == {"r1", "r2", "r3"}
+
+
+def test_the_ring_goes_on_the_routers_doing_the_looping():
+    from gini.domain.routing_model import trace
+    tr = trace(_counting_to_infinity("10.0.5.0"), "r1")
+    assert tr.looping == {"r2", "r3"}                   # R1 only hands the packet in
+    assert tr.fault_edges == {("r2", "r3"), ("r3", "r2")}
+    assert ("r1", "r2") in tr.edges_used                # the way INTO the loop is still lit
+
+
+def test_the_panel_names_the_routers_on_the_loop():
+    from gini.domain.routing_model import trace
+    from gini.ui.routing_hud import _unreached_text
+    m = _counting_to_infinity("10.0.5.0")
+    assert _unreached_text(trace(m, "r1"), m) == "forwarding loop (R2⇄R3) for 10.0.6.0/24"
+    m = _counting_to_infinity()
+    assert _unreached_text(trace(m, "r1"), m) == \
+        "forwarding loop (R1 · R2 · R3) for 10.0.5.0/24, 10.0.6.0/24"
+
+
+def test_a_loop_beside_a_dead_end_is_still_called_a_loop():
+    """Mid-count, R3 had no route to 10.0.5.0 any more while 10.0.6.0 still looped through it."""
+    from gini.domain.routing_model import trace
+    from gini.ui.routing_hud import _unreached_text
+    m = _counting_to_infinity()
+    m.routers["r1"].table = [e for e in m.routers["r1"].table if e.network != "10.0.5.0"]
+    assert _unreached_text(trace(m, "r1"), m) == \
+        "no route to 10.0.5.0/24 · forwarding loop (R2⇄R3) for 10.0.6.0/24"
+
+
+def test_a_converged_network_has_no_loop_to_paint():
+    from gini.domain.routing_model import trace
+    tr = trace(_debug_networks(), "r2")
+    assert not tr.looping and not tr.loops and not tr.fault_edges

@@ -127,6 +127,11 @@ class TraceResult:
     # a subnet that dead-ends or loops. `deadends` and `loops` hold subnet labels, so a ring
     # keyed on them never matched a router and never appeared.
     unreached: set = field(default_factory=set)
+    # ROUTERS on a forwarding loop's cycle, for the dashed ring: R2 and R3 handing 10.0.6.0
+    # back and forth while RIP counts to infinity. `loops` names the destination; this names
+    # who is doing the looping, which is what a student has to see. The cycle's links go in
+    # `fault_edges`, as in L2 -- before this, an L3 loop lit R2--R3 exactly like a working path.
+    looping: set = field(default_factory=set)
 
 
 # -- longest-prefix match over real RouteEntry rows -------------------------------------------- #
@@ -357,14 +362,18 @@ class RoutingModel:
 
 
 # -- the authentic trace ----------------------------------------------------------------------- #
-def _trace_dest(model: RoutingModel, root: str, target: str, dead: set | None = None):
+def _trace_dest(model: RoutingModel, root: str, target: str, dead: set | None = None,
+                cycle: set | None = None):
     """Walk real next-hops from `root` toward `target`, following ALL equal-cost branches.
     Returns (edges, reaching_paths, saw_loop, saw_deadend, saw_ecmp).
 
     A hop out of an interface that is DOWN -- or onto a neighbour's address that is -- goes
     nowhere: it is a dead end, and the hop is added to `dead` (when given) rather than lit. The
     route is real, the router will try it, and the packet dies on the failed link; following it
-    across as if the link were up is what drew a black-holed network as healthy."""
+    across as if the link were up is what drew a black-holed network as healthy.
+
+    A hop back onto a router already on the path is a forwarding loop: the cycle's hops are
+    added to `cycle` (when given), so the caller can paint them as the fault they are."""
     edges: set = set()
     reaching: list = []           # [(path[rid…], total_latency_or_None)]
     state = {"loop": False, "deadend": False, "ecmp": False}
@@ -405,6 +414,10 @@ def _trace_dest(model: RoutingModel, root: str, target: str, dead: set | None = 
             edges.update(model.expand_hop(cur, owner))
             if owner in path:                             # forwarding loop — record the closing hop
                 state["loop"] = True
+                if cycle is not None:
+                    ring = path[path.index(owner):] + [owner]   # close it back on itself
+                    for a, b in zip(ring, ring[1:]):
+                        cycle.update(model.expand_hop(a, b))
                 continue
             el = model.edge_latency(cur, owner)
             dfs(owner, path + [owner], lat_sum + (el or 0.0), lat_known and el is not None)
@@ -993,9 +1006,11 @@ def forwarding_tree(model: RoutingModel, root: str) -> TraceResult:
             continue
         label = f"{network}/{_prefix_len(netmask)}"
         dead: set = set()
-        edges, reaching, loop, deadend, ecmp = _trace_dest(model, root, target, dead)
+        cycle: set = set()
+        edges, reaching, loop, deadend, ecmp = _trace_dest(model, root, target, dead, cycle)
         res.edges_used |= edges
-        res.fault_edges |= dead
+        res.fault_edges |= dead | cycle
+        res.looping |= {n for hop in cycle for n in hop if n in model.routers}
         if ecmp:
             res.ecmp.add(label)
         if reaching:
@@ -1132,9 +1147,10 @@ def _forwarding_tree_by_router(model: RoutingModel, root: str) -> TraceResult:
                 targets = [t] if t else []
         if not targets:
             continue
-        best = None                # (sort_key, edges, path, lat, loop, deadend, ecmp)
+        best = None                # (sort_key, edges, path, lat, loop, deadend, ecmp, cycle)
         for target in targets:
-            edges, reaching, loop, deadend, ecmp = _trace_dest(model, root, target)
+            cycle: set = set()
+            edges, reaching, loop, deadend, ecmp = _trace_dest(model, root, target, cycle=cycle)
             if reaching:
                 # representative branch for THIS interface: least latency, then fewest hops
                 path, lat = min(reaching, key=lambda pl: (pl[1] if pl[1] is not None else 1e18,
@@ -1144,11 +1160,13 @@ def _forwarding_tree_by_router(model: RoutingModel, root: str) -> TraceResult:
             else:
                 path, lat = [], None
                 key = (1, 0 if loop else 1, 0.0)          # prefer a loop over a dead-end if nothing reaches
-            cand = (key, edges, path, lat, loop, deadend, ecmp)
+            cand = (key, edges, path, lat, loop, deadend, ecmp, cycle)
             if best is None or cand[0] < best[0]:
                 best = cand
-        _key, edges, path, lat, loop, deadend, ecmp = best
+        _key, edges, path, lat, loop, deadend, ecmp, cycle = best
         res.edges_used |= edges
+        res.fault_edges |= cycle
+        res.looping |= {n for hop in cycle for n in hop if n in model.routers}
         if ecmp:
             res.ecmp.add(dest)
         if path:                                          # reached via its nearest interface

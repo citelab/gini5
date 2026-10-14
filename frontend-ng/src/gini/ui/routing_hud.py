@@ -222,7 +222,10 @@ class RoutingHud(QWidget):
                            Qt.AlignCenter, f"cost {e.cost}")
         self._paint_control_overlay(p, fit)
         # nodes
-        loops = self._trace.loops if self._trace else set()
+        # `loops` holds router ids only in the router-keyed trace; in the subnet trace it holds
+        # subnet labels, and `looping` names the routers on the cycle instead.
+        loops = ((self._trace.loops | getattr(self._trace, "looping", set()))
+                 if self._trace else set())
         deadends = self._trace.deadends if self._trace else set()
         for rid, pt in fit.items():
             node = self._model.nodes.get(rid)
@@ -279,7 +282,7 @@ class RoutingHud(QWidget):
                 why = (f"every destination is delivered locally "
                        f"({len(self._trace.per_dest)} known)")
             elif self._trace.per_dest:
-                why = _unreached_text(self._trace)
+                why = _unreached_text(self._trace, self._model)
             else:
                 why = "no rules programmed for any destination yet"
             p.setPen(QColor(t.faint))
@@ -294,7 +297,8 @@ class RoutingHud(QWidget):
             p.setPen(QColor(t.faint))
             p.setFont(QFont(self.font().family(), 8))
             p.drawText(12, self.height() - _TL_H - 22, self.width() - 24, 14, Qt.AlignLeft,
-                       f"{self._model.nodes[self._root].name}: {_unreached_text(self._trace)}")
+                       f"{self._model.nodes[self._root].name}: "
+                       f"{_unreached_text(self._trace, self._model)}")
         # tapped node's table card — routes for a router, flows for a switch
         if self._table_rid in self._model.nodes and self._table_rid in fit:
             node = self._model.nodes[self._table_rid]
@@ -503,33 +507,51 @@ class RoutingHud(QWidget):
             self.update()
 
 
-def _unreached_text(tr) -> str:
+def _loop_who(tr, model) -> str:
+    """ " (R2⇄R3)" -- the routers on the cycle, by name -- or "" when they are not known."""
+    rids = getattr(tr, "looping", set())
+    nodes = getattr(model, "nodes", {}) if model is not None else {}
+    names = sorted(nodes[r].name for r in rids if r in nodes)
+    if not names:
+        return ""
+    return " (" + ("⇄".join(names) if len(names) == 2 else " · ".join(names)) + ")"
+
+
+def _unreached_text(tr, model=None) -> str:
     """Why nothing is lit when some destinations fail: name them. "Nothing reachable from here"
     was shown for a router that still reached its own subnets and lacked a route to the rest --
-    the usual picture before a routing protocol has run -- which said the opposite of the truth."""
+    the usual picture before a routing protocol has run -- which said the opposite of the truth.
+
+    A loop also names the routers on it (given the `model`, for their names): "forwarding
+    loops for 10.0.6.0/24" says something is wrong, "R2⇄R3" says where to look."""
     ok = [pr for pr in tr.per_dest.values() if pr.status == "ok"]
     held = getattr(tr, "blackholed", set())
-    bad = sorted(tr.deadends) + sorted(l for l in tr.loops if l not in tr.deadends)
+    looped = sorted(l for l in tr.loops if l not in tr.deadends)
 
     def few(labels):
         return ", ".join(labels[:2]) + (f" +{len(labels) - 2} more" if len(labels) > 2 else "")
 
+    # A loop is said as a loop even beside dead ends: mid-count, 10.0.5.0 is gone while
+    # 10.0.6.0 still bounces R2<->R3, and "no route to" both was false for the second.
+    loop = f"forwarding loop{_loop_who(tr, model)} for {few(looped)}" if looped else ""
     if held:
         # A route that points across a failed link is not "no route" -- static routing still
         # holds it, and the packet dies on the dead link. Saying so is the whole lesson.
         hb = sorted(held)
         many = len(hb) > 1
         text = f"route{'s' if many else ''} to {few(hb)} cross{'' if many else 'es'} a failed link"
-        rest = [l for l in bad if l not in held]
-        return text + (f" · no route to {few(rest)}" if rest else "")
-    shown = few(bad)
-    if tr.loops and not tr.deadends:
-        return f"forwarding loops for {shown}"
+        rest = sorted(l for l in tr.deadends if l not in held)
+        return " · ".join(filter(None, [text, f"no route to {few(rest)}" if rest else "", loop]))
+    if not tr.deadends:
+        return loop
+    shown = few(sorted(tr.deadends))
     if not ok:
-        return f"nothing reachable — no route to {shown}"
-    if all(pr.hop_count == 0 for pr in ok):
-        return f"only its own subnets — no route to {shown}"
-    return f"no route to {shown}"
+        text = f"nothing reachable — no route to {shown}"
+    elif all(pr.hop_count == 0 for pr in ok):
+        text = f"only its own subnets — no route to {shown}"
+    else:
+        text = f"no route to {shown}"
+    return " · ".join(filter(None, [text, loop]))
 
 
 def _plen(netmask: str) -> int:
