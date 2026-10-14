@@ -200,10 +200,10 @@ class RoutingHud(QWidget):
             src = e.a if (e.a, e.b) in hi else (e.b if (e.b, e.a) in hi else None)
             faulty = bool(fault and ({(e.a, e.b), (e.b, e.a)} & fault))
             if faulty:
-                # A forwarding LOOP, painted on the cycle itself. In L3 the fault shows as a
-                # red ring on the destination that cannot be reached, but in L2 the
-                # destination is a host MAC and hosts are not drawn — so the cycle is the
-                # only place the failure can be seen.
+                # Where traffic DIES, painted on the link itself: in L2 a forwarding loop's
+                # cycle (the destination is a host MAC, and hosts are not drawn), in L3 a hop
+                # whose route crosses a failed link. The red ring marks who is cut off; this
+                # marks where.
                 p.setPen(QPen(QColor(t.accent_for("red")), 3, Qt.DashLine))
             elif src is None:
                 p.setPen(QPen(QColor(t.line), 1.4))
@@ -234,7 +234,7 @@ class RoutingHud(QWidget):
             p.setBrush(root_c if is_root else QColor(t.panel2))
             # A fault ring means a router black-holes or loops. `unprogrammed` is deliberately
             # NOT a fault: a switch with no rule for a MAC yet is mid-learning, not broken.
-            bad = rid in loops or rid in deadends
+            bad = rid in loops or rid in deadends or rid in getattr(self._trace, "unreached", ())
             # A switch we could not READ this poll. It must look different from one that
             # answered with no rules: the picture going dark should say "no answer", never
             # imply the network stopped forwarding.
@@ -508,8 +508,21 @@ def _unreached_text(tr) -> str:
     was shown for a router that still reached its own subnets and lacked a route to the rest --
     the usual picture before a routing protocol has run -- which said the opposite of the truth."""
     ok = [pr for pr in tr.per_dest.values() if pr.status == "ok"]
+    held = getattr(tr, "blackholed", set())
     bad = sorted(tr.deadends) + sorted(l for l in tr.loops if l not in tr.deadends)
-    shown = ", ".join(bad[:2]) + (f" +{len(bad) - 2} more" if len(bad) > 2 else "")
+
+    def few(labels):
+        return ", ".join(labels[:2]) + (f" +{len(labels) - 2} more" if len(labels) > 2 else "")
+
+    if held:
+        # A route that points across a failed link is not "no route" -- static routing still
+        # holds it, and the packet dies on the dead link. Saying so is the whole lesson.
+        hb = sorted(held)
+        many = len(hb) > 1
+        text = f"route{'s' if many else ''} to {few(hb)} cross{'' if many else 'es'} a failed link"
+        rest = [l for l in bad if l not in held]
+        return text + (f" · no route to {few(rest)}" if rest else "")
+    shown = few(bad)
     if tr.loops and not tr.deadends:
         return f"forwarding loops for {shown}"
     if not ok:

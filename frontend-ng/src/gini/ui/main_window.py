@@ -3915,7 +3915,9 @@ class MainWindow(QMainWindow):
     def _apply_link_state(self, link_id: str, up: bool, why: str) -> None:
         """Cut or restore a link at every end at once -- router interfaces, switch ports, machine
         interfaces -- and say so. Static routes are deliberately NOT recomputed: that is what
-        static routing does, and the contrast is the lesson. Dynamic routing reacts on its own."""
+        static routing does, and the contrast is the lesson. Dynamic routing reacts on its own.
+        Under static routing the log names the routes left pointing across the dead link, since
+        a network that black-holes without a word looks broken rather than static."""
         from ..domain import link_faults as LF
         from ..domain import link_props as LP
         topo = self.ctx.topology
@@ -3936,6 +3938,10 @@ class MainWindow(QMainWindow):
             reason = "by hand"
         self.ctx.log(f"Link {ends} {'repaired' if up else 'FAILED'} ({reason}).",
                      "info" if up else "error")
+        if not up and self._run_links is not None and self._run_links[3]:
+            from ..services import link_push
+            self.ctx.log(link_push.failure_note(
+                link_push.stranded(self._run_cfg, self._run_links[2], link_id)), "info")
         self.ctx.bus.link_state_changed.emit(link_id, up, why)
 
         def work():

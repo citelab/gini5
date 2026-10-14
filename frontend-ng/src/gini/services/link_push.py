@@ -14,7 +14,9 @@ When a link's cost changes while the lab runs, two things must reach the routers
      typed is theirs.
 
 A failure does NOT recompute static routes. That is what static routing does, and it is the
-contrast a failure lab is built on (Phase 3).
+contrast a failure lab is built on (Phase 3). But it must not be silent: a lab that black-holes
+without a word reads as a bug -- it was reported as one -- so `failure_note` says which routes
+now point across the dead link.
 
 Pure: no Qt, no Docker. It plans commands; the main window runs them over each router's console.
 """
@@ -92,3 +94,30 @@ def _prefix(mask: str) -> int:
         return sum(bin(int(o)).count("1") for o in mask.split("."))
     except ValueError:
         return 0
+
+
+def stranded(cfg, installed: dict, link_id: str) -> dict:
+    """{router name: [(net, mask)]} -- the static routes out of an interface on `link_id`. When
+    the link fails they stay in the table and keep sending traffic onto it."""
+    out: dict = {}
+    for rname, tun in interfaces_on(cfg, link_id):
+        nets = sorted(key for key, (_gw, dev) in installed.get(rname, {}).items()
+                      if str(dev) == str(tun))
+        if nets:
+            out[rname] = nets
+    return out
+
+
+def failure_note(stuck: dict) -> str:
+    """The log line for a link failing under static routing: what is now dropped, and why."""
+    def few(nets):
+        shown = [f"{n}/{_prefix(m)}" for n, m in nets]
+        return ", ".join(shown[:3]) + (f" +{len(shown) - 3} more" if len(shown) > 3 else "")
+
+    if not stuck:
+        return ("Static routes do not adapt: anything reached across that link is cut off until "
+                "it is restored. Dynamic routing would find another way, if there is one.")
+    parts = [f"{r}'s route{'s' if len(n) > 1 else ''} to {few(n)}"
+             for r, n in sorted(stuck.items())]
+    return ("Static routes do not adapt: " + "; ".join(parts) + " still point across the failed "
+            "link, so that traffic is dropped. Restore the link, or switch to dynamic routing.")

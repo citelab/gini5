@@ -366,3 +366,71 @@ def test_a_dear_direct_link_from_the_root_loses_to_the_cheap_way_round():
     from gini.domain.routing_model import trace
     tr = trace(_debug_networks(), "r4")
     assert ("r6", "r5") in tr.edges_used and ("r4", "r5") not in tr.edges_used
+
+
+# -- a link fails under static routing (the maintainer's lab, R2 -- R6 failed) ---------------- #
+# Read off the live routers after the failure: both ends report tun D and have dropped the
+# connected 10.0.10.0/24, but R2 keeps `10.0.11.0 via 10.0.10.2 tun5` -- static routes are not
+# withdrawn -- and M1 -> M5 (10.0.11.10) is 100% loss. Trimmed to R2, R4, R5, R6.
+def _r2_r6_failed():
+    from gini.domain.routing_model import assemble_model
+    r2 = _rows(("10.0.7.0", "0.0.0.0", "tun4", "C"), ("10.0.8.0", "10.0.7.2", "tun4", "S"),
+               ("10.0.9.0", "10.0.7.2", "tun4", "S"), ("10.0.11.0", "10.0.10.2", "tun5", "S"))
+    r4 = _rows(("10.0.7.0", "0.0.0.0", "tun1", "C"), ("10.0.8.0", "0.0.0.0", "tun2", "C"),
+               ("10.0.9.0", "10.0.8.2", "tun2", "S"), ("10.0.11.0", "10.0.8.2", "tun2", "S"))
+    r5 = _rows(("10.0.8.0", "0.0.0.0", "tun1", "C"), ("10.0.9.0", "0.0.0.0", "tun2", "C"),
+               ("10.0.7.0", "10.0.9.2", "tun2", "S"), ("10.0.11.0", "10.0.9.2", "tun2", "S"))
+    r6 = _rows(("10.0.9.0", "0.0.0.0", "tun1", "C"), ("10.0.11.0", "0.0.0.0", "tun3", "C"),
+               ("10.0.7.0", "10.0.10.1", "tun2", "S"), ("10.0.8.0", "10.0.9.1", "tun1", "S"))
+    ifs = {"r2": [("tun4", "U", "10.0.7.1"), ("tun5", "D", "10.0.10.1")],
+           "r4": [("tun1", "U", "10.0.7.2"), ("tun2", "U", "10.0.8.1")],
+           "r5": [("tun1", "U", "10.0.8.2"), ("tun2", "U", "10.0.9.1")],
+           "r6": [("tun1", "U", "10.0.9.2"), ("tun2", "D", "10.0.10.2"),
+                  ("tun3", "U", "10.0.11.1")]}
+    tables = {"r2": r2, "r4": r4, "r5": r5, "r6": r6}
+    return assemble_model([(rid, rid.upper(), tables[rid],
+                            _IFHDR + "".join(f"{d}\t{st}\t{ip}\t02:00:00:00:00:01\t1500\t1\n"
+                                             for d, st, ip in ifs[rid]))
+                           for rid in tables])
+
+
+def test_a_static_route_across_a_failed_link_is_a_black_hole_not_a_path():
+    from gini.domain.routing_model import trace
+    tr = trace(_r2_r6_failed(), "r2")
+    assert ("r2", "r6") not in tr.edges_used                # never lit across the dead link
+    assert tr.fault_edges == {("r2", "r6")}                 # drawn as where traffic dies
+    assert tr.blackholed == {"10.0.11.0/24"} <= tr.deadends
+    assert tr.unreached == {"r6"}                           # M5's router wears the ring
+
+
+def test_the_failed_link_stays_on_the_map():
+    """Its connected routes are gone at both ends; the static next hop still places it."""
+    m = _r2_r6_failed()
+    assert any({e.a, e.b} == {"r2", "r6"} for e in m.edges)
+
+
+def test_the_panel_says_the_route_crosses_a_failed_link_not_that_there_is_none():
+    from gini.domain.routing_model import trace
+    from gini.ui.routing_hud import _unreached_text
+    assert _unreached_text(trace(_r2_r6_failed(), "r2")) == \
+        "route to 10.0.11.0/24 crosses a failed link"
+
+
+def test_a_subnet_whose_link_failed_is_still_a_destination():
+    """A host link fails: its router drops the connected route, but everyone else still routes
+    toward that subnet -- so it stays a destination, and shows up as unreached."""
+    from gini.domain.routing_model import trace
+    m = _r2_r6_failed()
+    m.routers["r6"].table = [e for e in m.routers["r6"].table if e.network != "10.0.11.0"]
+    tr = trace(m, "r4")
+    assert "10.0.11.0/24" in tr.deadends
+
+
+def test_routers_behind_dead_ends_are_ringed_never_the_root():
+    """The red ring keyed on subnet labels never matched a router id, so it never showed."""
+    from gini.domain.routing_model import trace
+    only_connected = _HDR + "".join(l + "\n" for l in _R1_ROUTES.splitlines()[1:]
+                                    if l.endswith("\tC"))
+    tr = trace(_failed_triangle(only_connected), "r1")
+    assert tr.unreached == {"r2", "r3"} and "r1" not in tr.unreached
+

@@ -363,12 +363,26 @@ def test_a_representative_target_is_never_a_routers_own_address():
     assert target == "10.0.4.3"
 
 
-def test_subnets_come_from_connected_routes_only():
+def test_subnets_are_what_the_routers_connect_or_route_to_but_never_a_default():
+    """A routed network counts: when a host's link fails its router drops the connected route,
+    and the subnet must stay a destination for its loss to be shown at all."""
     from gini.domain.routetable import RouteEntry
     from gini.domain.routing_model import RouterNode, RoutingModel
 
     r = RouterNode("r1", "R1", {"10.0.1.1"}, [
         RouteEntry(0, "10.0.1.0", "255.255.255.0", "0.0.0.0", "tun1"),   # connected
         RouteEntry(1, "10.0.9.0", "255.255.255.0", "10.0.1.2", "tun1"),  # via a next hop
+        RouteEntry(2, "0.0.0.0", "0.0.0.0", "10.0.1.2", "tun1"),         # a default
     ])
-    assert RoutingModel([r], []).subnets() == [("10.0.1.0", "255.255.255.0")]
+    assert RoutingModel([r], []).subnets() == [("10.0.1.0", "255.255.255.0"),
+                                               ("10.0.9.0", "255.255.255.0")]
+
+
+def test_a_model_with_no_connected_route_has_no_subnets():
+    """...which is what keeps the router-keyed fallback trace for a bare model."""
+    from gini.domain.routetable import RouteEntry
+    from gini.domain.routing_model import RouterNode, RoutingModel
+
+    r = RouterNode("r1", "R1", {"10.0.1.1"},
+                   [RouteEntry(0, "10.0.9.0", "255.255.255.0", "10.0.1.2", "tun1")])
+    assert RoutingModel([r], []).subnets() == []

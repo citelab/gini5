@@ -40,6 +40,10 @@ class RouterNode:
     # they stay in `ips`, but nothing can be delivered to them: a failed link's address must not
     # make its router look reachable (see TraceResult.reached_via).
     down_ips: set = field(default_factory=set)
+    # The DEVICES (`tun5`) it reports down. A route keeps naming its egress device after the
+    # link under it fails -- static routes are not withdrawn -- so this is how a hop out of a
+    # dead interface is told apart from a live one (see _trace_dest).
+    down_ifaces: set = field(default_factory=set)
 
 
 @dataclass
@@ -114,6 +118,15 @@ class TraceResult:
     # important SDN failure -- rules pointing at each other after a broken spanning tree --
     # would render as an ordinary lit path.
     fault_edges: set = field(default_factory=set)
+    # Destinations whose route crosses a link that is DOWN: the table has a route, but it points
+    # out of a dead interface. Also in `deadends` -- the traffic is dropped all the same -- but
+    # kept apart so the panel can say why. "No route" would be false: static routing is doing
+    # exactly what it was told, which is the lesson of a failure under static routes.
+    blackholed: set = field(default_factory=set)
+    # ROUTERS behind an unreached destination, for the red ring: those with a live interface in
+    # a subnet that dead-ends or loops. `deadends` and `loops` hold subnet labels, so a ring
+    # keyed on them never matched a router and never appeared.
+    unreached: set = field(default_factory=set)
 
 
 # -- longest-prefix match over real RouteEntry rows -------------------------------------------- #
@@ -260,12 +273,21 @@ class RoutingModel:
         10.0.4.0/24, and neither subnet is a router, so a router-keyed trace could never
         mention them. Aiming at the SUBNET keeps hosts off the map -- they are targets, not
         nodes -- while making the tree span the whole addressed network.
+
+        A network a router only has a ROUTE to counts as well. When a host's link fails, its
+        router's connected route goes with it, and the subnet vanished from the trace -- the
+        destination everyone else still routes toward simply stopped being asked about, so its
+        loss could never be shown. A default route is not a subnet and is left out. With no
+        connected route anywhere there are no subnets at all, which is what sends a bare model
+        to the router-keyed trace.
         """
+        if not any(e.direct for r in self.routers.values() for e in r.table):
+            return []
         out, seen = [], set()
         for r in self.routers.values():
             for e in r.table:
-                if not e.direct:
-                    continue
+                if not e.direct and _prefix_len(e.netmask) <= 0:
+                    continue                          # 0.0.0.0/0: a default, not a destination
                 key = (e.network, e.netmask)
                 if key not in seen:
                     seen.add(key)
@@ -335,9 +357,14 @@ class RoutingModel:
 
 
 # -- the authentic trace ----------------------------------------------------------------------- #
-def _trace_dest(model: RoutingModel, root: str, target: str):
+def _trace_dest(model: RoutingModel, root: str, target: str, dead: set | None = None):
     """Walk real next-hops from `root` toward `target`, following ALL equal-cost branches.
-    Returns (edges, reaching_paths, saw_loop, saw_deadend, saw_ecmp)."""
+    Returns (edges, reaching_paths, saw_loop, saw_deadend, saw_ecmp).
+
+    A hop out of an interface that is DOWN -- or onto a neighbour's address that is -- goes
+    nowhere: it is a dead end, and the hop is added to `dead` (when given) rather than lit. The
+    route is real, the router will try it, and the packet dies on the failed link; following it
+    across as if the link were up is what drew a black-holed network as healthy."""
     edges: set = set()
     reaching: list = []           # [(path[rid…], total_latency_or_None)]
     state = {"loop": False, "deadend": False, "ecmp": False}
@@ -359,6 +386,13 @@ def _trace_dest(model: RoutingModel, root: str, target: str):
                     reaching.append((path[:], lat_sum if lat_known else None))
                 else:
                     state["deadend"] = True               # next-hop isn't a known router
+                continue
+            here = model.routers[cur]
+            there = model.routers.get(owner)
+            if e.iface in here.down_ifaces or (there is not None and nh in there.down_ips):
+                state["deadend"] = True                   # the route crosses a failed link
+                if dead is not None:
+                    dead.add((cur, owner))
                 continue
             owners.append(owner)
         uniq = list(dict.fromkeys(owners))                # distinct next-hop routers (order-preserving)
@@ -389,13 +423,18 @@ def _is_netmask_or_zero(ip: str) -> bool:
 
 
 #: A gRouter interface-table row: `tun1  D  10.0.1.2  …` — device, state (U/D), address.
-_IFACE_ROW = re.compile(r"^\s*\S+\s+([UD])\s+(\d{1,3}(?:\.\d{1,3}){3})\b", re.M)
+_IFACE_ROW = re.compile(r"^\s*(\S+)\s+([UD])\s+(\d{1,3}(?:\.\d{1,3}){3})\b", re.M)
 
 
 def parse_iface_down(text: str) -> set:
     """The IPs of interfaces the gRouter's `ifconfig show` reports DOWN (state D). Empty for a
     format without a state column, which is the safe answer: nothing is assumed down."""
-    return {m.group(2) for m in _IFACE_ROW.finditer(text or "") if m.group(1) == "D"}
+    return {m.group(3) for m in _IFACE_ROW.finditer(text or "") if m.group(2) == "D"}
+
+
+def parse_iface_down_devices(text: str) -> set:
+    """The device names (`tun5`) of the interfaces `ifconfig show` reports DOWN."""
+    return {m.group(1) for m in _IFACE_ROW.finditer(text or "") if m.group(2) == "D"}
 
 
 def parse_iface_ips(text: str) -> set:
@@ -435,18 +474,24 @@ def hop_latency(egress_base, ingress_base) -> float | None:
 def derive_edges(routers) -> list:
     """Router adjacency from REAL data: A and B are neighbours if A has a *connected* route whose
     subnet contains one of B's interface IPs (i.e. they share a segment — direct link OR a shared
-    switch). Robust to switch-mediated topologies where routers have no direct link."""
+    switch). Robust to switch-mediated topologies where routers have no direct link.
+
+    Or if A has a route whose NEXT HOP is one of B's addresses: a next hop is on a shared segment
+    by definition. This is what keeps a failed link on the map. Its connected routes go when
+    the interfaces go down, at both ends, but a static route still points across it -- and a
+    link that vanished could not be drawn as the place traffic dies."""
     seen: set = set()
     out: list = []
     for a in routers:
         connected = [e for e in a.table if e.direct]
+        hops = {e.nexthop for e in a.table if not e.direct}
         for b in routers:
             if b.rid == a.rid:
                 continue
             key = frozenset((a.rid, b.rid))
             if key in seen:
                 continue
-            if any(_matches(e, ip) for ip in b.ips for e in connected):
+            if hops & b.ips or any(_matches(e, ip) for ip in b.ips for e in connected):
                 seen.add(key)
                 out.append(Edge(*sorted((a.rid, b.rid))))
     return out
@@ -583,7 +628,8 @@ def assemble_model(router_infos, links=None, latency_of=None,
                   switch that delivers that subnet (see delivery_via).
     """
     routers = [RouterNode(rid, name, parse_iface_ips(iface_text), parse_routes(route_text),
-                          down_ips=parse_iface_down(iface_text))
+                          down_ips=parse_iface_down(iface_text),
+                          down_ifaces=parse_iface_down_devices(iface_text))
                for (rid, name, route_text, iface_text) in router_infos]
     ovs = []
     for info in (ovs_infos or []):
@@ -946,8 +992,10 @@ def forwarding_tree(model: RoutingModel, root: str) -> TraceResult:
         if target is None:
             continue
         label = f"{network}/{_prefix_len(netmask)}"
-        edges, reaching, loop, deadend, ecmp = _trace_dest(model, root, target)
+        dead: set = set()
+        edges, reaching, loop, deadend, ecmp = _trace_dest(model, root, target, dead)
         res.edges_used |= edges
+        res.fault_edges |= dead
         if ecmp:
             res.ecmp.add(label)
         if reaching:
@@ -970,8 +1018,26 @@ def forwarding_tree(model: RoutingModel, root: str) -> TraceResult:
         else:
             res.deadends.add(label)
             res.per_dest[label] = PathResult(label, "deadend", 0, None, [])
+            if dead:
+                res.blackholed.add(label)
     res.edges_used |= _delivery_hops(model, root, res)
+    res.unreached = _unreached_routers(model, root, res)
     return res
+
+
+def _unreached_routers(model: RoutingModel, root: str, res: TraceResult) -> set:
+    """The routers to ring red: each one with a live interface in a destination that dead-ends
+    or loops -- M5 is cut off, so R6, whose LAN it is, wears the ring. Never the root."""
+    out: set = set()
+    for label, pr in res.per_dest.items():
+        if pr.status == "ok":
+            continue                                  # a loop beside a reaching branch: reached
+        try:
+            net = ipaddress.IPv4Network(label, strict=False)
+        except ValueError:
+            continue
+        out.update(rid for rid in _routers_on(model, net) if rid != root)
+    return out
 
 
 def _delivery_hops(model: RoutingModel, root: str, res: TraceResult) -> set:

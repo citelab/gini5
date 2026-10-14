@@ -108,6 +108,12 @@ The control-plane API is where a student's protocol meets the link:
   on. Recomputing on failure would make gBuilder a central routing controller — a different
   lesson. Floating static routes (a pre-installed backup at a higher distance, the real way
   static routing survives a failure) are a later addition.
+- **But a failure is never silent** (2026-10-14). A lab that black-holed without a word was
+  reported as a bug, so it now says what is happening, in two places. The log names the
+  routes left pointing across the dead link ("Static routes do not adapt: R2's route to
+  10.0.11.0/24 still points across the failed link…"). The Network HUD stops a trace at a hop
+  out of a down interface, draws that link red and dashed, rings the routers whose subnets
+  are cut off, and says "route to 10.0.11.0/24 crosses a failed link" rather than "no route".
 - gBuilder remembers which routes it installed and only ever changes or removes those, so a
   route a student added by hand is never touched.
 - A cost change while the lab is stopped just refreshes the inspector's Routes preview; the next
@@ -270,5 +276,6 @@ Agreed with the maintainer on 2026-10-10:
   `RepairAfter`, 0 = stays down until restored); configured per link in its Properties tab; no
   faults by default.
 - A link failure is carrier loss at both ends, and the router withdraws the connected route.
-- Static routes are recomputed on a cost change, not on a failure.
+- Static routes are recomputed on a cost change, not on a failure; a failure is reported in the
+  log and on the Network HUD instead (2026-10-14).
 - SDN stays at hop count: no costs on OVS links or in the POX apps (2026-10-10).

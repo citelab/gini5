@@ -168,3 +168,26 @@ def test_the_hud_labels_edges_with_cost_once_weighted():
     w.api.set_link_property(direct.id, "cost", 4)
     assert w._hud_cost_of(r1, r2) == 4
     assert w._hud_cost_of(r2, r1) == 4
+
+
+# -- a failure under static routing is not silent ------------------------------------------- #
+def test_a_failed_link_names_the_static_routes_still_pointing_across_it():
+    """R1 reaches H2's subnet over the direct link. Fail that link and R1's route to it stays,
+    out of the dead interface -- the log says so instead of leaving a black hole unexplained."""
+    t, direct, _l, _r = _triangle()
+    cfg = _cfg(t)
+    stuck = LPU.stranded(cfg, LPU.installed_routes(cfg), direct.id)
+    h2_net = next(m.ifaces[0].ip for m in cfg.machines if m.name == "H2").rsplit(".", 1)[0] + ".0"
+    assert ("R1" in stuck) and any(net == h2_net for net, _m in stuck["R1"])
+    note = LPU.failure_note(stuck)
+    assert note.startswith("Static routes do not adapt: ") and f"{h2_net}/24" in note
+    assert "still point across the failed link" in note
+
+
+def test_a_failed_link_no_route_crosses_still_says_static_does_not_adapt():
+    t, _d, _l, _r = _triangle()
+    h2_link = next(l for l in t.links.values()
+                   if "H2" in {t.devices[l.source_id].name, t.devices[l.target_id].name})
+    cfg = _cfg(t)
+    assert LPU.stranded(cfg, LPU.installed_routes(cfg), h2_link.id) == {}
+    assert "cut off until it is restored" in LPU.failure_note({})
