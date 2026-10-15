@@ -1,8 +1,10 @@
 """A-Lab 02 — fair share: the checklist, the report, and the six metrics, with no kernel.
 
-The files under backend/xv6/solutions/a-lab-02/ are the evidence: `pristine/` is what an armed
-machine seeds (the patched image's copies), `gold/` the lab solved, and the `wrong-*`/`no-inherit`
-variants each one specific mistake. Every check must be red on the first, green on the second, and
+The evidence is the reference solution set: `pristine/` is what an armed machine seeds (the
+patched image's copies), `gold/` the lab solved, and the `wrong-*`/`no-inherit` variants each one
+specific mistake. It is NOT in this repository, which is public: it is the answer to a graded lab.
+The maintainer keeps it privately and points GINI_ALAB02_SOLUTIONS at it; without that, the tests
+that read it skip and everything else still runs. Every check must be red on the first, green on the second, and
 red on exactly the variant's own mistake -- a check that is green before the student starts, or
 red on a correct solution, is worse than no check.
 
@@ -11,7 +13,9 @@ broken variants), so a metric is tested against the numbers it will actually see
 """
 from __future__ import annotations
 
+import ast
 import importlib.util
+import os
 import re
 from pathlib import Path
 
@@ -22,7 +26,18 @@ from gini.domain import lab_spec as L
 from gini.domain.lab_grade import ProcRow, Reading
 
 ROOT = Path(__file__).resolve().parents[2]
-SOL = ROOT / "backend" / "xv6" / "solutions" / "a-lab-02"
+SOL = Path(os.environ.get("GINI_ALAB02_SOLUTIONS", "/nonexistent"))
+needs_solutions = pytest.mark.skipif(
+    not (SOL / "gold").is_dir(),
+    reason="the A-Lab 02 solutions are private; set GINI_ALAB02_SOLUTIONS")
+
+
+def _shipped_policies() -> str:
+    """kernel/sched_policy.c exactly as students receive it: the patcher's own literal."""
+    src = (ROOT / "backend" / "xv6" / "gini_patch.py").read_text(encoding="utf-8")
+    m = re.search(r'^_SCHED_POLICY = ("""(?:.|\n)*?""")\n', src, re.M)
+    assert m, "gini_patch.py no longer defines _SCHED_POLICY"
+    return ast.literal_eval(m.group(1))
 
 
 @pytest.fixture(scope="module")
@@ -97,16 +112,19 @@ def test_every_line_sharetest_prints_is_one_the_grader_reads(spec):
 # the checklist against real files
 # --------------------------------------------------------------------------- #
 
+@needs_solutions
 def test_every_check_is_red_on_the_files_a_student_starts_with(spec):
     got = _evaluate(spec, None)
     assert not any(got.values()), [k for k, v in got.items() if v]
 
 
+@needs_solutions
 def test_every_check_is_green_on_the_reference_solution(spec):
     got = _evaluate(spec, "gold")
     assert all(got.values()), [k for k, v in got.items() if not v]
 
 
+@needs_solutions
 @pytest.mark.parametrize("variant,red", [
     ("wrong-1", {"weighted"}),
     ("wrong-2", {"join_wakeup", "join_fork"}),
@@ -118,9 +136,10 @@ def test_a_broken_variant_is_red_on_its_own_mistake_and_nothing_else(spec, varia
     assert {k for k, v in got.items() if not v} == red
 
 
+@needs_solutions
 def test_the_committed_variants_are_what_the_generator_makes(tmp_path):
-    """The variants are generated from the pristine files. Committed output that drifted from
-    the generator would test a solution nobody can rebuild."""
+    """The variants are generated from the pristine files. Kept output that drifted from the
+    generator would test a solution nobody can rebuild."""
     mod_spec = importlib.util.spec_from_file_location("mv", SOL / "make_variants.py")
     mv = importlib.util.module_from_spec(mod_spec)
     mod_spec.loader.exec_module(mv)
@@ -134,14 +153,14 @@ def test_the_committed_variants_are_what_the_generator_makes(tmp_path):
 def test_the_shipped_policies_file_gives_nothing_away():
     """The handout asks the student to FIND the line. A comment calling it a bug does it for
     them."""
-    src = (SOL / "pristine" / "sched_policy.c").read_text().lower()
+    src = _shipped_policies().lower()
     for spoiler in ("deliberately", "the bug", "flawed", "ignores tickets", "should weight"):
         assert spoiler not in src, spoiler
 
 
 def test_the_stride_stub_runs_round_robin_rather_than_idling():
     """A stub returning 0 would mean "nothing runnable" -- policy 3 would idle the machine."""
-    src = (SOL / "pristine" / "sched_policy.c").read_text()
+    src = _shipped_policies()
     body = src[src.index("pick_stride(void)"):]
     assert "return pick_rr();" in body.split("}")[0]
 
