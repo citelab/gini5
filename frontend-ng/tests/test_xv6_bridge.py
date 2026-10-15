@@ -284,6 +284,21 @@ def test_policy_roster_drives_set_policy_for_a_new_policy():
     assert any("/control?policy=3" in u for u in fa.posts)
 
 
+def test_stride_chosen_before_the_first_poll_is_stride_and_not_round_robin():
+    """The bridge's own fallback table stopped at lottery, so stride picked before the roster
+    was read posted policy 0 -- a student measured round-robin under a dropdown saying stride."""
+    br, fa = _bridge()
+    assert br.kernel_policies == {}
+    br.set_policy("stride")
+    assert any("/control?policy=3" in u for u in fa.posts)
+
+
+def test_a_policy_name_nobody_knows_switches_nothing():
+    br, fa = _bridge()
+    br.set_policy("no-such-policy")
+    assert not any("/control?policy=" in u for u in fa.posts)
+
+
 def test_kernel_policy_and_proc_sched_read():
     # gini_dump now carries per-proc scheduling fields (PROC lines) + the active policy id
     dump = ("\n3 run spin 2\nPROC 3 pri 5 tk 1 lv 0 wait 0\n"

@@ -17,8 +17,8 @@ import urllib.request
 from urllib.parse import quote
 
 from ..domain.xv6 import (
-    Snapshot, apply_proc_sched, apply_waits, parse_backtrace, parse_cpu_lines, parse_cpu_regs,
-    parse_csr,
+    POLICY_IDS, Snapshot, apply_proc_sched, apply_waits, parse_backtrace, parse_cpu_lines,
+    parse_cpu_regs, parse_csr,
     parse_modetime, parse_policies, parse_procdump, parse_registers, parse_regs_line, parse_sched,
     parse_shadow_manifest, running_pid,
 )
@@ -30,9 +30,12 @@ from ..domain.xv6_vm import (
     VmSnapshot, parse_faults, parse_vmall, parse_vmprint, regions_from_leaves,
 )
 
-# must match gini_pick() in gini_patch.py: 0=round-robin 1=priority 2=lottery. Custom student
-# policies (MLFQ, stride, …) get their own ids when added via the Scheduler Builder.
-POLICY_ID = {"round-robin": 0, "priority": 1, "lottery": 2}
+# The fallback for a name the live kernel's roster has not supplied yet -- in the first moments
+# after a boot or a Load, before the first poll has read the POLICY lines. It is gini-core's table
+# rather than a copy of its own: the copy here stopped at lottery when stride shipped as policy 3,
+# so choosing stride before the first poll sent policy 0 and measured round-robin. Custom student
+# policies (MLFQ, …) still get their ids from the roster.
+POLICY_ID = dict(POLICY_IDS)
 # each shadow overrides the policy at this index (the kernel toggles the CURRENT policy's shadow).
 SHADOW_POLICY = {"rr_sched": 0, "prio_sched": 1, "lottery_sched": 2}
 
@@ -264,7 +267,9 @@ class Xv6Bridge:
         # map the display name -> id via the live kernel roster (so a NEW policy works), falling
         # back to the built-in ids for the shipped three.
         by_name = {name: pid for pid, name in self.kernel_policies.items()}
-        pid = by_name.get(policy, POLICY_ID.get(policy, 0))
+        pid = by_name.get(policy, POLICY_ID.get(policy))
+        if pid is None:
+            return          # a name nobody knows switches nothing, rather than to round-robin
         self.agent.post(f"/control?policy={pid}")
 
     # -- shadows + control-plane operations (NOT system calls) --------------------- #
