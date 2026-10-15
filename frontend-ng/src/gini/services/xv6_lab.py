@@ -56,6 +56,10 @@ PRISTINE_DIR = ".pristine"
 
 #: Insert one `$U/_<prog>` row into the Makefile's UPROGS list, after `UPROGS=\`.
 _UPROG_AWK = r'{print} /^UPROGS=\\$/{print "\t$U/_" p "\\"}'
+#: Drops a `\t$U/_name\` row whose user/name.c is gone (see link_script). `substr` from 6 skips
+#: the tab, `$U/_`; the length leaves off the trailing backslash.
+_UPROG_PRUNE_AWK = (r'/^\t\$U\/_[A-Za-z0-9_]+\\$/{n=substr($0,6,length($0)-6);'
+                    r' if(system("test -e user/" n ".c")!=0) next} {print}')
 
 #: Per file. A kernel file is a few thousand lines; anything past this is not source, and a
 #: submission is uploaded over a student's own connection.
@@ -715,6 +719,47 @@ def link_script(spec) -> str:
         "cd /opt/xv6-riscv",
         f"mkdir -p {shlex.quote(pristine)} {shlex.quote(lab)}",
     ]
+    # Let go of the assignment the student left before attaching this one. Linking only THIS
+    # assignment's files left every file the previous one owned and this one does not still
+    # linked into the old folder: after A-Lab 01 -> A-Lab 02, the machine built the student's
+    # A-Lab 01 trap.c (which calls load_sample) against A-Lab 02's untouched defs.h (which does
+    # not declare it), and Load failed in a file the new lab never mentions. Each such link goes
+    # back to the image's copy. A file the image has no copy of never existed there -- the old
+    # assignment seeded it (sysinfo.h, sysinfotest.c) -- so its link is simply removed. Only an
+    # image too old to keep copies falls back to the old assignment's pristine folder, which
+    # cannot tell the two apart: it holds a copy of every file, seeded ones included. Links into this
+    # assignment's folder are left: `ln -sf` below remakes them.
+    lines += [
+        f"if find kernel user -type l -lname '{MOUNT}/*' ! -lname '{lab}/*' | grep -q .; then",
+        "  switched=1",
+        "else",
+        "  switched=",
+        "fi",
+        "find kernel user -type l | while read -r t; do",
+        '  dest=$(readlink "$t")',
+        '  case "$dest" in',
+        f"    {lab}/*) ;;",
+        f"    {MOUNT}/*)",
+        f'      img={IMAGE_PRISTINE}/"$t"; old={MOUNT}/{PRISTINE_DIR}/"${{dest#{MOUNT}/}}"',
+        '      rm -f "$t"',
+        '      if [ -f "$img" ]; then cp "$img" "$t";',
+        f'      elif [ ! -d {IMAGE_PRISTINE} ] && [ -f "$old" ]; then cp "$old" "$t"; fi ;;',
+        "  esac",
+        "done",
+        # And the old assignment's test program leaves UPROGS with its source: left registered,
+        # `make` builds sysinfotest against a user.h that no longer declares sysinfo(). Every
+        # entry the image ships has its user/NAME.c, so "no source" means "an assignment's".
+        "awk " + shlex.quote(_UPROG_PRUNE_AWK) + " Makefile > /tmp/gini_mk && mv /tmp/gini_mk Makefile",
+        # And what was built from the old assignment goes too, once, on the switch itself. xv6
+        # compiles with -MD: sysproc.d still named kernel/sysinfo.h, which is gone, and make
+        # stopped with "No rule to make target" before compiling anything. A .d that survived
+        # would be worse where its header still exists -- objects built against one
+        # assignment's proc.h linked with the other's. The cost is one full build -- a few seconds --
+        # on the first Load after switching.
+        'if [ -n "$switched" ]; then',
+        "  rm -f kernel/*.o kernel/*.d user/*.o user/*.d user/usys.S",
+        "fi",
+    ]
     for f in getattr(spec, "files", ()):
         mine = shlex.quote(f"{lab}/{f.name}")
         orig = shlex.quote(f"{pristine}/{f.name}")
@@ -736,6 +781,10 @@ def link_script(spec) -> str:
             "fi",
             f"if [ ! -f {mine} ] && [ -f {orig} ]; then cp {orig} {mine}; fi",
             f"ln -sf {mine} {tree}",
+            # Newer than anything built from it. make follows the link and compares the
+            # STUDENT's file, and after a switch back that file is weeks older than the usys.S
+            # the other assignment generated -- so `sysinfo` got no stub and the link failed.
+            f"if [ -f {mine} ]; then touch {mine}; fi",
         ]
     for prog in getattr(spec, "uprogs", lambda: ())():
         # `awk -v` rather than splicing the name into the awk program: unquoted in awk source

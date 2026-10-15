@@ -13,6 +13,8 @@ sitting right there on disk. `test_a_second_assignment_does_not_hide_the_first` 
 """
 from __future__ import annotations
 
+import os
+
 import pytest
 
 from gini.domain import lab_spec as L
@@ -176,6 +178,85 @@ def test_the_original_comes_from_the_images_copy_when_the_tree_is_already_linked
     line = next(ln for ln in script.splitlines() if f"{X.IMAGE_PRISTINE}/kernel/syscall.h" in ln
                 and ln.startswith("if"))
     assert "-L" not in line
+
+
+def _run_link(spec, base):
+    """Run the real link script with the container's three roots moved under `base`."""
+    import subprocess
+    script = (X.link_script(spec)
+              .replace("/opt/xv6-riscv", str(base / "tree"))
+              .replace(X.IMAGE_PRISTINE, str(base / "image"))
+              .replace(X.MOUNT, str(base / "mount")))
+    r = subprocess.run(["sh", "-c", script], capture_output=True, text=True)
+    assert r.returncode == 0, r.stderr
+
+
+@pytest.fixture
+def machine(tmp_path):
+    """A tree and an image copy holding the files lab-one and lab-two touch, plus a build."""
+    import shutil
+    if not shutil.which("sh"):
+        pytest.skip("needs a POSIX shell")
+    base = tmp_path / "box"
+    for root in ("tree", "image"):
+        (base / root / "kernel").mkdir(parents=True)
+        (base / root / "user").mkdir(parents=True)
+        (base / root / "kernel" / "syscall.h").write_text("// as shipped\n")
+        (base / root / "user" / "ls.c").write_text("// ls\n")
+    (base / "tree" / "Makefile").write_text("UPROGS=\\\n\t$U/_ls\\\n\nall:\n")
+    for spec_id, name in (("lab-one", "sysinfo.h"), ("lab-two", "trace.c")):
+        (base / "mount" / spec_id).mkdir(parents=True)
+        (base / "mount" / spec_id / name).write_text("// yours\n")
+    return base
+
+
+def test_switching_assignments_lets_go_of_every_file_the_old_one_owned(two_labs, machine):
+    """A-Lab 01 -> A-Lab 02 left trap.c and kalloc.c linked into A-Lab 01's folder, and Load
+    built the student's old trap.c against A-Lab 02's untouched defs.h. A file the image has
+    goes back to the image's copy; a file the old assignment seeded is removed."""
+    a, b = two_labs
+    (machine / "image" / "kernel" / "trap.c").write_text("// image trap\n")
+    (machine / "tree" / "kernel" / "trap.c").write_text("// image trap\n")
+    (machine / "mount" / a.id / "trap.c").write_text("// lab-one's trap\n")
+    tree = machine / "tree"
+    _run_link(a, machine)
+    (tree / "kernel" / "trap.c").unlink()        # as if lab-one had owned trap.c too
+    (tree / "kernel" / "trap.c").symlink_to(machine / "mount" / a.id / "trap.c")
+    _run_link(b, machine)
+    assert not (tree / "kernel" / "trap.c").is_symlink()
+    assert (tree / "kernel" / "trap.c").read_text() == "// image trap\n"
+    assert not (tree / "kernel" / "sysinfo.h").exists(), "a seeded file never was the image's"
+    assert os.readlink(tree / "kernel" / "syscall.h") == str(machine / "mount" / b.id / "syscall.h")
+
+
+def test_switching_drops_the_old_test_program_and_the_old_build(two_labs, machine):
+    """sysinfotest stayed in UPROGS against a user.h without sysinfo(), and sysproc.d still
+    named the removed sysinfo.h: make stopped with "No rule to make target"."""
+    a, b = two_labs
+    tree = machine / "tree"
+    (machine / "mount" / a.id / "sysinfotest.c").write_text("// yours\n")
+    _run_link(a, machine)
+    (tree / "user" / "sysinfotest.c").symlink_to(machine / "mount" / a.id / "sysinfotest.c")
+    mk = (tree / "Makefile").read_text().replace("UPROGS=\\\n", "UPROGS=\\\n\t$U/_sysinfotest\\\n")
+    (tree / "Makefile").write_text(mk)
+    (tree / "kernel" / "sysproc.d").write_text("kernel/sysproc.o: kernel/sysinfo.h\n")
+    (tree / "kernel" / "sysproc.o").write_bytes(b"")
+    _run_link(b, machine)
+    mk = (tree / "Makefile").read_text()
+    assert "_sysinfotest" not in mk and "_trace" in mk and "$U/_ls" in mk
+    assert not (tree / "kernel" / "sysproc.d").exists()
+    assert not (tree / "kernel" / "sysproc.o").exists()
+
+
+def test_relinking_the_same_assignment_keeps_the_build(two_labs, machine):
+    """Every Run re-links. Only a SWITCH may cost a full build."""
+    _a, b = two_labs
+    tree = machine / "tree"
+    _run_link(b, machine)
+    (tree / "kernel" / "sysproc.o").write_bytes(b"")
+    _run_link(b, machine)
+    assert (tree / "kernel" / "sysproc.o").exists()
+    assert (tree / "Makefile").read_text().count("_trace") == 1
 
 
 def test_old_flat_pristine_copies_are_filed_under_the_assignment_that_used_them(two_labs):
