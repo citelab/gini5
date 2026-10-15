@@ -92,8 +92,17 @@ def lab_dir(machine_name: str, spec_id: str) -> Path:
     return machine_root(machine_name) / sane_name(spec_id)
 
 
-def pristine_path(machine_name: str, name: str) -> Path:
-    return machine_root(machine_name) / PRISTINE_DIR / name
+def pristine_path(machine_name: str, name: str, spec_id: str) -> Path:
+    """The image's copy of one of an assignment's files, kept beside the student's for Revert and
+    for the `edited` badge.
+
+    KEYED BY ASSIGNMENT, `.pristine/<spec_id>/<name>`. It was keyed by machine alone, which held
+    while only one assignment shipped: A-Lab 01 and A-Lab 02 both own syscall.c, and a shared copy
+    taken under A-Lab 01 was the image of THAT day. A-Lab 02's student was then seeded, and
+    reverted, to a syscall.c without the hooks the newer image's kernel relies on -- a starting
+    kernel that did not build. `spec_id` is required, not defaulted, so a caller that forgot it
+    fails loudly instead of reading another assignment's file."""
+    return machine_root(machine_name) / PRISTINE_DIR / sane_name(spec_id) / name
 
 
 # --------------------------------------------------------------------------- #
@@ -166,6 +175,12 @@ def ensure_layout(machine_name: str) -> str:
     is no way to know which one they belong to, so they are left alone — filing a student's work
     under the wrong assignment is not recoverable by them.
     """
+    moved = _move_loose(machine_name)
+    _namespace_pristine(machine_name)          # after the move: it files copies by their owner
+    return moved
+
+
+def _move_loose(machine_name: str) -> str:
     root = machine_root(machine_name)
     try:
         # The tell is a student's file sitting loose in the mount root. In the new layout the
@@ -197,6 +212,40 @@ def ensure_layout(machine_name: str) -> str:
     return spec_id
 
 
+def _namespace_pristine(machine_name: str) -> None:
+    """Move pristine copies from the old flat `.pristine/<name>` into `.pristine/<spec_id>/`.
+
+    A flat copy belongs to whichever assignment seeded a student file of the same name from it,
+    so it is copied to every assignment folder holding that file, then removed. One that no
+    assignment's folder holds is left where it is: deleting it would gain nothing, and guessing
+    an owner could file one lab's original under another."""
+    base = machine_root(machine_name) / PRISTINE_DIR
+    try:
+        flat = [p for p in base.iterdir() if p.is_file()]
+    except OSError:
+        return
+    if not flat:
+        return
+    try:
+        from ..domain import lab_spec as _ls
+        specs = _ls.catalog()
+    except Exception:                              # noqa: BLE001 — a lab must never block a Run
+        return
+    for p in flat:
+        owners = [sane_name(sp.id) for sp in specs
+                  if sp.file(p.name) and (lab_dir(machine_name, sp.id) / p.name).is_file()]
+        try:
+            for sid in owners:
+                dest = base / sid / p.name
+                if not dest.exists():
+                    dest.parent.mkdir(parents=True, exist_ok=True)
+                    shutil.copy2(p, dest)
+            if owners:
+                p.unlink()
+        except OSError:
+            continue
+
+
 # --------------------------------------------------------------------------- #
 # container-side paths
 # --------------------------------------------------------------------------- #
@@ -206,8 +255,15 @@ def mount_dir(spec) -> str:
     return f"{MOUNT}/{sane_name(getattr(spec, 'id', '') or 'lab')}"
 
 
-def pristine_mount() -> str:
-    return f"{MOUNT}/{PRISTINE_DIR}"
+def pristine_mount(spec) -> str:
+    """Where the armed assignment's pristine copies sit INSIDE the container."""
+    return f"{MOUNT}/{PRISTINE_DIR}/{sane_name(getattr(spec, 'id', '') or 'lab')}"
+
+
+#: Where a new image keeps an untouched copy of the patched tree's sources. The link script takes
+#: pristine copies from here when it exists: the tree itself is only trustworthy on the first pass
+#: in a fresh container, because after that its files are symlinks into some assignment's folder.
+IMAGE_PRISTINE = "/opt/xv6-pristine"
 
 
 # --------------------------------------------------------------------------- #
@@ -226,7 +282,8 @@ def seed_host_files(spec, machine_name: str) -> list[str]:
     """
     d = lab_dir(machine_name, getattr(spec, "id", ""))
     d.mkdir(parents=True, exist_ok=True)
-    (machine_root(machine_name) / PRISTINE_DIR).mkdir(parents=True, exist_ok=True)
+    (machine_root(machine_name) / PRISTINE_DIR / sane_name(getattr(spec, "id", ""))).mkdir(
+        parents=True, exist_ok=True)
     written = []
     for f in getattr(spec, "files", ()):
         if not f.seed:
@@ -235,7 +292,7 @@ def seed_host_files(spec, machine_name: str) -> list[str]:
         # carries — the header xv6 lacks and the starter program — are the only ones a student
         # cannot Revert, which is backwards: the starter program is the likeliest thing they
         # break while working out what the call should print.
-        orig = pristine_path(machine_name, f.name)
+        orig = pristine_path(machine_name, f.name, getattr(spec, "id", ""))
         if not orig.exists():
             orig.write_text(f.seed, encoding="utf-8")
         p = d / f.name
@@ -264,7 +321,7 @@ def pristine_reader_for(spec, machine_name: str):
     """The image's untouched copy of each file — what a `kind: edited` check compares against."""
     def read(name):
         try:
-            return pristine_path(machine_name, name).read_text(
+            return pristine_path(machine_name, name, getattr(spec, "id", "")).read_text(
                 encoding="utf-8", errors="replace")
         except OSError:
             return None
@@ -294,7 +351,8 @@ def hashes_for(spec, machine_name: str) -> dict:
     return out
 
 
-def run_test(provider, prog: str, args: str = "") -> tuple[bool, list[str]]:
+def run_test(provider, prog: str, args: str = "",
+             timeout: float = 12.0) -> tuple[bool, list[str]]:
     """Run an assignment's test and return `(ok, what it printed)` — cleaned, capped, recordable.
 
     The cleaning and both caps are **`console_tap`'s, imported rather than reimplemented**. That
@@ -321,7 +379,13 @@ def run_test(provider, prog: str, args: str = "") -> tuple[bool, list[str]]:
     from .console_tap import MAX_LINE, MAX_LINES, clean
     if provider is None or not prog or not hasattr(provider, "run_and_capture"):
         return False, []
-    ok, raw = provider.run_and_capture(prog, args)
+    # An assignment's test can carry its arguments (`sharetest 10 5 1`). The agent takes the
+    # program and its arguments separately and filters the name to [A-Za-z0-9_], so sent whole
+    # it arrived as `sharetest1051`.
+    if " " in prog.strip():
+        prog, _, extra = prog.strip().partition(" ")
+        args = (extra + (" " + args if args else "")).strip()
+    ok, raw = provider.run_and_capture(prog, args, timeout=timeout)
     if not ok:
         return False, []
     cmd = (prog + (" " + args if args else "")).strip()
@@ -354,7 +418,8 @@ def take_reading(spec, machine_name: str, provider, vm=None):
     student for it.
     """
     from ..domain.lab_grade import Reading, parse_report
-    ok, lines = run_test(provider, getattr(spec, "test_prog", ""))
+    ok, lines = run_test(provider, getattr(spec, "test_prog", ""),
+                         timeout=getattr(spec, "test_timeout", 12.0))
     free_pages = procs = runnable = sleeping = ticks = None
     try:
         snap = provider.snapshot()
@@ -414,6 +479,73 @@ def _stir(provider, vm, say=None) -> int | None:
     return None
 
 
+def _table(provider) -> tuple:
+    """GINI's own process table, as lab_grade.ProcRow rows. Empty when the machine did not answer."""
+    from ..domain.lab_grade import ProcRow
+    try:
+        procs = getattr(provider.snapshot(), "procs", None) or []
+    except Exception:                              # noqa: BLE001 — no table is still an answer
+        return ()
+    return tuple(ProcRow(pid=int(p.pid), parent=getattr(p, "parent", None), name=str(p.name),
+                         tickets=getattr(p, "tickets", None), rtime=getattr(p, "rtime", None))
+                 for p in procs)
+
+
+def run_workload(provider, run, say=None):
+    """Perform one LabRun: switch policy, run its command in the foreground, and read GINI's
+    process table `sample_at` seconds in -- while the program's children are still alive, which
+    is the only time their tickets and run time can be seen. Returns a lab_grade.Reading.
+
+    This is run_and_capture's bracket with one addition, the mid-run read, and so it cannot simply
+    call it: that waits for the prompt, by which time sharetest has killed its children. The
+    command is GINI's, from the lab's YAML, never the student's.
+    """
+    import time
+
+    from ..domain.lab_grade import Reading, parse_report
+    from ..domain.xv6 import run_finished, run_output
+    from .console_tap import MAX_LINE, MAX_LINES, clean
+    if run.policy is not None:
+        ok, _ = provider.run_and_capture("policy", str(run.policy), timeout=8.0)
+        if not ok:
+            return Reading()
+    prog, _, args = run.command.strip().partition(" ")
+    _, cursor = provider.console_since(0)
+    if not provider.run(prog, args, foreground=True):
+        return Reading()
+    if say:
+        say(f"running {run.command} under policy {run.policy}… (about "
+            f"{int(run.sample_at) + 8} s)")
+    seen, table = "", ()
+    start = time.monotonic()
+    while time.monotonic() - start < run.timeout:
+        time.sleep(0.5)
+        if not table and time.monotonic() - start >= run.sample_at:
+            table = _table(provider)
+        try:
+            chunk, cursor = provider.console_since(cursor)
+        except Exception:                          # noqa: BLE001 — a dropped read is not a failure
+            break
+        seen += chunk or ""
+        if run_finished(seen):
+            break
+    lines = [ln[:MAX_LINE] for ln in
+             run_output(clean(seen.encode("utf-8", "replace")), run.command)[:MAX_LINES]]
+    return Reading(report=parse_report(lines), table=table)
+
+
+def grade_runs(spec, provider, say=None) -> dict:
+    """Every LabRun the assignment declares, in order: {run name: Reading}."""
+    out = {}
+    for run in getattr(spec, "runs", ()) or ():
+        try:
+            out[run.name] = run_workload(provider, run, say)
+        except Exception as e:                     # noqa: BLE001 — one run must not lose the rest
+            if say:
+                say(f"{run.name}: could not run ({type(e).__name__}: {e})")
+    return out
+
+
 def grade_now(spec, machine_name: str, provider, vm=None, say=None):
     """Measure the assignment's declared metrics against a running kernel. Returns the results.
 
@@ -435,6 +567,11 @@ def grade_now(spec, machine_name: str, provider, vm=None, say=None):
         # attempted and the machine was down, which is a different submission from one where
         # nobody ever checked.
         return _g.grade(spec, _g.Reading(), None, syscall_names(spec, machine_name))
+    if getattr(spec, "runs", ()):
+        # A lab that declares its workloads (A-Lab 02) is measured by running them; the stir and
+        # the two sysinfo-shaped readings mean nothing to it.
+        return _g.grade(spec, _g.Reading(), None, syscall_names(spec, machine_name),
+                        runs=grade_runs(spec, provider, say))
     if say:
         say("reading what your program says…")
     before = take_reading(spec, machine_name, provider, vm)
@@ -572,7 +709,7 @@ def link_script(spec) -> str:
     system is not the lab, there is no pedagogy in `UPROGS`, and a broken line-continuation
     produces an error about nothing the student was thinking about.
     """
-    lab, pristine = mount_dir(spec), pristine_mount()
+    lab, pristine = mount_dir(spec), pristine_mount(spec)
     lines = [
         "set -e",
         "cd /opt/xv6-riscv",
@@ -588,8 +725,13 @@ def link_script(spec) -> str:
         # Order matters: capture the original FIRST, then seed the student's copy from it.
         # Seeding from the tree instead would copy a symlink into the assignment they just
         # left, so switching assignments would carry the old one's edits into the new one.
+        # The original comes from the image's untouched copy when the image has one; an older
+        # image has only the tree, which is honest only while it is not yet a symlink.
+        image = shlex.quote(f"{IMAGE_PRISTINE}/{f.tree}")
         lines += [
-            f"if [ ! -L {tree} ] && [ -f {tree} ] && [ ! -f {orig} ]; then",
+            f"if [ ! -f {orig} ] && [ -f {image} ]; then",
+            f"  cp {image} {orig}",
+            f"elif [ ! -L {tree} ] && [ -f {tree} ] && [ ! -f {orig} ]; then",
             f"  cp {tree} {orig}",
             "fi",
             f"if [ ! -f {mine} ] && [ -f {orig} ]; then cp {orig} {mine}; fi",
@@ -621,7 +763,7 @@ def state_of(spec, machine_name: str, name: str) -> str:
     mine = read_file(machine_name, name, spec_id)
     if mine is None:
         return "missing"
-    orig = pristine_path(machine_name, name)
+    orig = pristine_path(machine_name, name, spec_id)
     try:
         return "edited" if mine != orig.read_text(encoding="utf-8", errors="replace") else "untouched"
     except OSError:
@@ -636,7 +778,7 @@ def revert(spec, machine_name: str, name: str) -> tuple[bool, str]:
     as every other edit.
     """
     spec_id = getattr(spec, "id", "")
-    orig = pristine_path(machine_name, name)
+    orig = pristine_path(machine_name, name, spec_id)
     if not orig.is_file():
         return False, f"no original of {name} yet — press Run once so GINI can take a copy"
     try:

@@ -76,6 +76,42 @@ def regex_once(rel, pattern, repl, marker):
         skipped.append(f"{rel}: anchor for {marker} not found — apply by hand (XV6_BACKEND.md §4)")
 
 
+# Edits a LAB depends on must not fail quietly. regex_once's skip-and-carry-on is right for an
+# optional nicety -- the kernel still builds -- but A-Lab 02 needs its policies file, its syscalls
+# and its run accounting to EXIST: a silently skipped edit here produces a kernel that builds,
+# boots, and cannot run the lab, and nobody finds out until a student does. These record a
+# failure, and the script exits non-zero at the end so the image build stops.
+failed = []
+
+
+def regex_must(rel, pattern, repl, marker):
+    p, src = _read(rel)
+    if src is None:
+        failed.append(f"{rel}: file not found ({marker})")
+        return
+    if marker in src:
+        applied.append(f"{rel}: {marker} already present")
+        return
+    new, n = re.subn(pattern, repl, src, count=1)
+    if n:
+        p.write_text(new)
+        applied.append(f"{rel}: applied {marker}")
+    else:
+        failed.append(f"{rel}: anchor for {marker} not found")
+
+
+def write_must(rel, text):
+    p = ROOT / rel
+    if not p.parent.exists():
+        failed.append(f"{rel}: directory missing")
+        return
+    if p.exists():
+        applied.append(f"{rel}: already present")
+        return
+    p.write_text(text)
+    applied.append(f"{rel}: created")
+
+
 # 1) proc.c — control globals + the policy-aware picker (non-static; unused is fine).
 #    scheduler() is wired to call gini_pick() in edit 1b below, so switching sched_policy
 #    changes scheduling LIVE (no rebuild). RR/priority/lottery ship built-in; students add
@@ -83,9 +119,24 @@ def regex_once(rel, pattern, repl, marker):
 append_once("kernel/proc.c", """
 // GINI-xv6: scheduler control knobs (the Machine Lab bridge writes these live over the serial).
 //   sched_policy: 0=round-robin  1=priority (lower number = higher, with aging)  2=lottery
+//                 3=stride  (the policies themselves are in kernel/sched_policy.c)
 //   sched_quantum: timer ticks per time-slice before preemption.
 int sched_policy = 0;
 int sched_quantum = 1;
+
+// A-Lab 02's names, declared HERE as well as in defs.h. defs.h is a student file in A-Lab 01 and
+// A-Lab 02: a folder keeps the copy it was seeded with, from whatever image was current then, and
+// proc.c -- the image's own copy, in A-Lab 01 -- must still compile against an older defs.h that
+// has never heard of stride. Duplicate prototypes are legal C; a missing one is a -Werror build
+// failure on a machine whose owner changed nothing.
+#ifndef GINI_NSCHEDSH
+#define GINI_NSCHEDSH 3            // policies 0..2 have a shadow; stride (3) has none
+#endif
+struct proc *pick_rr(void);
+struct proc *pick_prio(void);
+struct proc *pick_lottery(void);
+struct proc *pick_stride(void);
+extern uint64 gini_tick_cycles;
 
 // GINI-xv6 SHADOW registry — one entry per shadowable policy. The `pick_*` code below is the
 // (deliberately imperfect) PRIMARY; `pick_*_shadow` (in kernel/shadows/gini_sched.c, the ONE file
@@ -162,65 +213,42 @@ gini_shadow_call(struct gini_shadow *s, void *arg)
 }
 
 // GINI-xv6: choose the next RUNNABLE proc per sched_policy. scheduler() calls this (wired below).
-// If the active policy's shadow is enabled and returns a proc, use it; else fall back to the
-// primary. State is read WITHOUT p->lock (like procdump); the caller re-checks RUNNABLE under the
-// lock before switching, so a stale read only ever costs one wasted pick.
+// The policies themselves live in kernel/sched_policy.c (A-Lab 02: the one file that holds
+// scheduling policy and nothing else); this is only the switch, plus the check that whatever a
+// policy returns is something the scheduler can safely lock and run.
+// State is read WITHOUT p->lock (like procdump); the caller re-checks RUNNABLE under the lock
+// before switching, so a stale read only ever costs one wasted pick.
+int gini_pick_rejects = 0;   // policy answers thrown out (SCHED line; User Code shows it)
+
 struct proc *
 gini_pick(void)
 {
   struct proc *p;
-  static int rr = 0;
-  static uint lseed = 2463534242u;
 
   // SHADOW: run the student's version for the active policy. gini_shadow_call validates the
   // answer (points into proc[], on an entry boundary, RUNNABLE) — a bad pointer is rejected and
-  // counted here rather than panicking in scheduler()'s acquire(&p->lock).
-  {
-    int gpol = (sched_policy >= 0 && sched_policy < GINI_NPOLICY) ? sched_policy : 0;
-    struct proc *sp = (struct proc *)gini_shadow_call(&gini_shadow[gpol], 0);
+  // counted here rather than panicking in scheduler()'s acquire(&p->lock). Only policies 0..2
+  // have shadows: the registry continues with the vm and fs entries, so indexing it with
+  // policy 3 (stride) would call the page-fault shadow from the scheduler.
+  if(sched_policy >= 0 && sched_policy < GINI_NSCHEDSH){
+    struct proc *sp = (struct proc *)gini_shadow_call(&gini_shadow[sched_policy], 0);
     if(sp) return sp;
   }
 
-  if(sched_policy == 1){                  // PRIORITY (lower number = higher) with aging
-    struct proc *best = 0;
-    int best_eff = 0;
-    for(p = proc; p < &proc[NPROC]; p++){
-      if(p->state != RUNNABLE)
-        continue;
-      p->wait_ticks++;                    // aging: the longer it waits, the higher it climbs
-      int eff = p->priority - p->wait_ticks / 8;
-      if(best == 0 || eff < best_eff){ best = p; best_eff = eff; }
-    }
-    if(best){ best->wait_ticks = 0; return best; }
-    return 0;
+  switch(sched_policy){
+  case 1:  p = pick_prio();    break;
+  case 2:  p = pick_lottery(); break;
+  case 3:  p = pick_stride();  break;
+  default: return pick_rr();
   }
-
-  if(sched_policy == 2){                  // LOTTERY — shipped version is DELIBERATELY FLAWED: it
-                                          // picks UNIFORMLY at random and IGNORES p->tickets. The
-                                          // lottery assignment is to weight the draw by tickets.
-    int n = 0;
-    for(p = proc; p < &proc[NPROC]; p++)
-      if(p->state == RUNNABLE)
-        n++;
-    if(n == 0)
-      return 0;
-    lseed ^= lseed << 13; lseed ^= lseed >> 17; lseed ^= lseed << 5;   // xorshift PRNG
-    int win = lseed % n, i = 0;
-    for(p = proc; p < &proc[NPROC]; p++){
-      if(p->state != RUNNABLE)
-        continue;
-      if(i++ == win)                      // uniform: ignores tickets (the bug to fix)
-        return p;
-    }
-    return 0;
+  // The same check the shadows get. A policy is student code that runs on every tick: an answer
+  // outside proc[], between two entries, or not RUNNABLE would be dereferenced by scheduler()'s
+  // acquire() and panic the machine. Reject it, count it, and run round-robin for this one pick.
+  if(p && !gsh_proc_valid(0, p)){
+    gini_pick_rejects++;
+    return pick_rr();
   }
-
-  // default: ROUND-ROBIN (matches stock xv6)
-  for(int i = 0; i < NPROC; i++){
-    p = &proc[(rr + i) % NPROC];
-    if(p->state == RUNNABLE){ rr = (rr + i + 1) % NPROC; return p; }
-  }
-  return 0;
+  return p;
 }
 
 // GINI-xv6: emit the shadow manifest — one line per shadowable function, so the oracle/AI can tell
@@ -321,7 +349,7 @@ regex_once("kernel/proc.c",
 regex_once("kernel/trap.c",
            r'(#include "defs.h"\n)',
            r'\1\n// GINI-xv6: PER-CPU time-slice counter (see the which_dev==2 guards below).\n'
-           r'int gini_qticks[NCPU];\nextern int sched_quantum;\n'
+           r'int gini_qticks[NCPU];\nextern int sched_quantum;\nextern uint64 gini_tick_cycles;\n'
            r'// GINI-xv6: mode-time ticks — sampled at each timer interrupt by privilege source\n'
            r'// (user-entry trap => user, kernel-entry => kernel, or idle when no proc runs). The\n'
            r'// CPU face reads the delta as a user/kernel/idle split, like top\'s us/sy. No CSR\n'
@@ -377,9 +405,9 @@ append_once("kernel/trap.c", _GINI_FAULT.replace("PRINTF", PRINT),
 
 # usertrap(): `if (which_dev == 2)\n    yield();`  (space after `if` in current xv6). Interrupts
 # are off at this point, so cpuid() is safe.
-regex_once("kernel/trap.c",
+regex_must("kernel/trap.c",   # must: A-Lab 02's run accounting (p->rtime) rides on it
            r"if\s*\(which_dev == 2\)\s*\n\s*yield\(\);",
-           "if (which_dev == 2) { gini_ut++; "        # GINI-xv6: this timer tick hit user code
+           "if (which_dev == 2) { gini_ut++; p->rtime++; "   # GINI-xv6: user tick; run accounting
            "if (++gini_qticks[cpuid()] >= sched_quantum) "
            "{ gini_qticks[cpuid()] = 0; yield(); } } // GINI-xv6 quantum",
            "GINI-xv6 quantum")
@@ -643,10 +671,11 @@ regex_once("kernel/trap.c",
 
 # kerneltrap(): `if (which_dev == 2 && myproc() != 0[ && ...])\n    yield();` — trailing
 # `&& myproc()->state == RUNNING` was dropped in current xv6, so match it optionally.
-regex_once("kernel/trap.c",
+regex_must("kernel/trap.c",   # must: A-Lab 02's run accounting (p->rtime) rides on it
            r"if\s*\(which_dev == 2 && myproc\(\) != 0"
            r"(?: && myproc\(\)->state == RUNNING)?\)\s*\n\s*yield\(\);",
-           "if (which_dev == 2) { if (myproc() == 0) gini_it++; else gini_kt++; } "  # GINI modetime
+           "if (which_dev == 2) { if (myproc() == 0) gini_it++; "                     # GINI modetime
+           "else { gini_kt++; myproc()->rtime++; } } "                                # + run accounting
            "// GINI-xv6 modetime\n  "
            "if (which_dev == 2 && myproc() != 0 && (++gini_qticks[cpuid()] >= sched_quantum)) "
            "{ gini_qticks[cpuid()] = 0; yield(); } // GINI-xv6 quantum k",
@@ -654,10 +683,13 @@ regex_once("kernel/trap.c",
 
 # 2b) clockintr() — set the timer TICK to ~0.5s (QEMU virt timebase is 10 MHz -> 5,000,000).
 #     Match the trailing `;` too, so the // comment doesn't swallow the statement terminator.
-regex_once("kernel/trap.c",
+#     The tick length is a variable (gini_tick_cycles, kernel/gini_sys.c) so A-Lab 02's sharetest
+#     can shorten it while it measures: 30 s at 0.5 s is only 60 scheduling decisions, too few
+#     for a lottery's share to settle. Everything else keeps the 0.5 s tick the faces are built on.
+regex_must("kernel/trap.c",
            r"w_stimecmp\(r_time\(\) \+ 1000000\);",
-           "w_stimecmp(r_time() + 5000000); // GINI-xv6: ~0.5s tick",
-           "GINI-xv6: ~0.5s tick")
+           "w_stimecmp(r_time() + gini_tick_cycles); // GINI-xv6: settable tick, ~0.5s by default",
+           "GINI-xv6: settable tick")
 
 # 3) vm.c — vmprint() for the Memory face (non-static; also the 6.1810 lab function).
 #    Uses the kernel's actual print function (printk in current xv6, printf in older).
@@ -1213,7 +1245,8 @@ struct gini_shadow {
   int calls;                             // times the student's code was asked
 };
 extern struct gini_shadow gini_shadow[];
-#define GINI_NPOLICY 3            // shadows 0..2 are the scheduler policies (indexed by sched_policy)
+#define GINI_NPOLICY 4            // policies: 0 rr, 1 priority, 2 lottery, 3 stride
+#define GINI_NSCHEDSH 3           // shadows 0..2 are the scheduler policies that HAVE a shadow
 #define GINI_SH_VMFAULT 3         // vm: lazy/demand page-fault handling
 #define GINI_SH_BGET    4         // fs: buffer-cache eviction (which buffer to recycle)
 #define GINI_SH_BALLOC  5         // fs: disk-block allocation (which free block to hand out)
@@ -1537,8 +1570,9 @@ gini_dump(void)
     PRINTF("%d %s %s %d\\n", p->pid, st, p->name, p->parent ? p->parent->pid : 0);
     // per-proc scheduling fields (priority/tickets/level/aging) — a separate line so the stock
     // procdump parser is untouched; the scheduler face reads these to show policy behaviour.
-    PRINTF("PROC %d pri %d tk %d lv %d wait %d\\n",
-           p->pid, p->priority, p->tickets, p->level, p->wait_ticks);
+    // rt = timer ticks this process has been running for (A-Lab 02's measurement).
+    PRINTF("PROC %d pri %d tk %d lv %d wait %d rt %lu\\n",
+           p->pid, p->priority, p->tickets, p->level, p->wait_ticks, (uint64)p->rtime);
     // per-proc alarm state (the sigalarm lab): period, ticks-since, handler VA, in-handler flag.
     // GINI owns these fields so the dump always compiles; the student writes sigalarm/sigreturn
     // (via the Syscall Builder) that DRIVE them, and this line is the live proof it works.
@@ -1551,12 +1585,17 @@ gini_dump(void)
     if(p->chan)
       PRINTF("WAIT %d %p %s\\n", p->pid, p->chan, gini_chan_name(p->chan));
   }
-  PRINTF("SCHED policy %d quantum %d\\n", sched_policy, sched_quantum);
+  // rejects = policy answers gini_pick() threw out; tick = the timer tick in ms (sharetest
+  // shortens it while it measures).
+  PRINTF("SCHED policy %d quantum %d rejects %d tick %d\\n", sched_policy, sched_quantum,
+         gini_pick_rejects, (int)(gini_tick_cycles / 10000));
   // policy roster (id -> display name) so the UI's selector is DATA-DRIVEN: add a policy in the
   // kernel and it auto-appears in the dropdown with no frontend change. Keep this list in step with
   // gini_shadow[]/gini_pick() when you add a policy (e.g. shortest-job-first).
-  { static char *gpn[] = { "round-robin", "priority", "lottery" };
-    for(int gp = 0; gp < 3; gp++) PRINTF("POLICY %d %s\\n", gp, gpn[gp]); }
+  // gpn[] is sized by its initialiser, not by GINI_NPOLICY: an A-Lab 01 folder's older defs.h
+  // still says 3, and the roster then simply stops at lottery -- as that kernel's policies do.
+  { static char *gpn[] = { "round-robin", "priority", "lottery", "stride" };
+    for(int gp = 0; gp < GINI_NPOLICY && gp < 4; gp++) PRINTF("POLICY %d %s\\n", gp, gpn[gp]); }
   // GINI-xv6: mode-time counters (user/kernel/idle timer ticks) so the CPU face can show the
   // us/sy/idle split, + this hart's control CSRs (trap vector, interrupt-enable config, last
   // trap cause). SIE reads 0 here (we're inside a handler) — the UI leans on `sie` (the enabled
@@ -1794,7 +1833,7 @@ regex_once("kernel/console.c",
            # (§4f4) and the old N×Ctrl-G scheme silently toggled a shadow instead of switching
            # policy (known issue #1). Ctrl-B early-returns before this switch, so a `case` here
            # would be dead.
-           r"  case C('K'): gini_shadow[sched_policy].enabled = !gini_shadow[sched_policy].enabled; break;  // GINI: toggle the current policy's shadow\n"
+           r"  case C('K'): if(sched_policy >= 0 && sched_policy < 3) gini_shadow[sched_policy].enabled = !gini_shadow[sched_policy].enabled; break;  // GINI: toggle the current policy's shadow (0..2 have one; stride does not, and slot 3 is vmfault)\n"
            r"  case C('X'): gini_shadow_reset(); break;  // GINI: clear reject/call counters\n"
            f"  case C('L'): gini_obs_begin(); gini_lockdump(); gini_obs_end(); break;  "
            "// GINI: lock contention (0x1e/0x1f-bracketed)\n"
@@ -3075,9 +3114,336 @@ def add_uprog(name: str, src: str) -> None:
 for _name, _src in _UPROGS.items():
     add_uprog(_name, _src)
 
+# ---------------------------------------------------------------------------------------------
+# 5) A-LAB 02 — FAIR SHARE. What GINI owns so the scheduling assignment can be done and measured.
+#
+#    The student OWNS: syscall.h syscall.c sysproc.c user.h usys.pl proc.h proc.c defs.h and
+#    kernel/sched_policy.c (plus user/sharetest.c, seeded by the lab). Those are real kernel files,
+#    linked into the lab folder by the A-Lab mechanism; the shadow registry is not involved.
+#    GINI OWNS everything here, and keeps it OUT of the student's edit sites:
+#
+#      kernel/sched_policy.c  the policies, shipped in their starting state: round-robin and
+#                             priority working, lottery drawing uniformly, stride a stub that
+#                             runs round-robin (so an unfinished Part C measures badly instead of
+#                             idling the machine). gini_pick() in proc.c switches between them.
+#      p->rtime               timer ticks run, per process, counted on every hart's timer branch
+#                             (NOT inside clockintr's cpuid()==0 guard). The measurement must
+#                             survive the student's mistakes, so they never write it.
+#      kernel/gini_sys.c      GINI's own syscalls -- setpolicy, getrtime, settick -- numbered
+#      kernel/gini_syscall.h  from 64 and dispatched before the stock table, so the student's
+#      user/gini.h            syscall.h still ends at SYS_sync 22 as the handout says, and their
+#      user/gini_usys.S       user.h / usys.pl hold nothing of ours.
+#      STRIDE_C               in param.h, so sysproc.c and sched_policy.c both see it.
+#      user/policy            `policy` / `policy N` at the Keyboard -- the lab's selector.
+#
+#    Every edit here is a regex_must/write_must: a lab that silently lost one cannot be started.
+# ---------------------------------------------------------------------------------------------
+_SCHED_POLICY = """// kernel/sched_policy.c — the scheduling policies, and nothing else.
+//
+// Every policy has the same shape: scan proc[], consider the RUNNABLE processes, and return the
+// one that should run next -- or 0 when nothing is runnable, which makes the scheduler idle until
+// the next interrupt. gini_pick() in proc.c calls the policy chosen with `policy N`:
+//
+//   0  pick_rr       round-robin
+//   1  pick_prio     priority, with aging (a lower number is a higher priority)
+//   2  pick_lottery  lottery
+//   3  pick_stride   stride
+//
+// Whatever a policy returns is checked before it is used: it must point at an entry of proc[],
+// and that process must be RUNNABLE. Anything else is rejected and counted (User Code shows the
+// count), and that one pick falls back to round-robin.
+//
+// Nothing here takes a lock, just like procdump: a process can change state between your scan
+// and the switch. The scheduler re-checks RUNNABLE under p->lock, so a stale read costs one pick.
+//
+// STRIDE_C, 1<<20, is defined in param.h, so every kernel file can use it.
+
+#include "types.h"
+#include "param.h"
+#include "memlayout.h"
+#include "riscv.h"
+#include "spinlock.h"
+#include "proc.h"
+#include "defs.h"
+
+extern struct proc proc[NPROC];
+
+// A xorshift pseudo-random generator: fast, and good enough to draw a lottery with. Seeded from
+// the clock the first time it is used, so two boots do not draw the same lottery.
+uint
+gini_rand(void)
+{
+  static uint seed = 0;
+  if(seed == 0)
+    seed = (uint)r_time() | 1;
+  seed ^= seed << 13;
+  seed ^= seed >> 17;
+  seed ^= seed << 5;
+  return seed;
+}
+
+// ROUND-ROBIN: the first RUNNABLE process after the one picked last time.
+struct proc *
+pick_rr(void)
+{
+  static int next = 0;
+  for(int i = 0; i < NPROC; i++){
+    struct proc *p = &proc[(next + i) % NPROC];
+    if(p->state == RUNNABLE){
+      next = (next + i + 1) % NPROC;
+      return p;
+    }
+  }
+  return 0;
+}
+
+// PRIORITY: the lowest effective priority wins. Every pick a process spends waiting makes it a
+// little more important (aging), so a low-priority process is never starved forever.
+struct proc *
+pick_prio(void)
+{
+  struct proc *p, *best = 0;
+  int best_eff = 0;
+  for(p = proc; p < &proc[NPROC]; p++){
+    if(p->state != RUNNABLE)
+      continue;
+    p->wait_ticks++;
+    int eff = p->priority - p->wait_ticks / 8;
+    if(best == 0 || eff < best_eff){
+      best = p;
+      best_eff = eff;
+    }
+  }
+  if(best)
+    best->wait_ticks = 0;
+  return best;
+}
+
+// LOTTERY: count the entries in the draw, draw one at random, and walk to the winner.
+struct proc *
+pick_lottery(void)
+{
+  struct proc *p;
+  int n = 0;
+
+  for(p = proc; p < &proc[NPROC]; p++)
+    if(p->state == RUNNABLE)
+      n++;
+  if(n == 0)
+    return 0;
+
+  int win = gini_rand() % n, i = 0;
+  for(p = proc; p < &proc[NPROC]; p++){
+    if(p->state != RUNNABLE)
+      continue;
+    if(i++ == win)
+      return p;
+  }
+  return 0;
+}
+
+// STRIDE: not written yet. Until it is, policy 3 runs round-robin.
+struct proc *
+pick_stride(void)
+{
+  return pick_rr();
+}
+"""
+
+_GINI_SYSCALL_H = """// GINI's own system calls -- part of the machine, not of any assignment. They are numbered far
+// above the stock table (which ends at SYS_sync 22) and dispatched before it, so a student adding
+// a call at 23 never meets them. Included by kernel/defs.h and user/gini_usys.S.
+#define GINI_SYS_BASE        64
+#define SYS_gini_setpolicy   64   // setpolicy(n)
+#define SYS_gini_getrtime    65   // getrtime(pid)
+#define SYS_gini_settick     66   // settick(ms)
+"""
+
+_GINI_SYS_C = """// kernel/gini_sys.c — GINI's own system calls (see gini_syscall.h). Not student code.
+//
+//   setpolicy(n)  n < 0: return the current policy. Otherwise switch to it and return the old one,
+//                 or -1 if there is no such policy. What the `policy` command calls; it does not
+//                 need the console control path the Machine Lab uses.
+//   getrtime(pid) timer ticks that process has spent running (p->rtime), or -1 if no such process.
+//                 Read-only: sharetest prints shares from it.
+//   settick(ms)   ms <= 0: return the timer tick length in ms. Otherwise set it (10..1000) and return
+//                 the old one. sharetest shortens the tick while it measures and puts it back.
+
+#include "types.h"
+#include "param.h"
+#include "memlayout.h"
+#include "riscv.h"
+#include "spinlock.h"
+#include "proc.h"
+#include "defs.h"
+#include "gini_syscall.h"   // directly: an older student defs.h does not include it
+
+extern struct proc proc[NPROC];
+extern int sched_policy;
+
+// The timer tick, in QEMU virt timebase cycles (10 MHz): 5,000,000 is ~0.5 s, GINI's tick.
+uint64 gini_tick_cycles = 5000000;
+
+uint64
+gini_syscall(int num)
+{
+  int a;
+  argint(0, &a);
+  switch(num){
+  case SYS_gini_setpolicy: {
+    int old = sched_policy;
+    if(a < 0)
+      return old;
+    if(a >= GINI_NPOLICY)
+      return -1;
+    sched_policy = a;
+    return old;
+  }
+  case SYS_gini_getrtime:
+    for(struct proc *p = proc; p < &proc[NPROC]; p++)
+      if(p->state != UNUSED && p->pid == a)
+        return p->rtime;
+    return -1;
+  case SYS_gini_settick: {
+    int old = (int)(gini_tick_cycles / 10000);
+    if(a <= 0)
+      return old;
+    if(a < 10 || a > 1000)
+      return -1;
+    gini_tick_cycles = (uint64)a * 10000;
+    return old;
+  }
+  }
+  PRINTF("%d %s: unknown GINI sys call %d\\n", myproc()->pid, myproc()->name, num);
+  return -1;
+}
+""".replace("PRINTF", PRINT)
+
+_GINI_USER_H = """// GINI's own system calls -- part of the machine, not of any assignment.
+int setpolicy(int n);   // n < 0: the current policy; else switch, return the old one (-1: no such)
+int getrtime(int pid);  // timer ticks that process has run, or -1
+int settick(int ms);    // ms <= 0: the tick length in ms; else set it (10..1000), return the old one
+"""
+
+_GINI_USYS_S = """# GINI's own system calls (kernel/gini_syscall.h) -- kept out of usys.pl, which is a student file.
+#include "kernel/gini_syscall.h"
+.global setpolicy
+setpolicy:
+ li a7, SYS_gini_setpolicy
+ ecall
+ ret
+.global getrtime
+getrtime:
+ li a7, SYS_gini_getrtime
+ ecall
+ ret
+.global settick
+settick:
+ li a7, SYS_gini_settick
+ ecall
+ ret
+"""
+
+_POLICY_PROG = """#include "kernel/types.h"
+#include "user/user.h"
+#include "user/gini.h"
+
+// policy      print the scheduling policy the kernel is running
+// policy N    switch to policy N, on the running machine, no rebuild
+static char *names[] = { "round-robin", "priority", "lottery", "stride" };
+
+static char *
+name(int n)
+{
+  return (n >= 0 && n < 4) ? names[n] : "?";
+}
+
+int
+main(int argc, char *argv[])
+{
+  if(argc < 2){
+    int n = setpolicy(-1);
+    if(n < 0){
+      // setpolicy is GINI's call, dispatched by a hook in syscall.c. A lab folder whose syscall.c
+      // was seeded from an older image has no hook, and the kernel says "unknown sys call 64".
+      fprintf(2, "policy: this kernel's syscall.c is older than GINI's own system calls; "
+                 "use the Process Scheduler face to change policy\\n");
+      exit(1);
+    }
+    printf("policy %d (%s)\\n", n, name(n));
+    exit(0);
+  }
+  char *a = argv[1];
+  int ok = a[0] != 0;
+  for(char *c = a; *c; c++)
+    if(*c < '0' || *c > '9')
+      ok = 0;
+  int old = ok ? setpolicy(atoi(a)) : -1;
+  if(old < 0){
+    fprintf(2, "policy: %s is not a policy (0=rr 1=priority 2=lottery 3=stride)\\n", a);
+    exit(1);
+  }
+  printf("policy %d (%s), was %d (%s)\\n", atoi(a), name(atoi(a)), old, name(old));
+  exit(0);
+}
+"""
+
+if (ROOT / "kernel").exists():
+    write_must("kernel/sched_policy.c", _SCHED_POLICY)
+    write_must("kernel/gini_syscall.h", _GINI_SYSCALL_H)
+    write_must("kernel/gini_sys.c", _GINI_SYS_C)
+    write_must("user/gini.h", _GINI_USER_H)
+    write_must("user/gini_usys.S", _GINI_USYS_S)
+    for _obj in ("sched_policy.o", "gini_sys.o"):
+        regex_must("Makefile", r"(OBJS = \\\n)", r"\1  $K/" + _obj + r" \\\n",
+                   "$K/" + _obj)
+    # every user program links GINI's stubs too (ULIB), built like usys.o
+    regex_must("Makefile", r"(ULIB = [^\n]*)", r"\1 $U/gini_usys.o", "$U/gini_usys.o")
+    regex_must("Makefile", r"(\$U/usys\.o : \$U/usys\.S\n\t[^\n]*\n)",
+               r"\1\n$U/gini_usys.o : $U/gini_usys.S kernel/gini_syscall.h\n"
+               r"\t$(CC) $(CFLAGS) -c -o $U/gini_usys.o $U/gini_usys.S\n",
+               "$U/gini_usys.o : ")
+
+    regex_must("kernel/param.h", r"\Z",
+               "\n#define STRIDE_C     (1<<20)  // GINI-xv6: stride scheduling's constant (A-Lab 02)\n",
+               "GINI-xv6: stride scheduling's constant")
+    regex_must("kernel/proc.h", r"(char name\[16\];[^\n]*\n)",
+               r"\1  uint64 rtime;              // GINI-xv6: timer ticks run (A-Lab 02 measures this)\n",
+               "GINI-xv6: timer ticks run")
+    regex_must("kernel/proc.c", r"(p->state = USED;\n)",
+               r"\1  p->rtime = 0;  // GINI-xv6 run accounting\n",
+               "GINI-xv6 run accounting")
+    # GINI's calls go first: numbered from 64, they never reach the stock table or the counters.
+    regex_must("kernel/syscall.c", r"(num = p->trapframe->a7;\n)",
+               r"\1  if(num >= GINI_SYS_BASE){ p->trapframe->a0 = gini_syscall(num); return; }"
+               r"  // GINI-xv6 own calls\n",
+               "GINI-xv6 own calls")
+    append_once("kernel/defs.h", """
+// GINI-xv6 A-Lab 02: the policies (kernel/sched_policy.c) and GINI's own syscalls (gini_sys.c)
+#include "gini_syscall.h"
+uint            gini_rand(void);
+struct proc*    pick_rr(void);
+struct proc*    pick_prio(void);
+struct proc*    pick_lottery(void);
+struct proc*    pick_stride(void);
+extern int      gini_pick_rejects;
+extern uint64   gini_tick_cycles;
+uint64          gini_syscall(int);
+""", "GINI-xv6 A-Lab 02: the policies")
+    if "GINI-xv6 A-Lab 02: the policies" not in (ROOT / "kernel" / "defs.h").read_text():
+        failed.append("kernel/defs.h: A-Lab 02 prototypes not added")
+    add_uprog("policy", _POLICY_PROG)
+    if "$U/_policy\\" not in (ROOT / "Makefile").read_text():
+        failed.append("Makefile: _policy not registered")
+
 print("GINI xv6 patch:")
 for a in applied:
     print("  applied:", a)
 for s in skipped:
     print("  SKIPPED:", s)
-# Never fail the build for a skipped invasive edit — the kernel still compiles + boots.
+for f in failed:
+    print("  FAILED:", f)
+# Never fail the build for a skipped invasive edit — the kernel still compiles + boots. A FAILED
+# edit is different: a lab depends on it (see regex_must), so stop the image build here.
+if failed:
+    sys.exit(1)

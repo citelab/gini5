@@ -44,7 +44,23 @@ PROC_H = ("struct proc {\n  int pid;\n  char name[16];   // Process name (debugg
 DEFS_H = "void printk(char*, ...);\nint mappages(pagetable_t, uint64);\n"
 CONSOLE_C = ("void consoleintr(int c){\n  switch(c){\n"
              "  case C('P'):\n    procdump();\n    break;\n  }\n}\n")
-MAKEFILE = "UPROGS=\\\n\t$U/_cat\\\n\t$U/_echo\\\n"
+MAKEFILE = ("OBJS = \\\n  $K/entry.o \\\n\n"
+            "ULIB = $U/ulib.o $U/usys.o $U/printf.o $U/umalloc.o\n\n"
+            "$U/usys.o : $U/usys.S\n\t$(CC) $(CFLAGS) -c -o $U/usys.o $U/usys.S\n\n"
+            "UPROGS=\\\n\t$U/_cat\\\n\t$U/_echo\\\n")
+PARAM_H = "#define NPROC        64  // maximum number of processes\n"
+SYSCALL_C = """void
+syscall(void)
+{
+  int num;
+  struct proc *p = myproc();
+
+  num = p->trapframe->a7;
+  if (num > 0 && num < NELEM(syscalls) && syscalls[num]) {
+    p->trapframe->a0 = syscalls[num]();
+  }
+}
+"""
 
 
 @pytest.mark.skipif(not SCRIPT.exists(), reason="backend/xv6/gini_patch.py not present")
@@ -60,6 +76,8 @@ def test_patcher_applies_and_is_idempotent(tmp_path):
     (k / "console.c").write_text(CONSOLE_C)
     (k / "fs.c").write_text("struct superblock sb;\n")
     (k / "log.c").write_text("struct log log;\n")
+    (k / "param.h").write_text(PARAM_H)
+    (k / "syscall.c").write_text(SYSCALL_C)
     (tmp_path / "Makefile").write_text(MAKEFILE)
 
     def run():
@@ -79,12 +97,14 @@ def test_patcher_applies_and_is_idempotent(tmp_path):
     assert "uint64 gini_ut, gini_kt, gini_it;" in trap
     assert trap.index("uint64 gini_ut, gini_kt, gini_it;") < trap.index("uint64 usertrap(void)")
     assert "gini_ut++;" in trap                              # user-mode timer tick
-    assert "if (myproc() == 0) gini_it++; else gini_kt++;" in trap   # idle vs kernel tick
+    assert "if (myproc() == 0) gini_it++; else { gini_kt++; myproc()->rtime++; }" in trap
+    # idle vs kernel tick -- and a kernel tick is run time for the process it ran on
     # gini_dump emits the counters + this hart's control CSRs (trap vector, interrupt config, cause)
     assert "MODETIME user %lu kernel %lu idle %lu" in proc   # #3: 64-bit, no (int)-wrap drop
     assert "CSR sstatus %p sie %p sip %p stvec %p scause %p sepc %p" in proc
     assert "extern uint64 gini_ut, gini_kt, gini_it;" in proc
-    assert "w_stimecmp(r_time() + 5000000);" in trap    # ~0.5s tick, semicolon intact
+    assert "w_stimecmp(r_time() + gini_tick_cycles);" in trap    # settable tick, semicolon intact
+    assert "extern uint64 gini_tick_cycles;" in trap
     # the counter must be DECLARED before the functions that use it (else C won't compile)
     assert trap.index("int gini_qticks[NCPU];") < trap.index("usertrap")
     vm = (k / "vm.c").read_text()
@@ -229,6 +249,42 @@ def test_patcher_applies_and_is_idempotent(tmp_path):
     assert trap2.count("record the trap into the taxonomy ring") == 1      # usertrap hook once
     assert trap2.count("record kernel-mode traps") == 1                    # kerneltrap hook once
     assert (k / "proc.h").read_text().count("gini_alarm_handler;") == 1    # alarm fields once
+    # A-Lab 02: the policies file, GINI's own syscalls, run accounting -- each exactly once
+    assert (k / "sched_policy.c").exists() and (k / "gini_sys.c").exists()
+    assert (tmp_path / "user" / "gini_usys.S").exists()
+    mk = (tmp_path / "Makefile").read_text()
+    assert mk.count("$K/sched_policy.o") == 1 and mk.count("$K/gini_sys.o") == 1
+    assert mk.count("$U/gini_usys.o : ") == 1 and "umalloc.o $U/gini_usys.o" in mk
+    assert (k / "proc.h").read_text().count("uint64 rtime;") == 1
+    assert trap2.count("p->rtime++") == 1 and trap2.count("myproc()->rtime++") == 1
+    assert (k / "syscall.c").read_text().count("gini_syscall(num)") == 1
+    assert (k / "param.h").read_text().count("STRIDE_C") == 1
+
+
+def _tree(tmp_path, **override):
+    k = tmp_path / "kernel"
+    k.mkdir()
+    (tmp_path / "user").mkdir()
+    files = {"trap.c": TRAP_C, "proc.c": PROC_C, "proc.h": PROC_H, "vm.c": "void kvminit(){}\n",
+             "defs.h": DEFS_H, "console.c": CONSOLE_C, "fs.c": "struct superblock sb;\n",
+             "log.c": "struct log log;\n", "param.h": PARAM_H, "syscall.c": SYSCALL_C}
+    files.update(override)
+    for name, text in files.items():
+        (k / name).write_text(text)
+    (tmp_path / "Makefile").write_text(MAKEFILE)
+    return subprocess.run([sys.executable, str(SCRIPT), str(tmp_path)],
+                          capture_output=True, text=True)
+
+
+@pytest.mark.skipif(not SCRIPT.exists(), reason="backend/xv6/gini_patch.py not present")
+def test_a_lab_edit_whose_anchor_moved_fails_the_build(tmp_path):
+    """Most edits skip a moved anchor and the kernel still builds -- right for an optional
+    nicety. A-Lab 02's are not optional: a kernel without GINI's syscall dispatch builds, boots,
+    and cannot run the lab. So a moved anchor there stops the image build (risk R4)."""
+    r = _tree(tmp_path, **{"syscall.c": SYSCALL_C.replace("num = p->trapframe->a7;",
+                                                          "num = (int)p->trapframe->a7;")})
+    assert r.returncode != 0
+    assert "FAILED: kernel/syscall.c: anchor for GINI-xv6 own calls not found" in r.stdout
 
 
 # -- the upstream kernel is PINNED ------------------------------------------- #

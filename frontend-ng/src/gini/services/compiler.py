@@ -1223,7 +1223,10 @@ class RuntimeCompiler:
             except OSError:
                 pass
             cfg.services.append(ServiceSpec(
-                name=d.name, type_key="xv6", image="gini-xv6:latest",
+                # GINI_XV6_IMAGE: run a locally built image without retagging `latest`, as
+                # GINI_GROUTER_IMAGE does for the router (testing a kernel change end to end).
+                name=d.name, type_key="xv6",
+                image=os.environ.get("GINI_XV6_IMAGE", "gini-xv6:latest"),
                 summary="xv6 teaching kernel (QEMU-RISC-V); in-container agent serves live state.",
                 command=[], env={"XV6_QUANTUM": str(p.get("Timeslice", "1")),
                                  "XV6_CPUS": str(_xv6_harts(d))},   # size stepper -> real harts
@@ -1263,7 +1266,8 @@ class RuntimeCompiler:
             # persist downloaded guest images on the host so each OS is fetched once, not on
             # every Run (an anonymous /zoo/cache volume is discarded when the container recreates).
             # Computed inline (mirrors app.paths.oszoo_cache_dir) to keep the compiler Qt-free.
-            import os
+            # (`os` is the module's own import: a local `import os` here made it a local name
+            # for the WHOLE of compile(), so any earlier use of os raised UnboundLocalError.)
             from pathlib import Path
             _home = Path(os.environ.get("GINI_HOME_DIR") or (Path.home() / ".gini")).expanduser()
             cache = _home / "oszoo-cache"; cache.mkdir(parents=True, exist_ok=True)

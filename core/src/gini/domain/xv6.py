@@ -33,6 +33,7 @@ class Proc:
     tickets: int | None = None    # lottery weight
     level: int | None = None      # MLFQ queue level (student policies)
     wait_ticks: int | None = None  # aging counter (slices spent RUNNABLE)
+    rtime: int | None = None      # timer ticks it has run (A-Lab 02); None on an older kernel
     # What this process is blocked on, when the kernel reports it. "sleeping" says a process is
     # stopped; this says who is going to start it again.
     waiting_on: "WaitOn | None" = None
@@ -150,15 +151,25 @@ def parse_cpu_lines(text: str) -> dict:
 
 
 def parse_sched(text: str) -> dict:
-    """Parse gini_dump's `SCHED policy N quantum N` line — the kernel's ACTUAL scheduler settings
-    (so the UI can show the real quantum/policy and confirm a control took effect)."""
-    m = re.search(r"SCHED\s+policy\s+(\d+)\s+quantum\s+(\d+)", text or "")
-    return {"policy": int(m.group(1)), "quantum": int(m.group(2))} if m else {}
+    """Parse gini_dump's `SCHED policy N quantum N [rejects N tick MS]` line — the kernel's ACTUAL
+    scheduler settings (so the UI can show the real quantum/policy and confirm a control took
+    effect). `rejects` counts policy answers gini_pick() threw out, and `tick` is the timer tick in
+    ms; both are absent on a kernel older than A-Lab 02, and so are their keys."""
+    m = re.search(r"SCHED\s+policy\s+(\d+)\s+quantum\s+(\d+)"
+                  r"(?:\s+rejects\s+(\d+))?(?:\s+tick\s+(\d+))?", text or "")
+    if not m:
+        return {}
+    out = {"policy": int(m.group(1)), "quantum": int(m.group(2))}
+    if m.group(3) is not None:
+        out["rejects"] = int(m.group(3))
+    if m.group(4) is not None:
+        out["tick_ms"] = int(m.group(4))
+    return out
 
 
-# scheduler policy codes must match gini_patch.py's gini_pick() (0=RR, 1=priority, 2=lottery).
-# Custom student policies (MLFQ, stride, …) added via the Scheduler Builder extend this map.
-POLICY_NAMES = {0: "round-robin", 1: "priority", 2: "lottery"}
+# scheduler policy codes must match gini_patch.py's gini_pick() (0=RR, 1=priority, 2=lottery,
+# 3=stride). The kernel's POLICY roster is the source of truth when it is there.
+POLICY_NAMES = {0: "round-robin", 1: "priority", 2: "lottery", 3: "stride"}
 POLICY_IDS = {v: k for k, v in POLICY_NAMES.items()}
 
 
@@ -177,16 +188,21 @@ def parse_policies(text: str) -> dict:
 
 
 _PROC_SCHED_RE = re.compile(
-    r"PROC\s+(\d+)\s+pri\s+(-?\d+)\s+tk\s+(-?\d+)\s+lv\s+(-?\d+)\s+wait\s+(-?\d+)")
+    r"PROC\s+(\d+)\s+pri\s+(-?\d+)\s+tk\s+(-?\d+)\s+lv\s+(-?\d+)\s+wait\s+(-?\d+)"
+    r"(?:\s+rt\s+(\d+))?")
 
 
 def parse_proc_sched(text: str) -> dict:
-    """gini_dump's per-proc `PROC <pid> pri P tk T lv L wait W` lines ->
-    {pid: {"priority":P, "tickets":T, "level":L, "wait_ticks":W}}. Absent on an older build."""
+    """gini_dump's per-proc `PROC <pid> pri P tk T lv L wait W [rt R]` lines ->
+    {pid: {"priority":P, "tickets":T, "level":L, "wait_ticks":W[, "rtime":R]}}. Absent on an older
+    build; `rt` (timer ticks run) arrived with A-Lab 02, so its key is only there when it was."""
     out: dict = {}
     for m in _PROC_SCHED_RE.finditer(text or ""):
-        out[int(m.group(1))] = {"priority": int(m.group(2)), "tickets": int(m.group(3)),
-                                "level": int(m.group(4)), "wait_ticks": int(m.group(5))}
+        row = {"priority": int(m.group(2)), "tickets": int(m.group(3)),
+               "level": int(m.group(4)), "wait_ticks": int(m.group(5))}
+        if m.group(6) is not None:
+            row["rtime"] = int(m.group(6))
+        out[int(m.group(1))] = row
     return out
 
 
@@ -367,6 +383,38 @@ def parse_alarms(text: str) -> dict:
     return out
 
 
+class RtimeShares:
+    """CPU shares from the kernel's own run accounting (`rt`, A-Lab 02), over a recent window.
+
+    The Scheduler face's older share is a sample of which pid was RUNNING at each poll -- two
+    samples a second, so a 10/5/1 split takes most of a minute to show and still wobbles. `rt` is
+    counted on every timer tick by the kernel itself, so the difference between two polls IS the
+    share over that stretch. Kept over the last `window` polls rather than since boot, so a
+    student who changes a process's tickets sees the split move, as the handout promises.
+
+    `update` returns {pid: fraction} or {} when the kernel does not report `rt` (an older image),
+    and the caller falls back to the sampled share.
+    """
+
+    def __init__(self, window: int = 10) -> None:
+        self.window = max(2, int(window))
+        self._seen: list[dict] = []
+
+    def update(self, procs) -> dict:
+        now = {p.pid: p.rtime for p in procs or () if getattr(p, "rtime", None) is not None}
+        if not now:
+            self._seen.clear()
+            return {}
+        self._seen.append(now)
+        del self._seen[:-self.window]
+        old = self._seen[0]
+        delta = {pid: rt - old.get(pid, 0) for pid, rt in now.items() if rt >= old.get(pid, 0)}
+        total = sum(delta.values())
+        if total <= 0:
+            return {}
+        return {pid: d / total for pid, d in delta.items() if d > 0}
+
+
 def apply_proc_sched(procs, text: str) -> list:
     """Set the scheduling fields on each Proc from the `PROC …` lines (no-op if the build omits
     them). Returns the same list for chaining."""
@@ -376,6 +424,7 @@ def apply_proc_sched(procs, text: str) -> list:
         if s:
             p.priority, p.tickets = s["priority"], s["tickets"]
             p.level, p.wait_ticks = s["level"], s["wait_ticks"]
+            p.rtime = s.get("rtime")
     return procs
 
 

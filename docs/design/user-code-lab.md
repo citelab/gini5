@@ -21,7 +21,7 @@ Machine Lab — M1
   └── THIS ASSIGNMENT  ·  one tile: "User Code"
         └── User Code Lab            ← this document
               ├── A-Lab 01 — sysinfo          [armed on M1]
-              ├── A-Lab 02 — trace
+              ├── A-Lab 02 — fair share
               ├── A-Lab 03 — …
               └── A-Lab 04 — …
                     └── the per-lab panel      ← already built (ui/user_code.py)
@@ -40,7 +40,7 @@ navigation of its own.
 ## Arming is per MACHINE
 
 **One A-Lab is armed on a machine at a time.** This is forced by the kernel, not chosen for the
-UI: A-Lab 01 (sysinfo) and A-Lab 02 (trace) both add a system call, so both edit the same five
+UI: A-Lab 01 (sysinfo) and A-Lab 02 (fair share) both add a system call, so both edit the same five
 files —
 
     kernel/syscall.h      kernel/syscall.c      kernel/sysproc.c
@@ -168,18 +168,25 @@ from a tile. (`machine_folder` is gone; the assignment's own id is the folder na
 ```
 ~/.gini/xv6-lab/<machine>/   →   /opt/xv6-lab
                    ├── .armed                  "syscall-sysinfo"
-                   ├── .pristine/              the image's originals, shared
+                   ├── .pristine/<id>/         the image's originals, per assignment
                    ├── syscall-sysinfo/
                    ├── syscall-trace/
                    └── …
 ```
 
-**[changed in build]** `.pristine` is per MACHINE, not per assignment — the design had one inside
-each assignment's folder, and that does not work. After switching, the tree's `syscall.h` is a
-symlink into the assignment just left, so there is no original left to copy from and the newly
-armed folder would start empty and link the tree at a file that does not exist. The image's copy
-of `syscall.h` is the image's copy of `syscall.h`; it does not depend on what is armed, so there
-is one per machine and every assignment seeds from it.
+**[changed in build, then changed back — 2026-10-15]** `.pristine` was first built per MACHINE,
+because per assignment did not work: after switching, the tree's `syscall.h` is a symlink into the
+assignment just left, so there was no original left to copy from.
+
+That held while one assignment shipped and broke with the second. A shared copy is the image *of
+the day it was taken*: A-Lab 01's `syscall.c` was captured under an image without the GINI syscall
+hook and `defs.h` prototypes A-Lab 02's kernel needs, and an A-Lab 02 student on the same machine
+was seeded — and reverted — to it, a starting kernel that did not build. So `.pristine` is per
+assignment again (`.pristine/<spec_id>/<name>`), and the objection is answered at the source: the
+image now keeps an untouched copy of its patched sources at `/opt/xv6-pristine`, and the link
+script captures from there first. The tree is only the fallback, for an older image, and only
+while it is not yet a symlink. `ensure_layout` files the old flat copies under the assignment
+whose folder holds a file of that name.
 
 The link script's order is load-bearing for the same reason: **capture the original, then seed
 the student's copy from it, then link.** Seeding from the tree after it is a symlink would copy

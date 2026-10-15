@@ -34,7 +34,8 @@ def lab(tmp_path, monkeypatch):
     for f in spec.files:
         if not (d / f.name).exists():
             (d / f.name).write_text(f"// as shipped: {f.name}\n")
-        X.pristine_path("M1", f.name).write_text((d / f.name).read_text())
+        X.pristine_path("M1", f.name, spec.id).parent.mkdir(parents=True, exist_ok=True)
+        X.pristine_path("M1", f.name, spec.id).write_text((d / f.name).read_text())
     # then the student edits three of them
     for name, text in (("syscall.h", "#define SYS_sysinfo 23\n"),
                        ("kalloc.c", "uint64 freemem(void){ return 0; }\n"),

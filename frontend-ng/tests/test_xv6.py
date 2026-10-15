@@ -122,8 +122,8 @@ def test_parse_policies_roster():
 
 def test_policy_names_match_kernel_ids():
     from gini.domain.xv6 import POLICY_IDS, POLICY_NAMES, policy_name
-    assert POLICY_NAMES == {0: "round-robin", 1: "priority", 2: "lottery"}
-    assert POLICY_IDS["lottery"] == 2 and policy_name(1) == "priority"
+    assert POLICY_NAMES == {0: "round-robin", 1: "priority", 2: "lottery", 3: "stride"}
+    assert POLICY_IDS["lottery"] == 2 and POLICY_IDS["stride"] == 3 and policy_name(1) == "priority"
     assert policy_name(9) == "policy9"      # a student-added policy id we don't have a name for
 
 

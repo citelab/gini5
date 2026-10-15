@@ -42,7 +42,7 @@ def panel(tmp_path, monkeypatch):
     # so every file starts out genuinely `untouched`.
     for f in spec.files:
         mine = X.lab_dir("M1", spec.id) / f.name
-        orig = X.pristine_path("M1", f.name)
+        orig = X.pristine_path("M1", f.name, spec.id)
         orig.parent.mkdir(parents=True, exist_ok=True)
         orig.write_text(mine.read_text(encoding="utf-8") if mine.exists() else "",
                         encoding="utf-8")
@@ -192,7 +192,7 @@ def test_saying_yes_reverts_that_file_only(panel, monkeypatch):
     _answer(monkeypatch, QMessageBox.StandardButton.Yes)
     w._ask_revert("syscall.h")
     assert (d / "syscall.h").read_text(encoding="utf-8") == \
-        X.pristine_path("M1", "syscall.h").read_text(encoding="utf-8")
+        X.pristine_path("M1", "syscall.h", spec.id).read_text(encoding="utf-8")
     assert (d / "sysproc.c").read_text(encoding="utf-8") == other
 
 

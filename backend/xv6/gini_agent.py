@@ -64,7 +64,7 @@ KERNEL = "/opt/xv6-riscv/kernel/kernel"
 STUB = "localhost:1234"
 SERIAL = ("127.0.0.1", 4444)
 TIMEOUT = 6          # keep gdb calls short so a stuck read can't wedge the stub/UI
-GINI_NPOLICY = 3     # scheduler policies 0..2 (RR/priority/lottery); mirrors defs.h GINI_NPOLICY.
+GINI_NPOLICY = 4     # scheduler policies 0..3 (RR/priority/lottery/stride); mirrors defs.h GINI_NPOLICY.
 #                      Bounds ?policy=N so a bad value clamps instead of arming a partial entry.
 _LOCK = threading.Lock()   # one gdb at a time (defensive; also serialises stub access)
 
@@ -111,11 +111,13 @@ def _safe_args(s: str) -> str:
     /run writes its command into a real shell, so an unfiltered argument string is a command
     injection: `walker 48; rm -rf /` would be obeyed. Several programs are useless without their
     argument though — sgrind's whole lesson is the number K — so the arguments are allowed but
-    reduced to what those programs actually take: lowercase words and numbers, nothing else. No
-    shell metacharacters survive, and there is a length cap so a long string cannot wedge the
+    reduced to what those programs actually take: lowercase words, numbers and a leading-dash
+    flag (A-Lab 02's `sharetest -s 10 5 1`; without the dash it reached xv6 as `s 10 5 1` and
+    sharetest read `s` as a ticket count). A hyphen is not a shell metacharacter, so no
+    shell syntax survives, and there is a length cap so a long string cannot wedge the
     line-buffered console.
     """
-    out = [c for c in s.strip().lower() if c.isalnum() or c == " "]
+    out = [c for c in s.strip().lower() if c.isalnum() or c in " -"]
     return " ".join("".join(out).split())[:32]
 
 

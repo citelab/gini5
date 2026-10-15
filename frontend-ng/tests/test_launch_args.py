@@ -103,6 +103,12 @@ def test_ordinary_arguments_pass_through_unharmed():
     assert f("") == ""
 
 
+def test_a_dash_flag_reaches_the_program():
+    """A-Lab 02's grading runs `sharetest -s 10 5 1`. Stripping the dash turned the flag into a
+    ticket count, `s`, and the sleeper run measured nothing."""
+    assert _safe_args()("-s 10 5 1") == "-s 10 5 1"
+
+
 def test_a_long_argument_cannot_wedge_the_console():
     """The console is line-buffered; an unbounded string is a way to jam it."""
     assert len(_safe_args()("9" * 500)) <= 32

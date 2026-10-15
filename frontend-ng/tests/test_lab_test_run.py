@@ -187,7 +187,11 @@ def _prov(raw, ok=True):
     class _P:
         last_run_error = ""
 
-        def run_and_capture(self, prog, args=""):
+        def __init__(self):
+            self.calls = []
+
+        def run_and_capture(self, prog, args="", timeout=12.0):
+            self.calls.append((prog, args, timeout))
             return ok, raw
     return _P()
 
@@ -335,3 +339,13 @@ def test_a_test_that_would_not_start_is_recorded_too(tmp_path, monkeypatch):
     w._on_test_result(False, [])
     assert len(said) == 1 and said[0][5] is True
     assert "no program called" in w._log.toPlainText()
+
+
+def test_a_test_that_carries_its_arguments_is_sent_as_program_and_arguments():
+    """A-Lab 02's test is `sharetest 10 5 1`. The agent filters the program name to
+    [A-Za-z0-9_], so sent whole it reached the shell as `sharetest1051`."""
+    from gini.services import xv6_lab as X
+    p = _prov("sharetest 10 5 1\nshare:    62 31 6\n$ ")
+    ok, lines = X.run_test(p, "sharetest 10 5 1", timeout=45)
+    assert p.calls == [("sharetest", "10 5 1", 45)]
+    assert ok and lines == ["share:    62 31 6"]

@@ -33,7 +33,7 @@ from .windowing import standalone
 from .worker_host import join_owner, run_off_gui
 
 # scheduler policies the selector offers (must match domain POLICY_NAMES / kernel gini_pick)
-_POLICIES = ["round-robin", "priority", "lottery"]
+_POLICIES = ["round-robin", "priority", "lottery", "stride"]
 
 # long-running programs the launcher offers (must match the agent's PROGRAMS list).
 #
@@ -1209,6 +1209,8 @@ class MachineLab(QDialog):
         # the scheduler flagship: ready queue + CPU share (the per-core memory view lives behind
         # the Memory card on the hub, so it doesn't need a duplicate mini-panel here).
         self._sched_panel = SchedulingPanel(self.theme)
+        from ..domain.xv6 import RtimeShares
+        self._rt_shares = RtimeShares()    # shares from the kernel's `rt`, when it has one
         grid.addWidget(self._panel("Scheduling  ·  ready queue & CPU share", self._sched_panel,
                                    fill=True), 1, 0)
         self._stack_lbl = QLabel(); self._stack_lbl.setAlignment(Qt.AlignTop)
@@ -1799,8 +1801,10 @@ class MachineLab(QDialog):
             cs = cpu_regs[c]
             for row, key in enumerate(self._REG_ROWS):
                 self._reg_tbl.setItem(row, col, QTableWidgetItem(cs.key(key)))
-        # scheduling panel: ready queue + CPU share (share from the aggregate timeline)
-        self._sched_panel.update_view(snap.procs, self.state.timeline.shares())
+        # scheduling panel: ready queue + CPU share. From the kernel's own run accounting when it
+        # reports it (A-Lab 02's `rt`), else from the sampled timeline of who was running.
+        shares = self._rt_shares.update(snap.procs) or self.state.timeline.shares()
+        self._sched_panel.update_view(snap.procs, shares)
         # kernel stack (from gdb on Step; user procs are in user mode during Run)
         step_note = getattr(self.state, "last_step_note", "") if self.live else ""
         if step_note:

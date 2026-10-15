@@ -35,6 +35,13 @@ COPY gini_patch.py /opt/gini_patch.py
 # `make` alone builds only kernel/kernel (the default target); fs.img is a separate target
 # (normally a dep of `make qemu`), so build both explicitly or QEMU can't open the disk.
 RUN cd xv6-riscv && python3 /opt/gini_patch.py . && make kernel/kernel fs.img
+# An untouched copy of the patched sources, for A-Lab pristine copies (Revert, the `edited`
+# badge, seeding a student's folder). The tree itself stops being trustworthy the moment a lab is
+# linked into it -- its files become symlinks into the student's folder -- so arming a second
+# assignment in a running machine had nothing honest to copy from.
+RUN cd xv6-riscv && mkdir -p /opt/xv6-pristine \
+ && find kernel user -type f \( -name '*.c' -o -name '*.h' -o -name '*.S' -o -name '*.pl' \) \
+      -exec cp --parents {} /opt/xv6-pristine/ \;
 # Stash the pristine shadow stub OUTSIDE kernel/shadows/ (which the Load loop bind-mounts over at
 # runtime), so the agent can compute "present" (does the student's file differ from the stub?) and
 # /revert can restore a known-good kernel.

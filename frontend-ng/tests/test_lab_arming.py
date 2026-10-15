@@ -146,20 +146,50 @@ def test_the_original_is_captured_before_the_students_copy_is_seeded(two_labs):
     assignment the student just left into the one they just armed."""
     _a, b = two_labs
     script = X.link_script(b)
-    orig = f"{X.MOUNT}/{X.PRISTINE_DIR}/syscall.h"
+    orig = f"{X.MOUNT}/{X.PRISTINE_DIR}/{b.id}/syscall.h"
     mine = f"{X.MOUNT}/{b.id}/syscall.h"
-    capture = script.index(f"cp kernel/syscall.h {orig}")
+    from_image = script.index(f"cp {X.IMAGE_PRISTINE}/kernel/syscall.h {orig}")
+    from_tree = script.index(f"cp kernel/syscall.h {orig}")
     seed = script.index(f"cp {orig} {mine}")
     link = script.index(f"ln -sf {mine} kernel/syscall.h")
-    assert capture < seed < link, "capture the original, then seed from it, then link"
+    assert from_image < from_tree < seed < link, \
+        "capture the original (the image's copy first), then seed from it, then link"
 
 
-def test_one_pristine_per_machine_shared_by_every_assignment(two_labs):
-    """The image's copy of syscall.h does not depend on what is armed — and per assignment it
-    would not work at all, because after a switch the tree's file is a symlink and there is no
-    original left to copy from."""
-    assert X.pristine_mount() == f"{X.MOUNT}/{X.PRISTINE_DIR}"
-    assert X.pristine_path("M1", "syscall.h").parent.parent == X.machine_root("M1")
+def test_each_assignment_keeps_its_own_pristine(two_labs):
+    """A-Lab 01 and A-Lab 02 both own syscall.c. A shared copy taken under one was the image of
+    that day, and the other was seeded and reverted to it -- a kernel the newer image's code did
+    not build against."""
+    a, b = two_labs
+    assert X.pristine_mount(a) == f"{X.MOUNT}/{X.PRISTINE_DIR}/{a.id}"
+    assert X.pristine_mount(b) != X.pristine_mount(a)
+    assert X.pristine_path("M1", "syscall.h", a.id) != X.pristine_path("M1", "syscall.h", b.id)
+    assert X.pristine_path("M1", "syscall.h", a.id).parent.parent.parent == X.machine_root("M1")
+
+
+def test_the_original_comes_from_the_images_copy_when_the_tree_is_already_linked(two_labs):
+    """The objection to per-assignment copies was that after a switch the tree's file is a
+    symlink and there is no original left to copy from. The image now keeps one, so the capture
+    from it is NOT guarded on the tree being a plain file."""
+    _a, b = two_labs
+    script = X.link_script(b)
+    line = next(ln for ln in script.splitlines() if f"{X.IMAGE_PRISTINE}/kernel/syscall.h" in ln
+                and ln.startswith("if"))
+    assert "-L" not in line
+
+
+def test_old_flat_pristine_copies_are_filed_under_the_assignment_that_used_them(two_labs):
+    a, b = two_labs
+    root = X.machine_root("M1")
+    (root / X.PRISTINE_DIR).mkdir(parents=True, exist_ok=True)
+    (root / X.PRISTINE_DIR / "syscall.h").write_text("// as shipped\n")
+    X.lab_dir("M1", a.id).mkdir(parents=True, exist_ok=True)
+    (X.lab_dir("M1", a.id) / "syscall.h").write_text("#define SYS_sysinfo 23\n")
+    X.ensure_layout("M1")
+    assert X.pristine_path("M1", "syscall.h", a.id).read_text() == "// as shipped\n"
+    assert not X.pristine_path("M1", "syscall.h", b.id).exists(), \
+        "never armed there, so never seeded from it"
+    assert not (root / X.PRISTINE_DIR / "syscall.h").exists()
 
 
 # --------------------------------------------------------------------------- #
@@ -208,8 +238,8 @@ def test_a_pre_hub_folder_moves_down_into_its_assignment(tmp_path, monkeypatch):
     assert X.read_file("M1", "syscall.h", "lab-one") == "#define SYS_sysinfo 23\n"
     # and it stays armed, because they were working on it — a migration should be invisible
     assert X.active_spec("M1").id == "lab-one"
-    # the pristine copy stays where it is: it is per machine, not per assignment
-    assert X.pristine_path("M1", "syscall.h").read_text() == "// as shipped\n"
+    # and its pristine copy is filed under the assignment it belongs to
+    assert X.pristine_path("M1", "syscall.h", "lab-one").read_text() == "// as shipped\n"
 
 
 def test_migrating_is_a_move_and_leaves_nothing_loose(tmp_path, monkeypatch):

@@ -159,21 +159,38 @@ class UserCode(QDialog):
     def _build_files(self, col) -> None:
         t = self.theme.theme
         col.addWidget(self._section("FILES YOU OWN"))
-        for f in getattr(self.spec, "files", ()):
-            row = QFrame(); lay = QHBoxLayout(row); lay.setContentsMargins(8, 2, 8, 2)
-            name = QLabel(f.name)
-            name.setStyleSheet(_scss(f"color:{t.text};font-family:monospace;font-size:12px;"))
-            name.setMinimumWidth(150)
-            where = QLabel(f.tree)
-            where.setStyleSheet(_scss(f"color:{t.faint};font-size:11px;"))
-            state = QLabel("—")
-            state.setStyleSheet(_scss(f"color:{t.muted};font-size:11px;"))
-            state.setMinimumWidth(80)
-            rev = QPushButton("Revert"); rev.setStyleSheet(self._btn_css())
-            rev.clicked.connect(lambda _c=False, n=f.name: self._ask_revert(n))
-            lay.addWidget(name); lay.addWidget(state); lay.addWidget(where, 1); lay.addWidget(rev)
-            self._rows[f.name] = state
-            col.addWidget(row)
+        groups = (self.spec.files_by_part() if hasattr(self.spec, "files_by_part")
+                  else (("", tuple(getattr(self.spec, "files", ()))),))
+        grouped = len(groups) > 1 or (groups and groups[0][0])
+        for part, files in groups:
+            if grouped:
+                # The handout introduces the files part by part, so the list does too. A file
+                # with no part (the measuring program) closes the list rather than opening it.
+                title = self.spec.part_title(part) if part else ""
+                head = QLabel(f"Part {part} — {title}" if part and title
+                              else f"Part {part}" if part else "Also yours")
+                head.setStyleSheet(_scss(f"color:{t.muted};font-size:11px;padding:6px 8px 0 8px;"))
+                col.addWidget(head)
+            for f in files:
+                self._build_file_row(col, f)
+
+    def _build_file_row(self, col, f) -> None:
+        t = self.theme.theme
+        row = QFrame(); lay = QHBoxLayout(row); lay.setContentsMargins(8, 2, 8, 2)
+        name = QLabel(f.name)
+        name.setStyleSheet(_scss(f"color:{t.text};font-family:monospace;font-size:12px;"))
+        name.setMinimumWidth(150)
+        also = getattr(f, "also", "")
+        where = QLabel(f.tree + (f"   · also Part {also}" if also else ""))
+        where.setStyleSheet(_scss(f"color:{t.faint};font-size:11px;"))
+        state = QLabel("—")
+        state.setStyleSheet(_scss(f"color:{t.muted};font-size:11px;"))
+        state.setMinimumWidth(80)
+        rev = QPushButton("Revert"); rev.setStyleSheet(self._btn_css())
+        rev.clicked.connect(lambda _c=False, n=f.name: self._ask_revert(n))
+        lay.addWidget(name); lay.addWidget(state); lay.addWidget(where, 1); lay.addWidget(rev)
+        self._rows[f.name] = state
+        col.addWidget(row)
 
     def _ask_revert(self, name: str) -> None:
         """Revert, but only once the student has said yes.
@@ -305,6 +322,13 @@ class UserCode(QDialog):
         self._progress.setStyleSheet(_scss(f"color:{t.muted};font-size:12px;"))
         bar.addWidget(self._progress); bar.addStretch(1)
         root.addLayout(bar)
+        # The scheduler's verdict on the student's policy (A-Lab 02): every answer it could not
+        # use. A picker that is WRONG rather than slow shows here first -- the machine keeps
+        # running on round-robin, so nothing else on screen looks broken.
+        self._rejects = QLabel("")
+        self._rejects.setStyleSheet(_scss(f"color:{t.accent_for('amber')};font-size:12px;"))
+        self._rejects.setVisible(False)
+        root.addWidget(self._rejects)
         self._log = QPlainTextEdit(); self._log.setReadOnly(True)
         self._log.setMaximumHeight(150)
         self._log.setStyleSheet(
@@ -338,7 +362,8 @@ class UserCode(QDialog):
 
         def work():
             try:
-                ok, out = _lab.run_test(prov, prog)
+                ok, out = _lab.run_test(prov, prog,
+                                        timeout=getattr(self.spec, "test_timeout", 12.0))
             except Exception as e:        # noqa: BLE001 — a test must not take the face down
                 ok, out = False, [f"{type(e).__name__}: {e}"]
             self.test_result.emit(bool(ok), list(out or []))
@@ -439,7 +464,8 @@ class UserCode(QDialog):
         folder = self._dir()
         out = []
         for f in getattr(self.spec, "files", ()) or ():
-            for path in (folder / f.name, _lab.pristine_path(machine, f.name)):
+            for path in (folder / f.name,
+                         _lab.pristine_path(machine, f.name, getattr(self.spec, "id", ""))):
                 try:
                     st = path.stat()
                     out.append((st.st_mtime_ns, st.st_size))
@@ -455,6 +481,18 @@ class UserCode(QDialog):
         if sig != self._seen:
             self._seen = sig
             self.refresh()
+        self._show_rejects()
+
+    def _show_rejects(self) -> None:
+        """The kernel's reject count, as the Machine Lab's own poll last read it -- an attribute,
+        not a read of the kernel: this runs on the GUI thread every second."""
+        n = getattr(self.provider, "kernel_rejects", None) if self.provider is not None else None
+        if not n:
+            self._rejects.setVisible(False)
+            return
+        self._rejects.setText(f"{n} rejected pick{'s' if n != 1 else ''} — your policy returned "
+                              f"something that was not runnable")
+        self._rejects.setVisible(True)
 
     def refresh(self) -> None:
         """Re-read the student's files: states, checklist, progress. Cheap — a few small files."""

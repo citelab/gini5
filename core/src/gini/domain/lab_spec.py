@@ -43,11 +43,18 @@ class LabFile:
     have (`kernel/sysinfo.h`) and for starter programs. Files with no seed are copied from the
     image's pristine copy instead. `uprog` registers a user program in the build, so the student
     never edits the Makefile.
+
+    `part` is the part of the handout that first sends the student to this file, so User Code can
+    list the files the way the handout introduces them; `also` names the later parts that come
+    back to it ("proc.c — Part A, also Part C"). Both optional: a lab that leaves them out gets one
+    flat list, as A-Lab 01 always has.
     """
     name: str
     tree: str
     seed: str = ""
     uprog: str = ""
+    part: str = ""
+    also: str = ""
 
 
 @dataclass(frozen=True)
@@ -75,13 +82,34 @@ class Check:
 
 @dataclass(frozen=True)
 class GradeItem:
-    """One thing measured while the student's code RUNS. Read by the runner, not by this module."""
+    """One thing measured while the student's code RUNS. Read by the runner, not by this module.
+
+    `run` names the workload (a `LabRun`) whose readings the metric compares; empty means the
+    before/after readings A-Lab 01's metrics use. A metric that compares two runs names both,
+    space-separated."""
     id: str
     describe: str
     metric: str
     part: str = ""
     expect: object = None
     tolerance: object = None
+    run: str = ""
+
+
+@dataclass(frozen=True)
+class LabRun:
+    """One workload the grading run performs: switch to `policy` (when set), run `command` in the
+    foreground, and read GINI's process table `sample_at` seconds in, while it is still running.
+
+    Why a workload is declared and not coded: A-Lab 01's grading stirs memory with `alloc` between
+    two readings, and that is right for sysinfo and meaningless for a scheduler. A scheduling lab
+    has to run the same program under two policies and once more with a sleeper, and what it
+    measures -- each child's tickets and run time -- only exists while the program is running."""
+    name: str
+    command: str
+    policy: int | None = None
+    sample_at: float = 25.0
+    timeout: float = 75.0
 
 
 @dataclass(frozen=True)
@@ -95,6 +123,9 @@ class LabSpec:
     #: is captured into the proof. Left empty it is the assignment's first user program, which is
     #: what a single-program lab wants; name it when a lab ships more than one.
     test_program: str = ""
+    #: How long the test may run before its output is taken as it stands. A-Lab 01's sysinfotest
+    #: prints and exits; A-Lab 02's sharetest measures for 30 seconds.
+    test_timeout: float = 12.0
     #: Whether students can arm it yet. A course ships the whole term's tiles from the start so
     #: the shape of it is visible, but an assignment with no files and no checks would arm to an
     #: empty panel and look broken rather than unwritten — so an unreleased one is shown and
@@ -108,6 +139,9 @@ class LabSpec:
     files: tuple[LabFile, ...] = ()
     checks: tuple[Check, ...] = ()
     grade: tuple[GradeItem, ...] = ()
+    #: The workloads the grading run performs, in order (see LabRun). Empty for a lab whose
+    #: metrics only need A-Lab 01's two readings around a stir.
+    runs: tuple[LabRun, ...] = ()
     #: part id -> what that part IS. "A: 0/6" means nothing on its own; the handout calls them
     #: Part A and Part B and the face has to use the same words, or a student is reading two
     #: different documents about one assignment.
@@ -127,6 +161,22 @@ class LabSpec:
                 seen.append(c.part)
         return tuple(seen)
 
+    def run(self, name: str) -> LabRun | None:
+        return next((r for r in self.runs if r.name == name), None)
+
+    def files_by_part(self) -> tuple[tuple[str, tuple[LabFile, ...]], ...]:
+        """The files grouped the way the handout introduces them: [(part, files)], parts in the
+        order their files first appear, then any file with no part under "". One group, "", for a
+        lab that gives its files no parts at all."""
+        order: list[str] = []
+        for f in self.files:
+            if f.part not in order:
+                order.append(f.part)
+        if "" in order:
+            order.remove("")
+            order.append("")
+        return tuple((p, tuple(f for f in self.files if f.part == p)) for p in order)
+
     def uprogs(self) -> tuple[str, ...]:
         return tuple(f.uprog for f in self.files if f.uprog)
 
@@ -145,7 +195,8 @@ class LabSpec:
 def from_dict(d: dict) -> LabSpec:
     d = d or {}
     files = tuple(LabFile(name=str(f.get("name", "")), tree=str(f.get("tree", "")),
-                          seed=str(f.get("seed", "") or ""), uprog=str(f.get("uprog", "") or ""))
+                          seed=str(f.get("seed", "") or ""), uprog=str(f.get("uprog", "") or ""),
+                          part=str(f.get("part", "") or ""), also=str(f.get("also", "") or ""))
                   for f in (d.get("files") or []) if f.get("name") and f.get("tree"))
     checks = tuple(Check(id=str(c.get("id", "")), label=str(c.get("label", "")),
                          file=str(c.get("file", "")), match=str(c.get("match", "") or ""),
@@ -157,14 +208,26 @@ def from_dict(d: dict) -> LabSpec:
     grade = tuple(GradeItem(id=str(g.get("id", "")), describe=str(g.get("describe", "") or ""),
                             metric=str(g.get("metric", "") or ""),
                             part=str(g.get("part", "") or ""),
-                            expect=g.get("expect"), tolerance=g.get("tolerance"))
+                            expect=g.get("expect"), tolerance=g.get("tolerance"),
+                            run=str(g.get("run", "") or ""))
                   for g in (d.get("grade") or []) if g.get("id"))
+    runs = []
+    for name, r in (d.get("runs") or {}).items():
+        r = r or {}
+        if not r.get("command"):
+            continue
+        pol = r.get("policy")
+        runs.append(LabRun(name=str(name), command=str(r["command"]),
+                           policy=None if pol is None else int(pol),
+                           sample_at=float(r.get("sample_at", 25.0)),
+                           timeout=float(r.get("timeout", 75.0))))
     return LabSpec(id=str(d.get("id", "")), title=str(d.get("title", "")),
                    summary=str(d.get("summary", "") or ""), hue=str(d.get("hue", "") or ""),
                    test_program=str(d.get("test_program", "") or ""),
+                   test_timeout=float(d.get("test_timeout", 12.0) or 12.0),
                    released=bool(d.get("released", True)),
                    syscall_number=int(d.get("syscall_number", 0) or 0),
-                   files=files, checks=checks, grade=grade,
+                   files=files, checks=checks, grade=grade, runs=tuple(runs),
                    part_titles={str(k): str(v) for k, v in (d.get("parts") or {}).items()})
 
 

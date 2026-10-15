@@ -55,7 +55,24 @@ _LABELS = {
     "load 30s": "load30",
 }
 
+#: What A-Lab 02's seeded `sharetest.c` prints: one key per line, SEVERAL numbers after it, one
+#: per child in fork order -- `tickets:  10 5 1`, `share 15s: 62 31 6`. A different table from the
+#: one above because the value is a list, and a metric that wants three shares must never be
+#: handed the first of them as if it were the whole answer.
+_LIST_LABELS = {
+    "tickets": "tickets",
+    "rtime": "rtime",
+    "share": "share",
+    "share 5s": "share5",
+    "share 15s": "share15",
+    "share 30s": "share30",
+    "woke 2s": "woke",
+}
+#: single numbers in that report
+_SHARE_LABELS = {"window": "window", "policy": "policy"}
+
 _LINE = re.compile(r"^\s*([A-Za-z][A-Za-z0-9 ]*?)\s*:\s*([0-9]+(?:\.[0-9]+)?)")
+_LIST_LINE = re.compile(r"^\s*([A-Za-z][A-Za-z0-9 ]*?)\s*:((?:\s+-?[0-9]+)+)\s*$")
 
 
 def parse_report(lines) -> dict:
@@ -68,11 +85,17 @@ def parse_report(lines) -> dict:
     """
     out: dict = {}
     for raw in lines or []:
+        lm = _LIST_LINE.match(str(raw))
+        if lm:
+            label = " ".join(lm.group(1).lower().split())
+            if label in _LIST_LABELS:
+                out[_LIST_LABELS[label]] = tuple(float(v) for v in lm.group(2).split())
+                continue
         m = _LINE.match(str(raw))
         if not m:
             continue
         label = " ".join(m.group(1).lower().split())
-        key = _LABELS.get(label)
+        key = _LABELS.get(label) or _SHARE_LABELS.get(label)
         if key is None:
             continue
         try:
@@ -96,9 +119,22 @@ class Reading:
     runnable: int | None = None                  # GINI: of those, RUNNABLE
     sleeping: int | None = None                  # GINI: of those, SLEEPING
     ticks: int | None = None                     # GINI: the kernel's own tick counter
+    #: GINI: the process table read WHILE a lab workload ran -- one ProcRow per process. A-Lab
+    #: 02's tickets and run time only exist while sharetest's children are alive.
+    table: tuple = ()
 
     def said(self, key: str):
         return self.report.get(key)
+
+
+@dataclass(frozen=True)
+class ProcRow:
+    """One process as GINI's dump showed it: who, whose child, and the scheduling numbers."""
+    pid: int
+    parent: int | None
+    name: str
+    tickets: int | None = None
+    rtime: int | None = None
 
 
 @dataclass(frozen=True)
@@ -285,22 +321,257 @@ _METRICS = {
 }
 
 
+# --------------------------------------------------------------------------- #
+# A-Lab 02 — fair share
+#
+# Each of these reads one or two named RUNS (LabRun in lab_spec): sharetest under a policy, with
+# GINI's process table read while its children were alive. Two independent views again -- what
+# sharetest printed, and what the kernel's own dump says about the same three children.
+# --------------------------------------------------------------------------- #
+
+def _family(table) -> tuple[list, list]:
+    """sharetest's children (in fork order) and grandchildren, picked out of a process table.
+
+    The parent is the `sharetest` whose own parent is not one; its children are the rows whose
+    parent it is; their children are the grandchildren. Matching on the name AND the tree, not
+    the name alone, because three generations all carry the same name."""
+    rows = [r for r in table or () if r.name == "sharetest"]
+    pids = {r.pid for r in rows}
+    roots = [r for r in rows if r.parent not in pids]
+    if not roots:
+        return [], []
+    root = min(roots, key=lambda r: r.pid)
+    kids = sorted((r for r in rows if r.parent == root.pid), key=lambda r: r.pid)
+    kid_pids = {r.pid for r in kids}
+    grand = sorted((r for r in rows if r.parent in kid_pids), key=lambda r: r.pid)
+    return kids, grand
+
+
+def _run_reading(item, runs, which: int = 0):
+    names = str(getattr(item, "run", "") or "").replace(",", " ").split()
+    if len(names) <= which:
+        return None, ""
+    name = names[which]
+    return (runs or {}).get(name), name
+
+
+def _ideal(tickets) -> list:
+    total = sum(tickets)
+    return [100.0 * t / total for t in tickets] if total > 0 else []
+
+
+def _m_tickets_visible(item, runs):
+    r, name = _run_reading(item, runs)
+    if r is None:
+        return _missing(item, f"the '{name}' run did not happen")
+    want = r.said("tickets")
+    if not want:
+        return _missing(item, "sharetest did not print the tickets it asked for")
+    kids, _ = _family(r.table)
+    if len(kids) != len(want) or any(k.tickets is None for k in kids):
+        return _missing(item, "GINI did not see sharetest's children while they ran")
+    got = [k.tickets for k in kids]
+    ok = [int(w) for w in want] == got
+    return _verdict(item, ok,
+                    f"sharetest asked for {' '.join(_r(w) for w in want)}; the kernel's tk "
+                    f"column shows {' '.join(str(g) for g in got)}",
+                    asked=list(want), kernel=got)
+
+
+def _m_tickets_inherited(item, runs):
+    r, name = _run_reading(item, runs)
+    if r is None:
+        return _missing(item, f"the '{name}' run did not happen")
+    kids, grand = _family(r.table)
+    if not kids or not grand:
+        return _missing(item, "GINI did not see sharetest's children and grandchildren together")
+    by_pid = {k.pid: k for k in kids}
+    pairs = [(by_pid[g.parent], g) for g in grand if g.parent in by_pid]
+    if any(k.tickets is None or g.tickets is None for k, g in pairs):
+        return _missing(item, "the kernel did not report tickets")
+    if all(k.tickets == 1 for k, _ in pairs):
+        # Every parent at the default: a child at 1 ticket proves nothing about fork.
+        return _missing(item, "every child still holds the default 1 ticket, so inheritance "
+                              "cannot be told apart from the default")
+    bad = [(k, g) for k, g in pairs if g.tickets != k.tickets]
+    detail = ", ".join(f"{k.pid}:{k.tickets}->{g.pid}:{g.tickets}" for k, g in pairs)
+    return _verdict(item, not bad,
+                    "every child forked with its parent's tickets" if not bad
+                    else f"{len(bad)} of {len(pairs)} children forked with different tickets "
+                         f"from their parent ({detail})",
+                    pairs=detail)
+
+
+def _shares(r):
+    """CPU shares of sharetest's children, from the kernel's own run time when GINI saw it, else
+    from what sharetest printed. Returns (shares, source, ticks): `ticks` is how many timer ticks
+    the shares rest on -- for a lottery, the number of draws."""
+    kids, _ = _family(r.table)
+    rts = [k.rtime for k in kids]
+    if len(kids) == 3 and all(v is not None for v in rts) and sum(rts) > 0:
+        tot = sum(rts)
+        return [100.0 * v / tot for v in rts], "kernel", tot
+    rt = r.said("rtime")
+    if rt and sum(rt) > 0:
+        return [100.0 * v / sum(rt) for v in rt], "sharetest", sum(rt)
+    return None, "", 0
+
+
+#: A lottery is a sample. Its share is judged against what a FAIR lottery of the same number of
+#: draws could give: within this many standard deviations, or the YAML's tolerance if that is
+#: wider. 600 draws (the 30 s at 50 ms that sharetest asks for) makes 3 sd about 6 points, inside
+#: the 8 allowed. A loaded host makes fewer: QEMU's guest timer follows the host clock, missed
+#: ticks merge, and a run measured during a full test suite rested on far fewer draws and came out
+#: 9 points off with a correct lottery. Fixed points would fail that student for their laptop.
+LOTTERY_SD = 3.0
+
+
+def _m_share_vs_tickets(item, runs):
+    r, name = _run_reading(item, runs)
+    if r is None:
+        return _missing(item, f"the '{name}' run did not happen")
+    want_pol = item.expect
+    pol = r.said("policy")
+    if want_pol is not None and pol is not None and int(pol) != int(want_pol):
+        return _missing(item, f"the run was under policy {_r(pol)}, not {want_pol}")
+    tickets = r.said("tickets")
+    ideal = _ideal(tickets or ())
+    if not ideal:
+        return _missing(item, "sharetest did not print its tickets")
+    got, src, ticks = _shares(r)
+    if got is None:
+        return _missing(item, "no run time was measured for sharetest's children")
+    off = max(abs(a - b) for a, b in zip(got, ideal))
+    tol = _tol(item, 8)
+    lottery = r.said("policy") is not None and int(r.said("policy")) == 2
+    if lottery and ticks > 0:
+        sd = max(100.0 * (p / 100 * (1 - p / 100) / ticks) ** 0.5 for p in ideal)
+        tol = max(tol, LOTTERY_SD * sd)
+    return _verdict(item, off <= tol,
+                    f"shares {' / '.join(f'{v:.0f}' for v in got)} against tickets "
+                    f"{' / '.join(f'{v:.0f}' for v in ideal)} — worst off by {off:.1f} points "
+                    f"(allowed {tol:.1f}; {src} run time over {int(ticks)} ticks)",
+                    shares=got, ideal=ideal, off_by=off, source=src, ticks=ticks, allowed=tol)
+
+
+def _window_error(r) -> float | None:
+    """Total distance from the ticket shares over sharetest's 5 s, 15 s and 30 s lines."""
+    ideal = _ideal(r.said("tickets") or ())
+    windows = [r.said(k) for k in ("share5", "share15", "share30")]
+    if not ideal or any(not w or len(w) != len(ideal) for w in windows):
+        return None
+    return sum(abs(a - b) for w in windows for a, b in zip(w, ideal))
+
+
+#: How far (points, at 30 s) a policy may be from the ticket shares and still count as following
+#: them for stride_steadier. Ten gold stride runs were 0.5 off every time; the untouched kernel's
+#: round-robin stub is ~29 off.
+STEADY_FOLLOWS = 5.0
+
+
+def _worst_off(r) -> float | None:
+    """How far the run's 30 s shares are from the ticket shares, at worst, in points."""
+    ideal = _ideal(r.said("tickets") or ())
+    final = r.said("share30") or r.said("share")
+    if not ideal or not final or len(final) != len(ideal):
+        return None
+    return max(abs(a - b) for a, b in zip(final, ideal))
+
+
+def _honours_tickets(r) -> bool | None:
+    """Did the run's other two children split the CPU roughly as their tickets say (within a
+    factor of two)? None when that cannot be read. The sleeper's own share is left out: it is
+    exactly what a missing join distorts."""
+    t = r.said("tickets") or ()
+    final = r.said("share30") or r.said("share")
+    if len(t) != 3 or not final or len(final) != 3 or t[2] <= 0 or final[2] <= 0:
+        return None
+    want, got = t[1] / t[2], final[1] / final[2]
+    return want / 2 <= got <= want * 2
+
+
+def _m_share_variance(item, runs):
+    noisy, n1 = _run_reading(item, runs, 0)
+    steady, n2 = _run_reading(item, runs, 1)
+    if noisy is None or steady is None:
+        return _missing(item, f"the '{n1}' and '{n2}' runs did not both happen")
+    e1, e2 = _window_error(noisy), _window_error(steady)
+    if e1 is None or e2 is None:
+        return _missing(item, "sharetest did not print its 5 s / 15 s / 30 s shares for both")
+    # "Steadier" only means something about a policy that keeps the promise at all. Without this,
+    # two kernels that both ignore tickets were ranked by which ignored them slightly less -- and
+    # the untouched kernel, whose stride is a round-robin stub, passed.
+    off = _worst_off(steady)
+    if off is not None and off > STEADY_FOLLOWS:
+        return _verdict(item, False,
+                        f"{n2} is not following the tickets (off by {off:.0f} points at 30 s), so "
+                        f"it cannot be the steadier of the two", error={n1: e1, n2: e2})
+    # Within ROUNDING of exact counts as steady whatever the lottery did. sharetest prints whole
+    # percents, so a perfect stride still strays ~3.5 points across its three windows (62.5
+    # prints as 62); the luckiest of ten measured lotteries strayed 4.5. Ranking the two alone
+    # would one day fail a correct stride because a lottery got lucky.
+    rounding = _tol(item, 6)
+    ok = e2 < e1 or e2 <= rounding
+    return _verdict(item, ok,
+                    f"{n2} strayed {e2:.0f} points from the ticket shares across its three "
+                    f"windows, {n1} {e1:.0f}"
+                    + (" — within rounding of exact" if ok and e2 <= rounding else ""),
+                    error={n1: e1, n2: e2})
+
+
+def _m_wake_share(item, runs):
+    r, name = _run_reading(item, runs)
+    if r is None:
+        return _missing(item, f"the '{name}' run did not happen")
+    woke = r.said("woke")
+    ideal = _ideal(r.said("tickets") or ())
+    if not woke or not ideal:
+        return _missing(item, "sharetest -s did not print the shares after the wake")
+    if sum(woke) <= 0:
+        return _missing(item, "nothing ran in the 2 seconds after the wake")
+    if _honours_tickets(r) is False:
+        # Round-robin gives the waker a third whatever the join does; passing that would mark the
+        # untouched kernel correct. The share metrics say what is wrong with this run.
+        return _missing(item, "this run did not follow the tickets at all, so whether a waking "
+                              "process joins fairly cannot be told — see the share metrics")
+    limit = _tol(item, 1.5) * ideal[0]
+    took = woke[0]
+    return _verdict(item, took <= limit,
+                    f"in the 2 s after waking it took {_r(took)}% of the CPU; its tickets are "
+                    f"worth {ideal[0]:.0f}% (allowed up to {limit:.0f}%)",
+                    took=took, ideal=ideal[0], limit=limit)
+
+
+#: Metrics that read named RUNS rather than A-Lab 01's before/after pair.
+_RUN_METRICS = {
+    "tickets_visible": _m_tickets_visible,
+    "tickets_inherited": _m_tickets_inherited,
+    "share_vs_tickets": _m_share_vs_tickets,
+    "share_variance": _m_share_variance,
+    "wake_share": _m_wake_share,
+}
+
+
 def grade(spec, before: Reading, after: Reading | None = None,
-          syscall_names: dict | None = None) -> tuple[GradeResult, ...]:
+          syscall_names: dict | None = None, runs: dict | None = None) -> tuple[GradeResult, ...]:
     """Measure every metric the assignment declares. One result each, in the spec's own order.
 
     `before` and `after` are two readings with some work in between — something allocating memory
     and making processes runnable — which is what the delta metrics need. With only `before`, the
     metrics that need two come back "not measured" and the rest are still measured.
+
+    `runs` maps a LabRun's name to the Reading taken during it, for metrics that name a run.
     """
     out = []
     for item in getattr(spec, "grade", ()) or ():
+        rfn = _RUN_METRICS.get(item.metric)
         fn = _METRICS.get(item.metric)
-        if fn is None:
+        if fn is None and rfn is None:
             out.append(_missing(item, f"no measurement is implemented for '{item.metric}'"))
             continue
         try:
-            out.append(fn(item, before, after, syscall_names or {}))
+            out.append(rfn(item, runs or {}) if rfn else
+                       fn(item, before, after, syscall_names or {}))
         except Exception as e:                    # noqa: BLE001 — one metric must not lose the rest
             out.append(_missing(item, f"could not be measured: {type(e).__name__}: {e}"))
     return tuple(out)

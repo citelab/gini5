@@ -292,7 +292,7 @@ class _Provider:
         self.before, self.after, self.runs = before, after, runs
         self.reads, self.stirred, self.killed, self.launched = 0, False, [], []
 
-    def run_and_capture(self, prog, args=""):
+    def run_and_capture(self, prog, args="", timeout=12.0):
         self.reads += 1
         return True, (self.before if self.reads == 1 else self.after)
 

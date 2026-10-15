@@ -372,10 +372,10 @@ def test_the_shipped_labs_are_in_course_order():
     assert titles[0].startswith("A-Lab 01")
 
 
-def test_only_the_first_lab_is_released_so_far():
+def test_the_first_two_labs_are_released_so_far():
     """A reminder in test form: filling in a placeholder means dropping its `released` line."""
     live = [s.id for s in L.catalog() if s.released]
-    assert live == ["syscall-sysinfo"], f"newly released: {live}"
+    assert live == ["syscall-sysinfo", "a-lab-02"], f"newly released: {live}"
 
 
 def test_a_placeholder_announces_nothing_about_itself():

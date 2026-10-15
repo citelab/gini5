@@ -185,6 +185,8 @@ class Xv6Bridge:
         self.kernel_quantum = None  # the kernel's ACTUAL sched_quantum (from the SCHED line)
         self.kernel_policy = None   # the kernel's ACTUAL sched_policy id (from the SCHED line)
         self.kernel_policies = {}   # {id: name} roster (POLICY lines) — drives the UI selector
+        # policy answers the kernel threw out (SCHED `rejects`, A-Lab 02); None on an older kernel
+        self.kernel_rejects = None
 
     def snapshot(self) -> Snapshot:
         """The Run/observe read: gini_dump() over the serial gives BOTH the process table AND
@@ -199,6 +201,7 @@ class Xv6Bridge:
         if sched:
             self.kernel_quantum = sched.get("quantum")
             self.kernel_policy = sched.get("policy")
+            self.kernel_rejects = sched.get("rejects")
         roster = parse_policies(txt)                  # {id: name}; drives the UI policy selector
         if roster:
             self.kernel_policies = roster
