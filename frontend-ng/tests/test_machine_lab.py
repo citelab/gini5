@@ -436,6 +436,42 @@ def test_terminal_streams_output_append_only(app):
     term.close()
 
 
+def test_what_is_typed_at_the_terminal_and_what_it_printed_reaches_the_chain(app):
+    """A-Lab 02 and 03 take their measurement at this window, so it must leave evidence."""
+    from gini.ui.peripherals import TerminalView
+    prov, got = _Term(), []
+    prov._log = "booted\n$ "
+    term = TerminalView(None, _theme(app), prov, _Dev(), machine="m1",
+                        record_fn=lambda d, c, o: got.append((d, c, o)))
+    _wait(app, lambda: "booted" in term.view.toPlainText())
+    term.input.setText("sharetest 10 5 1"); term._submit()
+    _wait(app, lambda: bool(prov.sent))
+    prov._log += "pid 4 share 0.62\n$ "              # the kernel's report, then the prompt
+    _wait(app, lambda: bool(got))
+    assert got == [("m1", "sharetest 10 5 1", ["pid 4 share 0.62"])]
+    term.close()
+
+
+def test_what_is_typed_at_the_machine_labs_console_reaches_the_chain(app):
+    from gini.ui.machine_lab import Xv6Console
+
+    class Prov(_Term):
+        def console(self):
+            return self._log
+    prov, got = Prov(), []
+    prov._log = "booted\n$ "
+    con = Xv6Console(None, _theme(app), prov, _Dev(),
+                     record_fn=lambda d, c, o: got.append((d, c, o)))
+    _wait(app, lambda: con._tap.cursor is not None)
+    con.input.setText("policy 2"); con._send()
+    _wait(app, lambda: bool(prov.sent))
+    prov._log += "lottery\n$ "
+    con._refresh()
+    _wait(app, lambda: bool(got))
+    assert got[0][1:] == ("policy 2", ["lottery"])
+    con.close()
+
+
 def test_terminal_history_recall(app):
     from gini.ui.peripherals import TerminalView
     term = TerminalView(None, _theme(app), _Term(), _Dev())

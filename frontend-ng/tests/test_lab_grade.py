@@ -460,6 +460,39 @@ def test_one_bad_result_does_not_lose_the_others(armed):
     assert said == ["A-Lab 01 — sysinfo · odd"]
 
 
+def test_what_each_graded_run_printed_is_recorded_beside_its_metrics():
+    """When a student says "my shares were right, the metric is wrong", the transcript settles
+    it."""
+    from gini.domain import lab_grade as G
+    from gini.domain.lab_spec import LabRun
+    from gini.services import xv6_lab as X
+    said = []
+
+    class _Rec:
+        def note_spawn(self, device, what, action, pid, out, test, run=""):
+            said.append((device, what, out, test, run))
+
+        def note_measure(self, name, result):
+            said.append(("measure", name))
+
+    class _Spec:
+        title = "A-Lab 02"
+        runs = (LabRun("lottery", "sharetest 10 5 1", policy=2),
+                LabRun("sleeper", "sharetest -s 10 5 1", policy=None))
+    res = G.Graded([])
+    res.runs = {"lottery": G.Reading(lines=("pid 4 share 0.62",)), "sleeper": G.Reading()}
+    X.record_grades(_Rec(), _Spec(), res, device="M1")
+    assert said == [("M1", "sharetest 10 5 1 (policy 2)", ["pid 4 share 0.62"], False, "lottery"),
+                    ("M1", "sharetest -s 10 5 1", [], False, "sleeper")]
+
+
+def test_grade_hands_back_the_runs_it_was_given():
+    from gini.domain import lab_grade as G
+    reading = G.Reading(lines=("x",))
+    out = G.grade(type("S", (), {"grade": ()})(), G.Reading(), runs={"r": reading})
+    assert tuple(out) == () and out.runs == {"r": reading}
+
+
 class _Recorder:
     """Enough of a recorder for the strip to draw itself and hand in."""
     def __init__(self, log):

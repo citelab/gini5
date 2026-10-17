@@ -3089,7 +3089,8 @@ class MainWindow(QMainWindow):
                     self.proof_recorder, spec,
                     grade_now(spec, dev.name,
                               ms.provider if live else None,
-                              getattr(ms, "vm", None) if live else None))
+                              getattr(ms, "vm", None) if live else None),
+                    device=dev.name)
             except Exception as e:              # noqa: BLE001 — one machine must not lose the rest
                 self.ctx.bus.log.emit("warn", f"{dev.name}: could not measure the lab ({e})")
 
@@ -4449,7 +4450,10 @@ class MainWindow(QMainWindow):
                          f"Switch it to Real in the Machine Lab, then open {dev.name}.", "info")
             return
         from .peripherals import TerminalView
-        self._peripheral = TerminalView(self, self.theme, ms.provider, dev)
+        from .lab_record import record
+        self._peripheral = TerminalView(
+            self, self.theme, ms.provider, dev, machine=xv6.name,
+            record_fn=lambda d, cmd, out: record(self.proof_recorder, "note_command", d, cmd, out))
         self._peripheral.show(); self._peripheral.raise_()
 
     def _open_machine_lab(self, device_id: str) -> None:

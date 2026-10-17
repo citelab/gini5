@@ -81,6 +81,38 @@ def _wiring(log: list) -> dict | None:
     return None
 
 
+def _checklist(entry) -> list | None:
+    """The structured checklist a Load recorded — `[{id, part, ok}]` — or None for an entry made
+    before builds carried one. See `proof_events.build`."""
+    rows = _d(entry).get("checks")
+    if not isinstance(rows, list):
+        return None
+    return [{"id": str(r.get("id", "")), "part": str(r.get("part", "")),
+             "passed": bool(r.get("ok"))}
+            for r in rows if isinstance(r, dict)]
+
+
+def _wiring_at(entry) -> dict | None:
+    """Wiring progress at one Load: from the structured checklist when the entry has one, else
+    from the prose first line of its log. Preferring the data is the point — a reworded log line
+    then changes nothing for any submission that carries `checks`."""
+    rows = _checklist(entry)
+    if rows is None:
+        return _wiring(_d(entry).get("log"))
+    parts: dict[str, list[int]] = {}
+    for r in rows:
+        if r["part"]:
+            slot = parts.setdefault(r["part"], [0, 0])
+            slot[1] += 1
+            slot[0] += 1 if r["passed"] else 0
+    return {"passed": sum(1 for r in rows if r["passed"]), "total": len(rows), "parts": parts,
+            "checks": rows}
+
+
+#: How many console commands the cooked view lists. The raw log has every one of them.
+RECENT_COMMANDS = 8
+
+
 def cook(entries, title: str = "", answers: list | None = None,
          measurements: list | None = None, sources: list | None = None) -> dict:
     """The cooked view of one submission, as plain data the console renders.
@@ -150,8 +182,7 @@ def cook(entries, title: str = "", answers: list | None = None,
             look.append("The LAST Load failed. The machine kept the previous kernel, so what was "
                         "graded is an earlier build than the code sent.")
         # Wiring at the last Load that recorded it.
-        w = next((_wiring(_d(e).get("log")) for e in reversed(loads)
-                  if _wiring(_d(e).get("log"))), None)
+        w = next((_wiring_at(e) for e in reversed(loads) if _wiring_at(e)), None)
         if w:
             out["wiring"] = w
             short = [f"Part {p} {a}/{b}" for p, (a, b) in sorted(w["parts"].items()) if a < b]
@@ -186,7 +217,33 @@ def cook(entries, title: str = "", answers: list | None = None,
         if not printed:
             look.append(f"The last run of {_d(lt).get('what', 'the test')} printed nothing.")
     elif loads:
-        look.append("The prescribed test was never run from the assignment panel.")
+        typed = sum(1 for e in es if _k(e) == ev.COMMAND)
+        look.append("The prescribed test was never run from the assignment panel"
+                    + (f" — {typed} command(s) were typed at the console instead; see them below."
+                       if typed else "."))
+
+    # -- the workloads a grading run performed, and what each one PRINTED --------------------------
+    # The transcript behind the metrics above. The LAST run of each name, matching the metrics,
+    # which are also the last reading of each.
+    graded: dict[str, dict] = {}
+    for e in es:
+        d = _d(e)
+        if _k(e) == ev.SPAWN and d.get("run"):
+            graded[str(d["run"])] = {"run": str(d["run"]), "what": str(d.get("what", "")),
+                                     "out": list(d.get("out") or []), "t": _t(e)}
+    if graded:
+        out["graded_runs"] = list(graded.values())
+
+    # -- what was typed at a console, and what it printed -----------------------------------------
+    # A-Lab 02 and 03 are driven from the xv6 console, so for them this is where the student's own
+    # measurements are. The most recent few, newest last; the raw log has every one.
+    cmds = [e for e in es if _k(e) == ev.COMMAND]
+    if cmds:
+        out["commands"] = {
+            "count": len(cmds),
+            "recent": [{"on": str(_d(e).get("on", "")), "cmd": str(_d(e).get("cmd", "")),
+                        "out": list(_d(e).get("out") or []), "t": _t(e)}
+                       for e in cmds[-RECENT_COMMANDS:]]}
 
     # -- network labs: the construction and the live checks ---------------------------------------
     kinds: dict[str, int] = {}
@@ -215,4 +272,66 @@ def cook(entries, title: str = "", answers: list | None = None,
         blank = [i + 1 for i, a in enumerate(answers) if not a.get("answered")]
         if blank:
             look.append("Unanswered: question " + ", ".join(map(str, blank)) + ".")
+
+    out["table"] = table(out, measurements)
     return out
+
+
+def preview(entries, questions: list | None = None, title: str = "") -> dict:
+    """The cooked view of a chain that has NOT been handed in yet — what the student sees before
+    they confirm, so "I did the work, honest" becomes something they can check and fix first.
+
+    `cook()` itself, with its inputs read from the chain the way the Teaching Center reads them:
+    the measurement rows from `measure` entries (`activities.measurements`, the kinds `cook` reads)
+    and the answers from `answer` entries paired with the questions the code was given
+    (`activities.answered`, without the key — a student's machine never has it). Those two are a
+    few lines each and are restated rather than moved here, so the server keeps owning its report;
+    a test pins that both sides produce the same counts.
+    """
+    es = list(entries or [])
+    measured = []
+    for e in es:
+        if _k(e) == ev.MEASURE:
+            d = _d(e)
+            measured.append({"kind": "measurement", "name": str(d.get("name", "")),
+                             "ok": bool(d.get("ok")), "pending": bool(d.get("pending")),
+                             "summary": str(d.get("summary", ""))})
+    said: dict[str, list[dict]] = {}
+    for e in es:
+        if _k(e) == ev.ANSWER:
+            said.setdefault(str(_d(e).get("id", "")), []).append(_d(e))
+    answers = []
+    for q in questions or []:
+        qid = str(q.get("id", "") if isinstance(q, dict) else getattr(q, "id", ""))
+        turns = said.get(qid, [])
+        answers.append({"id": qid, "answered": bool(turns),
+                        "given": (turns[-1].get("text", "") if turns else "")})
+    return cook(es, title, answers or None, measured)
+
+
+def table(cooked: dict, measurements: list | None = None) -> dict:
+    """The same facts as ROWS, for marking a class rather than reading one submission.
+
+    One dict per check (`id`, `part`, `passed`), per metric (`id`, `ok`, `pending`, `summary`) and
+    per question (`id`, `answered`, `chars`). The class view and the CSV export both read this, so
+    there is one implementation of "what this submission shows" and not three.
+
+    Nothing is scored. A row is what the chain records; a column of them is still not a mark.
+    """
+    w = cooked.get("wiring") or {}
+    checks = list(w.get("checks") or [])
+    metrics: dict[str, dict] = {}
+    for r in measurements or []:
+        if r.get("kind") != "measurement":
+            continue
+        name = _metric_name(r.get("name", ""))
+        metrics[name] = {"id": name, "ok": bool(r.get("ok")) and not r.get("pending"),
+                         "pending": bool(r.get("pending")), "summary": str(r.get("summary", ""))}
+    questions = [{"id": str(a.get("id", "")), "answered": bool(a.get("answered")),
+                  "chars": len(str(a.get("given") or ""))}
+                 for a in cooked.get("answers") or []]
+    return {"checks": checks,
+            # Per part as well, for a submission whose Loads predate the structured checklist:
+            # the counts are all an older chain can say.
+            "parts": {p: list(v) for p, v in sorted((w.get("parts") or {}).items())},
+            "metrics": list(metrics.values()), "questions": questions}

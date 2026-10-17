@@ -231,3 +231,69 @@ def test_a_chain_the_cooked_view_cannot_read_still_renders_the_report(monkeypatc
     rep = _report(_alab_chain())
     assert "could not build the grader's view" in rep["cooked"]["error"]
     assert rep["narration"].startswith("PROOF OF ACTIVITY")
+
+
+# --------------------------------------------------------------------------- #
+# structured checks, console commands, graded transcripts, and the table
+# --------------------------------------------------------------------------- #
+
+_CHECKS = [{"id": "syscall_number", "part": "A", "ok": True},
+           {"id": "usys_entry", "part": "A", "ok": True},
+           {"id": "copyout", "part": "B", "ok": False}]
+
+
+def test_a_load_with_a_structured_checklist_reports_each_check_by_id():
+    proof = _chain(ev.build("M1", "s", True, {}, ["wiring 2/3 · A 2/2 · B 0/1"], checks=_CHECKS))
+    w = G.cook(proof["entries"])["wiring"]
+    assert (w["passed"], w["total"], w["parts"]) == (2, 3, {"A": [2, 2], "B": [0, 1]})
+    assert [(c["id"], c["passed"]) for c in w["checks"]] == [
+        ("syscall_number", True), ("usys_entry", True), ("copyout", False)]
+
+
+def test_a_reworded_log_line_changes_nothing_when_the_checklist_is_there():
+    proof = _chain(ev.build("M1", "s", True, {}, ["checklist: two of three done"], checks=_CHECKS))
+    c = G.cook(proof["entries"])
+    assert (c["wiring"]["passed"], c["wiring"]["total"]) == (2, 3)
+    assert any("Part B 0/1" in x for x in c["look_at"])
+
+
+def test_each_graded_runs_transcript_is_in_the_cooked_view_the_last_of_each():
+    proof = _chain(
+        ev.build("M1", "s", True, {}, ["wiring 1/1"]),
+        ev.spawn("M1", "sharetest 10 5 1 (policy 2)", out=["old"], run="lottery"),
+        ev.spawn("M1", "sharetest 10 5 1 (policy 2)", out=["pid 4 share 0.62"], run="lottery"),
+        ev.spawn("M1", "sharetest 10 5 1 (policy 3)", out=["pid 4 share 0.63"], run="stride"))
+    runs = {r["run"]: r for r in G.cook(proof["entries"])["graded_runs"]}
+    assert runs["lottery"]["out"] == ["pid 4 share 0.62"]
+    assert runs["stride"]["what"] == "sharetest 10 5 1 (policy 3)"
+
+
+def test_a_graded_run_is_not_mistaken_for_the_students_own_test():
+    proof = _chain(ev.build("M1", "s", True, {}, ["wiring 1/1"]),
+                   ev.spawn("M1", "sharetest 10 5 1", out=["x"], run="lottery"))
+    assert "tests" not in G.cook(proof["entries"])
+
+
+def test_commands_typed_at_the_console_reach_the_cooked_view():
+    proof = _chain(ev.build("M1", "s", True, {}, ["wiring 1/1"]),
+                   ev.command("M1", "policy 2", []),
+                   ev.command("M1", "sharetest 10 5 1", ["pid 4 share 0.62"]))
+    c = G.cook(proof["entries"])
+    assert c["commands"]["count"] == 2
+    assert c["commands"]["recent"][-1]["out"] == ["pid 4 share 0.62"]
+    assert any("2 command(s) were typed at the console" in x for x in c["look_at"])
+
+
+def test_the_table_is_one_row_per_check_metric_and_question(cooked):
+    t = cooked["table"]
+    assert t["parts"] == {"A": [6, 6], "B": [6, 6], "C": [2, 4]}     # an older chain: counts only
+    metrics = {m["id"]: m for m in t["metrics"]}
+    assert metrics["load_responds"]["ok"] is False and metrics["named"]["ok"] is True
+    assert [(q["id"], q["answered"]) for q in t["questions"]] == [("q1", True), ("q2", False)]
+    assert t["questions"][0]["chars"] > 0
+
+
+def test_the_table_scores_nothing():
+    t = G.cook(_alab_chain()["entries"])["table"]
+    flat = json.dumps(t)
+    assert "score" not in flat and "mark" not in flat and "grade" not in flat

@@ -36,13 +36,20 @@ class TerminalView(QDialog):
 
     delta_ready = Signal(str, int)           # (new console text, new cursor)
 
-    def __init__(self, parent, theme: ThemeManager, provider, device=None) -> None:
+    def __init__(self, parent, theme: ThemeManager, provider, device=None,
+                 record_fn=None, machine: str = "") -> None:
         super().__init__(parent)
         # Its own window, not an owned dialog: on Windows an owned dialog gets no
         # taskbar button and Alt+Tab skips it. See ui/windowing.
         standalone(self)
         self.theme = theme
         self.provider = provider
+        # Commands typed here and what they printed go in the proof chain, named after the MACHINE
+        # they ran on rather than this Terminal — see console_tap.Xv6Tap. Fed from this window's
+        # own stream, so it costs no extra reads.
+        from ..services.console_tap import Xv6Tap
+        self._tap = (Xv6Tap(machine or str(getattr(device, "name", "") or "xv6"), record_fn)
+                     if record_fn is not None else None)
         self._cursor = 0                      # console byte offset we've displayed up to
         self._fetching = False               # one console read in flight — never overlap them
         self._history: list[str] = []
@@ -137,6 +144,8 @@ class TerminalView(QDialog):
             return
         if text:
             self._append(text)
+            if self._tap is not None:
+                self._tap.output(text)
 
     def _append(self, text: str):
         sb = self.view.verticalScrollBar()
@@ -165,6 +174,8 @@ class TerminalView(QDialog):
             self._builtin(cmd)                       # handled terminal-side, echoed locally
             return
         # a real xv6 command: xv6's console echoes it back, so it appears in the stream itself
+        if self._tap is not None and cmd:
+            self._tap.typed(cmd)
         self._bg(lambda: self.provider.send_input(cmd + "\n"))
 
     def _builtin(self, cmd: str):
@@ -219,4 +230,6 @@ class TerminalView(QDialog):
 
     def closeEvent(self, e):  # noqa: N802
         self._poll.stop()
+        if self._tap is not None:
+            self._tap.close()
         super().closeEvent(e)

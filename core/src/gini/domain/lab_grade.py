@@ -122,6 +122,10 @@ class Reading:
     #: GINI: the process table read WHILE a lab workload ran -- one ProcRow per process. A-Lab
     #: 02's tickets and run time only exist while sharetest's children are alive.
     table: tuple = ()
+    #: What the workload PRINTED, cleaned and capped, for a run GINI performed (A-Lab 02). The
+    #: report above is parsed from these; they are kept as well because when a student says "my
+    #: shares were right, the metric is wrong", the lines are the only thing that settles it.
+    lines: tuple = ()
 
     def said(self, key: str):
         return self.report.get(key)
@@ -552,6 +556,13 @@ _RUN_METRICS = {
 }
 
 
+class Graded(tuple):
+    """`grade()`'s results — a plain tuple of GradeResults to everything that iterates it — with
+    the runs they were measured from riding along as `.runs` ({run name: Reading}), so the one
+    place that records a grading run can record what each workload printed too."""
+    runs: dict = {}
+
+
 def grade(spec, before: Reading, after: Reading | None = None,
           syscall_names: dict | None = None, runs: dict | None = None) -> tuple[GradeResult, ...]:
     """Measure every metric the assignment declares. One result each, in the spec's own order.
@@ -574,7 +585,9 @@ def grade(spec, before: Reading, after: Reading | None = None,
                        fn(item, before, after, syscall_names or {}))
         except Exception as e:                    # noqa: BLE001 — one metric must not lose the rest
             out.append(_missing(item, f"could not be measured: {type(e).__name__}: {e}"))
-    return tuple(out)
+    graded = Graded(out)
+    graded.runs = dict(runs or {})
+    return graded
 
 
 def tally(results) -> dict:

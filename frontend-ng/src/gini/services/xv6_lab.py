@@ -533,9 +533,12 @@ def run_workload(provider, run, say=None):
         seen += chunk or ""
         if run_finished(seen):
             break
-    lines = [ln[:MAX_LINE] for ln in
-             run_output(clean(seen.encode("utf-8", "replace")), run.command)[:MAX_LINES]]
-    return Reading(report=parse_report(lines), table=table)
+    printed = run_output(clean(seen.encode("utf-8", "replace")), run.command)
+    lines = [ln[:MAX_LINE] for ln in printed[:MAX_LINES]]
+    kept = list(lines)
+    if len(printed) > MAX_LINES:
+        kept.append(f"… {len(printed) - MAX_LINES} more line(s)")     # said, as run_test says it
+    return Reading(report=parse_report(lines), table=table, lines=tuple(kept))
 
 
 def grade_runs(spec, provider, say=None) -> dict:
@@ -596,7 +599,7 @@ def grade_now(spec, machine_name: str, provider, vm=None, say=None):
     return _g.grade(spec, before, after, syscall_names(spec, machine_name))
 
 
-def record_grades(recorder, spec, results) -> None:
+def record_grades(recorder, spec, results, device: str = "") -> None:
     """Put a grading run into the proof chain — one entry per metric, including the unmeasurable.
 
     ONE place, called from the panel's "Check my work" and from the hand-in. Two copies of this
@@ -609,6 +612,16 @@ def record_grades(recorder, spec, results) -> None:
     """
     from ..ui.lab_record import record
     title = getattr(spec, "title", "lab")
+    # What each workload PRINTED, first — one `spawn` per run, marked with the run's name, so
+    # the metrics after it can be checked against the transcript they were computed from.
+    # A run that produced no reading at all still goes in, empty: it was attempted.
+    readings = getattr(results, "runs", None) or {}
+    for run in getattr(spec, "runs", ()) or ():
+        if run.name not in readings:
+            continue
+        what = run.command + (f" (policy {run.policy})" if run.policy is not None else "")
+        record(recorder, "note_spawn", device, what, "launch", None,
+               list(getattr(readings[run.name], "lines", ()) or ()), False, run=run.name)
     for r in results or ():
         record(recorder, "note_measure", f"{title} · {r.id}",
                {"ok": bool(r.ok), "pending": r.ok is None,

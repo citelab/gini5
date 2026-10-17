@@ -39,6 +39,11 @@ from ..services import outbox, tc_submit
 from .worker_host import run_off_gui
 
 
+def _preview_confirm(parent, recorder) -> bool:
+    from .handin_preview import confirm
+    return confirm(parent, recorder)
+
+
 def _ago(seconds: float) -> str:
     """A duration a student can act on. Minutes matter here; seconds do not."""
     m = int(max(0.0, seconds) // 60)
@@ -415,6 +420,12 @@ class ProofStrip(QWidget):
             run_off_gui(self, work)
             return
         self._generating = False
+        # Show what the marker will see while it can still be fixed — generate_proof seals it.
+        if not type(self).confirm_handin(self, self.recorder):
+            self._say("Not handed in. Your work is still being recorded — press Generate when "
+                      "you are ready.", bad=False)
+            self.refresh(keep_hint=True)
+            return
         result = self.recorder.generate_proof()
         if not result.get("ok"):
             self._say(result.get("message", "Could not generate a proof."), bad=True)
@@ -424,6 +435,10 @@ class ProofStrip(QWidget):
         self._say(f"Proof generated · receipt <b>{receipt}</b>", bad=False)
         self.refresh(keep_hint=True)
         self._hand_in(result, receipt)
+
+    #: The hand-in preview (ui/handin_preview). A class attribute so a headless test can answer
+    #: it without a modal dialog that nobody is there to click.
+    confirm_handin = staticmethod(lambda parent, recorder: _preview_confirm(parent, recorder))
 
     #: How many times Generate is REFUSED before the warning becomes a choice. Three is enough
     #: that nobody arrives at a blank by accident and few enough that a student who has run out of

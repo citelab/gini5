@@ -542,7 +542,7 @@ class ProofRecorder:
                                                  before, after)))
 
     def note_spawn(self, device: str, what: str, action: str = "launch",
-                   pid: int | None = None, out=None, test: bool = False) -> None:
+                   pid: int | None = None, out=None, test: bool = False, run: str = "") -> None:
         """A program launched, or a process killed.
 
         `out` is what it printed, when GINI ran it and waited — see `ev.spawn`. `test` marks the
@@ -550,10 +550,11 @@ class ProofRecorder:
         """
         self._guard(lambda: self._record(
             ev.spawn(str(device or ""), str(what or ""), action, pid,
-                     out=list(out) if out is not None else None, test=bool(test))))
+                     out=list(out) if out is not None else None, test=bool(test),
+                     run=str(run or ""))))
 
     def note_build(self, device: str, shadow: str, ok: bool, sources=None,
-                   log=None, action: str = "load") -> None:
+                   log=None, action: str = "load", checks=None) -> None:
         """The student compiled their own kernel code — successes AND failures.
 
         `sources` is `{filename: {"sha256", "lines"}}` as the files stood when the build ran. It
@@ -561,7 +562,8 @@ class ProofRecorder:
         """
         self._guard(lambda: self._record(
             ev.build(str(device or ""), str(shadow or ""), bool(ok), dict(sources or {}),
-                     list(log or []), action)))
+                     list(log or []), action,
+                     list(checks) if checks is not None else None)))
 
     def note_measure(self, name: str, result) -> None:
         """One reading GINI took and stands behind — an A-Lab metric, or anything else measured

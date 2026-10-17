@@ -248,7 +248,7 @@ def tune(device: str, knob: str, before, after) -> tuple[str, dict] | None:
 
 def spawn(device: str, what: str, action: str = "launch",
           pid: int | None = None, out: list[str] | None = None,
-          test: bool = False) -> tuple[str, dict]:
+          test: bool = False, run: str = "") -> tuple[str, dict]:
     """A program started or a process killed on the running kernel.
 
     `alloc 8 &`, `writer`, `grind`, `forktest` — the workloads the OS labs are watched through.
@@ -265,6 +265,10 @@ def spawn(device: str, what: str, action: str = "launch",
     a marker can find the run that is supposed to demonstrate the work without knowing which
     program each assignment names.
 
+    `run` names the grading workload (a `LabRun`) this was, when GINI ran it to take a measurement
+    rather than because the student pressed something. Its output is the transcript behind that
+    run's metrics, kept so a disputed verdict can be checked against what was actually printed.
+
     TRUNCATED, not summarised — the same rule as `command`, and for the same reason: guessing
     which later line mattered would be inventing evidence.
     """
@@ -276,11 +280,14 @@ def spawn(device: str, what: str, action: str = "launch",
         d["out"] = [clip(x, 200) for x in out]
     if test:
         d["test"] = True
+    if run:
+        d["run"] = clip(run, 40)
     return SPAWN, d
 
 
 def build(device: str, shadow: str, ok: bool, sources: dict | None = None,
-          log: list[str] | None = None, action: str = "load") -> tuple[str, dict]:
+          log: list[str] | None = None, action: str = "load",
+          checks: list | None = None) -> tuple[str, dict]:
     """The student compiled their own kernel code. THE assignment, in one entry.
 
     FAILURES ARE RECORDED, with the tail of the compiler's output. A student who fought the
@@ -300,16 +307,27 @@ def build(device: str, shadow: str, ok: bool, sources: dict | None = None,
     than refused. Unlike a topology mismatch — which means the submitted work is not the proven
     work — this only means "what you sent is not what you last compiled", which is a normal thing
     to have done and no grounds for throwing an evening away.
+
+    `checks` is the assignment's wiring checklist as it stood at this build, one `{id, part, ok}`
+    per check. It used to reach a marker only as prose — `wiring 12/16 · A 6/6 · …` in the first
+    log line, parsed back out by a regex — so rewording that line would have silently stopped every
+    newer submission reporting its wiring while the older ones still did. Absent from entries made
+    before it existed; `grader_view` falls back to the log line for those.
     """
     src = {}
     for name, meta in (sources or {}).items():
         meta = meta if isinstance(meta, dict) else {"sha256": meta}
         src[clip(str(name), 64)] = {"sha256": clip(str(meta.get("sha256", "")), 64),
                                     "lines": int(meta.get("lines") or 0)}
-    return BUILD, {"on": clip(device, 64), "shadow": clip(shadow, 40),
-                   "action": "revert" if action == "revert" else "load",
-                   "ok": bool(ok), "sources": src,
-                   "log": [clip(x, 200) for x in (log or [])]}
+    d = {"on": clip(device, 64), "shadow": clip(shadow, 40),
+         "action": "revert" if action == "revert" else "load",
+         "ok": bool(ok), "sources": src,
+         "log": [clip(x, 200) for x in (log or [])]}
+    if checks is not None:
+        d["checks"] = [{"id": clip(str(c.get("id", "")), 64),
+                        "part": clip(str(c.get("part", "")), 8), "ok": bool(c.get("ok"))}
+                       for c in checks if isinstance(c, dict)][:200]
+    return BUILD, d
 
 
 def observe(device: str, kind: str, detail: str, pid: int | None = None) -> tuple[str, dict]:

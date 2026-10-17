@@ -242,9 +242,13 @@ class UserCode(QDialog):
             sources = _lab.hashes_for(self.spec, machine)
         except Exception:                          # noqa: BLE001 — never block a build on this
             sources = {}
+        checks = None
         try:
             res = _ls.evaluate(self.spec, _lab.reader_for(self.spec, machine),
                                _lab.pristine_reader_for(self.spec, machine))
+            # The checklist as DATA, beside the prose line below — see proof_events.build.
+            checks = [{"id": r.check.id, "part": r.check.part or "", "ok": bool(r.passed)}
+                      for r in res]
             p = _ls.progress(res)
             # Per part as well as the total, so the grader's cooked view can say "Part C 2/4"
             # rather than "12/16" — the parts are what the handout and the marking scheme use.
@@ -257,8 +261,10 @@ class UserCode(QDialog):
         tail = [ln for ln in str(log or "").splitlines() if ln.strip()][-6:]
         if done:
             tail = [done, *tail]
+        # The prose line stays for a release, so a Teaching Center whose gini-core predates the
+        # structured `checks` still shows wiring for submissions from this gBuilder.
         record(self._recorder, "note_build", machine,
-               getattr(self.spec, "id", "lab"), bool(ok), sources, tail, action)
+               getattr(self.spec, "id", "lab"), bool(ok), sources, tail, action, checks=checks)
 
     # -- the wiring checklist ------------------------------------------------ #
     def _build_wiring(self, col) -> None:
@@ -426,7 +432,8 @@ class UserCode(QDialog):
             mark = "·" if r.ok is None else ("✓" if r.ok else "✗")
             lines.append(f" {mark}  {r.describe}")
             lines.append(f"      {r.summary}")
-        _lab.record_grades(self._recorder, self.spec, res)
+        _lab.record_grades(self._recorder, self.spec, res,
+                           device=str(getattr(self.device, "name", "") or ""))
         self._log.setPlainText("\n".join(lines))
 
     def _load(self) -> None:
@@ -449,9 +456,17 @@ class UserCode(QDialog):
         self._load_btn.setEnabled(bool(self.live and self.provider is not None))
         self._record_build(ok, log, "load")
         if ok:
-            self._log.setPlainText("Loaded — the machine is running your kernel.\n"
-                                   "Run your program at the Keyboard, then look at the "
-                                   "System Calls Lab.")
+            # Points at the Run button first. It runs the assignment's own test, cleaned and
+            # attributed to the run that printed it — the output a marker looks for. The console
+            # is recorded too now, but as a transcript of whatever was typed. (This used to say
+            # "run your program at the Keyboard", which until the console was tapped was the one
+            # path that recorded nothing at all.)
+            prog = self._test_prog()
+            self._log.setPlainText(
+                "Loaded — the machine is running your kernel.\n"
+                + (f"Press Run {prog} to take a measurement that goes in your record. "
+                   if prog else "")
+                + "Anything you type at the machine's console is recorded too.")
         else:
             self._log.setPlainText(log or "the build failed and said nothing")
         self.refresh()

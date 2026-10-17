@@ -133,3 +133,113 @@ class ConsoleTap:
         """Every finished record, and forget them."""
         out, self._done = self._done, []
         return out
+
+
+class Xv6Tap:
+    """The same "they ran this, and it printed that", for an xv6 machine's serial console.
+
+    Both of gBuilder's windows onto an xv6 console — the Machine Lab's console and the Terminal
+    wired on the canvas — posted each line to `/input` and kept nothing. Every `policy 2`, every
+    `sharetest 10 5 1` and everything the kernel printed back left no trace, and A-Lab 02 and 03
+    drive their whole measurement through exactly those lines. This records them as `command`
+    entries, the kind gBuilder's own Terminal has recorded since the C-Labs; `proof_events.command`
+    explains why that is not a keylogger, and the reasoning carries over unchanged — a container
+    gBuilder started, opened deliberately, while the session is visibly being recorded.
+
+    The keystroke source is gBuilder's own line box, so what is recorded is the line the student
+    submitted, never a reading of the echo. Three things differ from a pty, and each is handled
+    here rather than in `ConsoleTap`, which three lab families rely on as it is:
+
+    * **The stream arrives in polled chunks**, and a chunk can end mid-line. `ConsoleTap.output`
+      splits each chunk on its own, so "shar" | "etest 10 5 1" would be recorded as two lines.
+      Lines are buffered until their newline.
+    * **xv6 echoes the line and prints `$ ` when the program exits.** Neither is the program's
+      output — the same rule as `domain.xv6.run_output`. The echo is the first line after the
+      command; a prompt is dropped wherever it appears, and may arrive glued to the next echo.
+    * **The prompt closes the record.** A pty record closes when the next command starts, which
+      would leave the LAST command of a sitting unrecorded until the window closed — after a
+      student who ran `sharetest` and then pressed Hand in had already sent their proof. The
+      prompt is the moment the program is known to have finished, so the record goes in then.
+
+    Thread-safe: the window's poll and its send both run off the GUI thread.
+    """
+
+    def __init__(self, device: str, record_fn, *, max_lines: int = MAX_LINES) -> None:
+        import threading
+        self.device = device
+        self.record_fn = record_fn
+        self._tap = ConsoleTap(device, max_lines=max_lines)
+        self._lock = threading.RLock()
+        self._buf = ""                       # the line still being printed
+        self._echo = ""                      # the command whose echo has not been seen yet
+        self.cursor: int | None = None       # console offset, when this tap does its own reads
+
+    # -- feeding -------------------------------------------------------------- #
+    def typed(self, line: str) -> None:
+        """The student pressed Enter on `line` in gBuilder's box. Call BEFORE sending it."""
+        with self._lock:
+            rest = self._buf.strip()
+            if rest and rest != "$":
+                self._line(rest)             # the previous program's last, unterminated words
+            self._buf = ""
+            self._tap.key(line.encode("utf-8", "replace") + b"\n")
+            self._echo = line.strip()
+            self._hand_off()
+
+    def output(self, text: str) -> None:
+        """Console text, in order, exactly once each — a stream delta, not a whole tail."""
+        if not text:
+            return
+        with self._lock:
+            self._buf += clean(text.encode("utf-8", "replace"))
+            *done, self._buf = self._buf.split("\n")
+            for line in done:
+                self._line(line)
+            if self._buf.strip() == "$":
+                self._tap.flush()            # back at the prompt: the program has finished
+            self._hand_off()
+
+    def pull(self, provider) -> None:
+        """Read what the console printed since the last pull, for a window that shows a whole tail
+        rather than a stream. The first pull only finds where "now" is: what was on the screen
+        before this window opened belongs to nobody it can name."""
+        if provider is None or not hasattr(provider, "console_since"):
+            return
+        with self._lock:
+            text, nxt = provider.console_since(self.cursor or 0)
+            first, self.cursor = self.cursor is None, int(nxt)
+            if not first:
+                self.output(text or "")
+
+    def close(self) -> None:
+        """The window closed: whatever was still open goes in as it stands."""
+        with self._lock:
+            rest = self._buf.strip()
+            if rest and rest != "$":
+                self._line(rest)
+            self._buf = ""
+            self._tap.flush()
+            self._hand_off()
+
+    # -- inside --------------------------------------------------------------- #
+    def _line(self, line: str) -> None:
+        s = line.strip()
+        if s.startswith("$ "):
+            s = s[2:].strip()                # a prompt the next echo was printed after
+        if not s or s == "$":
+            return
+        if self._echo:
+            echo, self._echo = self._echo, ""
+            if s == echo:
+                return
+        self._tap.output((s + "\n").encode("utf-8"))
+
+    def _hand_off(self) -> None:
+        if self.record_fn is None:
+            self._tap.take()
+            return
+        for rec in self._tap.take():
+            try:
+                self.record_fn(rec["device"], rec["cmd"], rec["out"])
+            except Exception:                # noqa: BLE001 — a console must outlive its recorder
+                pass

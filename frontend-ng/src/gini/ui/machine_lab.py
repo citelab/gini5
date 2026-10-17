@@ -1346,7 +1346,9 @@ class MachineLab(QDialog):
 
     def _open_console(self) -> None:
         if self.live and hasattr(self.state.provider, "console"):
-            self._console = Xv6Console(self, self.theme, self.state.provider, self.device)
+            self._console = Xv6Console(
+                self, self.theme, self.state.provider, self.device,
+                record_fn=lambda dev, cmd, out: self._rec("note_command", dev, cmd, out))
             self._console.show(); self._console.raise_()
         elif self.on_console:
             self.on_console()
@@ -1954,13 +1956,19 @@ class Xv6Console(QDialog):
 
     tail_ready = Signal(str)
 
-    def __init__(self, parent, theme: ThemeManager, provider, device=None) -> None:
+    def __init__(self, parent, theme: ThemeManager, provider, device=None,
+                 record_fn=None) -> None:
         super().__init__(parent)
         # Its own window, not an owned dialog: on Windows an owned dialog gets no
         # taskbar button and Alt+Tab skips it. See ui/windowing.
         standalone(self)
         self.theme = theme
         self.provider = provider
+        # What is typed here, and what the kernel printed back, goes in the proof chain — see
+        # console_tap.Xv6Tap. This window shows a whole tail, so the tap reads its own stream.
+        from ..services.console_tap import Xv6Tap
+        self._tap = (Xv6Tap(str(getattr(device, "name", "") or "xv6"), record_fn)
+                     if record_fn is not None else None)
         t = theme.theme
         self.setWindowTitle(f"xv6 console — {getattr(device, 'name', 'xv6')}")
         self.resize(720, 460)
@@ -2015,12 +2023,20 @@ class Xv6Console(QDialog):
 
     def _refresh(self):
         def work():
+            self._pull()
             try:
                 txt = self.provider.console()
             except Exception:
                 txt = ""
             self.tail_ready.emit(txt or "")
         self._bg(work)
+
+    def _pull(self):
+        if self._tap is not None:
+            try:
+                self._tap.pull(self.provider)
+            except Exception:                # noqa: BLE001 — recording is never load-bearing
+                pass
 
     def _show(self, txt):
         if txt and txt != self.view.toPlainText():
@@ -2033,8 +2049,18 @@ class Xv6Console(QDialog):
     def _send(self):
         line = self.input.text()
         self.input.clear()
-        self._bg(lambda: self.provider.send_input(line + "\n"))
+
+        def work():
+            # Read up to "now" first, so what the LAST command printed is attributed to it and
+            # not to this one.
+            self._pull()
+            if self._tap is not None:
+                self._tap.typed(line)
+            self.provider.send_input(line + "\n")
+        self._bg(work)
 
     def closeEvent(self, e):  # noqa: N802
         self._poll.stop()
+        if self._tap is not None:
+            self._tap.close()
         super().closeEvent(e)
