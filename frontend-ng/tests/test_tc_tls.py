@@ -115,10 +115,8 @@ def tls_server(tmp_path, certs, monkeypatch):
     server._STORE = Store(tmp_path)
     server._ACCTS.ensure_admin()          # ADMIN_PASSWORD is set above, so this creates `boss`
 
-    from http.server import ThreadingHTTPServer
     ctx = server._tls_context(str(cert), str(key))
-    httpd = ThreadingHTTPServer(("127.0.0.1", 0), server.Handler)
-    httpd.socket = ctx.wrap_socket(httpd.socket, server_side=True)
+    httpd = server.TLSServer(("127.0.0.1", 0), server.Handler, ctx)     # exactly as serve() does
     threading.Thread(target=httpd.serve_forever, daemon=True).start()
     url = f"https://127.0.0.1:{httpd.server_address[1]}"
     try:
@@ -197,6 +195,38 @@ def test_signing_in_works_over_https(tls_server):
         headers={"Content-Type": "application/json"}, method="POST")
     with urllib.request.urlopen(req, context=ctx, timeout=10) as r:
         assert json.loads(r.read())["ok"]
+
+
+@needs_openssl
+def test_a_socket_that_never_speaks_holds_nobody_else_up(tls_server):
+    """A browser's preconnect: TCP open, no ClientHello. With the handshake in accept() this froze
+    every other request until it timed out — the Activities tab's lag. See server.TLSServer."""
+    import socket
+    url, cert = tls_server
+    ctx = ssl.create_default_context(cafile=str(cert))
+    port = int(url.rsplit(":", 1)[1])
+    silent = [socket.create_connection(("127.0.0.1", port)) for _ in range(3)]
+    try:
+        time.sleep(0.2)
+        t0 = time.monotonic()
+        with urllib.request.urlopen(url + "/", context=ctx, timeout=5) as r:
+            assert r.status == 200
+        assert time.monotonic() - t0 < 2.0
+    finally:
+        for s in silent:
+            s.close()
+
+
+@needs_openssl
+def test_a_connection_that_hangs_up_mid_handshake_does_not_take_the_server_with_it(tls_server):
+    import socket
+    url, cert = tls_server
+    ctx = ssl.create_default_context(cafile=str(cert))
+    port = int(url.rsplit(":", 1)[1])
+    with socket.create_connection(("127.0.0.1", port)) as s:
+        s.sendall(b"\x16\x03\x01\x00\x05garbage")
+    with urllib.request.urlopen(url + "/", context=ctx, timeout=5) as r:
+        assert r.status == 200
 
 
 @needs_openssl

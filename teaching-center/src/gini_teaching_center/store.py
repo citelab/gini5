@@ -311,7 +311,38 @@ CREATE TABLE IF NOT EXISTS reply_outbox (
   sent   REAL NOT NULL DEFAULT 0,
   error  TEXT NOT NULL DEFAULT ''
 );
+
+-- WHAT THE MARKER DECIDED. A human input stored BESIDE a submission — never computed, and never
+-- in the proof chain: the chain is the student's record of what happened on their machine, and a
+-- marker's judgement is not a thing that happened there.
+--
+-- Append-only, like answers in the chain: an edit is a new row and the latest row is the mark.
+-- A mark that changed after a student queried it is exactly the history worth keeping.
+-- `mark` is TEXT on purpose — "7/10", "B+", "redo" and "8" are all marks somebody uses, and the
+-- export writes it exactly as typed for the gradebook to read.
+CREATE TABLE IF NOT EXISTS submission_mark (
+  id       INTEGER PRIMARY KEY AUTOINCREMENT,
+  receipt  TEXT NOT NULL,
+  mark     TEXT NOT NULL DEFAULT '',
+  comment  TEXT NOT NULL DEFAULT '',
+  marker   TEXT NOT NULL DEFAULT '',
+  ts       REAL NOT NULL DEFAULT 0
+);
+
+-- The class view's row for one submission, computed once. A submission never changes after it
+-- lands, so reading every proof (hundreds of KB each) to rebuild a table of thirty rows on every
+-- click would be the Activities-tab lag all over again. `ver` is the gini-core that computed it:
+-- a newer reading of the chain recomputes rather than serving a stale shape.
+CREATE TABLE IF NOT EXISTS submission_summary (
+  receipt  TEXT PRIMARY KEY,
+  ver      TEXT NOT NULL DEFAULT '',
+  body     TEXT NOT NULL DEFAULT ''
+);
 """
+
+# What a submission LIST carries: everything but `data`. See Store.course_submissions.
+_LIST_COLS = ("id", "code", "receipt", "activity", "artifact_hash", "ts", "started", "finished",
+              "verdict", "late", "student_id", "claimed_at", "draft")
 
 _INDEXES = """
 -- Created AFTER the column migration: an index over a column a v0 table does not have
@@ -322,6 +353,7 @@ CREATE INDEX IF NOT EXISTS ix_activity_sub_act ON activity_submission(activity);
 CREATE INDEX IF NOT EXISTS ix_activity_sub_artifact ON activity_submission(artifact_hash);
 CREATE INDEX IF NOT EXISTS ix_material_course ON material(course, uploaded);
 CREATE INDEX IF NOT EXISTS ix_claim_receipt ON claim_attempt(receipt, ts);
+CREATE INDEX IF NOT EXISTS ix_mark_receipt ON submission_mark(receipt, id);
 CREATE INDEX IF NOT EXISTS ix_ref_section ON reference_section(ref, ord);
 CREATE INDEX IF NOT EXISTS ix_ref_figure ON reference_figure(section, ord);
 
@@ -564,6 +596,10 @@ class Store:
         with self.lock:
             return [dict(r) for r in self.db.execute(sql, args).fetchall()]
 
+    def _count(self, sql: str, args=()) -> int:
+        with self.lock:
+            return int(self.db.execute(sql, args).fetchone()[0] or 0)
+
     def _one(self, sql: str, args=()) -> dict | None:
         rows = self._all(sql, args)
         return rows[0] if rows else None
@@ -702,6 +738,10 @@ class Store:
         return self._all("SELECT * FROM activity_code WHERE activity=? ORDER BY issued",
                          (activity_id,))
 
+    def code_count(self, activity_id: str) -> int:
+        return self._count("SELECT COUNT(*) AS n FROM activity_code WHERE activity=?",
+                           (activity_id,))
+
     def submission_put(self, rec: dict) -> bool:
         """Insert a submission. False when the code or receipt is already present.
 
@@ -727,10 +767,27 @@ class Store:
         return self._all("SELECT * FROM activity_submission WHERE activity=? ORDER BY ts DESC",
                          (activity_id,))
 
+    def submission_count(self, activity_id: str) -> int:
+        """How many came in, without reading what came in.
+
+        The Activities tab used to `len(activity_submissions(...))`, which drags every row's `data`
+        — the whole proof chain, hundreds of KB each — off disk to count it. With a term's
+        submissions that is the course's entire record read per lab, per click, under the store's
+        one lock, so every other request queued behind it.
+        """
+        return self._count("SELECT COUNT(*) AS n FROM activity_submission WHERE activity=?",
+                           (activity_id,))
+
     def course_submissions(self, course: str) -> list[dict]:
+        """The course's submissions as a LIST — every column except `data`.
+
+        A list is for reading at a glance; the proof is for the one receipt somebody opens, and
+        `submission_by_receipt` returns it whole. Leaving `data` out is what keeps the list's cost
+        proportional to the number of rows rather than to the size of a term's work.
+        """
         return self._all(
-            "SELECT s.* FROM activity_submission s JOIN activity a ON a.id = s.activity "
-            "WHERE a.course=? ORDER BY s.ts DESC", (course,))
+            f"SELECT {', '.join('s.' + c for c in _LIST_COLS)} FROM activity_submission s "
+            "JOIN activity a ON a.id = s.activity WHERE a.course=? ORDER BY s.ts DESC", (course,))
 
     def claim(self, receipt: str, student_id: str, now: float) -> tuple[bool, str]:
         """Bind a student id to a submission. Returns (accepted, outcome).
@@ -765,6 +822,52 @@ class Store:
         if before:
             return self._all(sql + " AND ts < ? ORDER BY ts", (before,))
         return self._all(sql + " ORDER BY ts")
+
+    # -- marks ------------------------------------------------------------ #
+    def mark_put(self, receipt: str, mark: str, comment: str, marker: str, ts: float) -> dict:
+        """Record what a marker decided. A new row every time — see the `submission_mark` table."""
+        self._run("INSERT INTO submission_mark(receipt, mark, comment, marker, ts) "
+                  "VALUES(?,?,?,?,?)", (receipt, mark, comment, marker, ts))
+        return self.mark_for(receipt) or {}
+
+    def mark_for(self, receipt: str) -> dict | None:
+        """The current mark: the latest row."""
+        return self._one("SELECT receipt, mark, comment, marker, ts FROM submission_mark "
+                         "WHERE receipt=? ORDER BY id DESC LIMIT 1", (receipt,))
+
+    def mark_history(self, receipt: str) -> list[dict]:
+        return self._all("SELECT receipt, mark, comment, marker, ts FROM submission_mark "
+                         "WHERE receipt=? ORDER BY id", (receipt,))
+
+    def activity_marks(self, activity_id: str) -> dict[str, dict]:
+        """`{receipt: current mark}` for one activity, in one query."""
+        rows = self._all(
+            "SELECT m.receipt, m.mark, m.comment, m.marker, m.ts FROM submission_mark m "
+            "JOIN (SELECT receipt, MAX(id) AS id FROM submission_mark GROUP BY receipt) last "
+            "ON last.id = m.id JOIN activity_submission s ON s.receipt = m.receipt "
+            "WHERE s.activity=?", (activity_id,))
+        return {r["receipt"]: r for r in rows}
+
+    # -- the class view's cached rows ------------------------------------- #
+    def summary_get(self, receipt: str, ver: str) -> dict | None:
+        row = self._one("SELECT body FROM submission_summary WHERE receipt=? AND ver=?",
+                        (receipt, ver))
+        if not row:
+            return None
+        try:
+            return json.loads(row["body"])
+        except (TypeError, ValueError):
+            return None
+
+    def summary_put(self, receipt: str, ver: str, body: dict) -> None:
+        self._run("INSERT OR REPLACE INTO submission_summary(receipt, ver, body) VALUES(?,?,?)",
+                  (receipt, ver, json.dumps(body)))
+
+    def activity_submission_list(self, activity_id: str) -> list[dict]:
+        """One activity's submissions as a list — no `data`, as `course_submissions`."""
+        return self._all(
+            f"SELECT {', '.join(_LIST_COLS)} FROM activity_submission WHERE activity=? "
+            "ORDER BY ts", (activity_id,))
 
     def artifact_twins(self, artifact_hash: str, exclude_code: str = "") -> list[dict]:
         """Other submissions built from the same topology — the collusion signal a receipt cannot
@@ -1077,7 +1180,7 @@ class Store:
     def site_snapshot(self) -> dict:
         """Everything a reset is about to remove, as plain data, for the backup file."""
         tables = ["course", "course_staff", "activity", "activity_code", "activity_submission",
-                  "material", "claim_attempt", "account"]
+                  "submission_mark", "material", "claim_attempt", "account"]
         return {t: self._all(f"SELECT * FROM {t}") for t in tables}
 
     def site_reset(self, *, courses: bool = True, staff: bool = False,
@@ -1093,7 +1196,8 @@ class Store:
         removed = self.site_stats()
         with self.lock:
             # Always: the activity layer. That IS what "reset" means here.
-            for t in ("activity_submission", "claim_attempt", "activity_code", "activity"):
+            for t in ("activity_submission", "submission_mark", "submission_summary",
+                      "claim_attempt", "activity_code", "activity"):
                 self.db.execute(f"DELETE FROM {t}")
             if courses:
                 for t in ("material", "course_staff", "course"):

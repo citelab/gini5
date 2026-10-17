@@ -689,3 +689,138 @@ def report(row: dict, activity: dict, twins: list, attempts: list | None = None,
                          if a.get("outcome") == "already_claimed"],
         "attempts": attempts or [],
     }
+
+
+# --------------------------------------------------------------------------- #
+# the class view — every submission to one activity as a row
+# --------------------------------------------------------------------------- #
+def summary_version() -> str:
+    """What a cached row was computed BY. The source of `grader_view` itself, hashed, beside this
+    module's own shape number — a version string alone would not move on a source checkout, and a
+    newer reading of the chain must recompute rather than serve rows in an older shape."""
+    import hashlib
+    from pathlib import Path
+    try:
+        from gini.domain import grader_view as _g
+        src = Path(_g.__file__).read_bytes()
+    except Exception:                           # noqa: BLE001 — no core still gets a key
+        src = b""
+    return f"1:{hashlib.sha1(src).hexdigest()[:12]}"
+
+
+def summarize(row: dict, activity: dict, questions: list[dict] | None) -> dict:
+    """One submission's row for the class view: `grader_view`'s table plus the handful of cooked
+    facts a class view sorts on. Built from the same `report` inputs, so a row can never disagree
+    with the receipt it opens."""
+    payload = row.get("data")
+    try:
+        payload = json.loads(payload) if isinstance(payload, str) and payload else (payload or {})
+    except ValueError:
+        payload = {}
+    proof = payload.get("proof") or {}
+    measured = measurements(proof)
+    qa = answered(proof, questions)
+    c = cook(proof, (activity or {}).get("title", ""), qa, measured,
+             check_sources(payload.get("shadows"), proof))
+    b = c.get("builds") or {}
+    return {"table": c.get("table") or {"checks": [], "parts": {}, "metrics": [], "questions": []},
+            "minutes": c.get("minutes", 0), "sittings": c.get("sittings", 0),
+            "loads": b.get("loads", 0), "last_load_ok": b.get("last_ok"),
+            "tests": (c.get("tests") or {}).get("runs", 0),
+            "commands": (c.get("commands") or {}).get("count", 0),
+            "look_at": list(c.get("look_at") or [])}
+
+
+def class_table(subs: list[tuple[dict, dict]], marks: dict, twins: dict) -> dict:
+    """`subs` is `[(submission list-row, summarize() of it)]`, oldest first.
+
+    Columns are whatever the submissions recorded, in the order they first appear, so a lab whose
+    spec gained a metric mid-term shows it without anything being configured. The column summary
+    counts SUBMISSIONS, drafts left out: "0 of 28 passed share_stride" says the lab is broken, not
+    the cohort, and a TA's rehearsal run must not be one of the 28.
+    """
+    metric_ids: list[str] = []
+    part_ids: set[str] = set()
+    q_total = 0
+    for _row, s in subs:
+        t = s.get("table") or {}
+        for m in t.get("metrics") or []:
+            if m["id"] not in metric_ids:
+                metric_ids.append(m["id"])
+        part_ids.update((t.get("parts") or {}).keys())
+        q_total = max(q_total, len(t.get("questions") or []))
+    parts = sorted(part_ids)
+
+    rows, col = [], {m: {"passed": 0, "failed": 0, "pending": 0, "of": 0} for m in metric_ids}
+    part_done = {p: 0 for p in parts}
+    counted = 0
+    for row, s in subs:
+        t = s.get("table") or {}
+        verdicts = {m["id"]: ("pending" if m.get("pending") else "passed" if m.get("ok")
+                              else "failed") for m in t.get("metrics") or []}
+        mk = marks.get(row["receipt"]) or {}
+        qs = t.get("questions") or []
+        rows.append({
+            "receipt": row["receipt"], "student_id": row.get("student_id") or "",
+            "ts": row.get("ts") or 0, "late": bool(row.get("late")),
+            "draft": bool(row.get("draft")),
+            "verdict": row.get("verdict") or "",
+            "parts": {p: list((t.get("parts") or {}).get(p) or []) for p in parts},
+            "metrics": {m: verdicts.get(m, "") for m in metric_ids},
+            "answered": sum(1 for q in qs if q.get("answered")), "questions": len(qs),
+            "minutes": s.get("minutes", 0), "loads": s.get("loads", 0),
+            "last_load_ok": s.get("last_load_ok"), "commands": s.get("commands", 0),
+            "look_at": len(s.get("look_at") or []),
+            "twins": int(twins.get(row.get("artifact_hash") or "", 1)) - 1
+            if row.get("artifact_hash") else 0,
+            "mark": mk.get("mark", ""), "comment": mk.get("comment", ""),
+            "marker": mk.get("marker", ""), "marked_at": mk.get("ts", 0)})
+        if row.get("draft"):
+            continue
+        counted += 1
+        for m in metric_ids:
+            v = verdicts.get(m)
+            col[m]["of"] += 1
+            if v:
+                col[m][v] += 1
+        for p in parts:
+            a_b = (t.get("parts") or {}).get(p)
+            if a_b and a_b[0] == a_b[1]:
+                part_done[p] += 1
+    return {"metrics": metric_ids, "parts": parts, "questions": q_total, "rows": rows,
+            "summary": {"submissions": counted, "metrics": col, "parts_complete": part_done}}
+
+
+#: Leading characters a spreadsheet reads as the start of a formula. A student id is typed by the
+#: student, so a cell beginning with one is quoted rather than handed to the gradebook to evaluate.
+_FORMULA = ("=", "+", "-", "@", "\t", "\r")
+
+
+def _cell(v) -> str:
+    s = "" if v is None else str(v)
+    return "'" + s if s.startswith(_FORMULA) else s
+
+
+def class_csv(tbl: dict) -> str:
+    """The class table as CSV, for the gradebook. One row per submission; the mark and comment are
+    the marker's, everything else is what the chain recorded."""
+    import csv
+    import io
+    from datetime import datetime, timezone
+    out = io.StringIO()
+    w = csv.writer(out)
+    w.writerow(["student_id", "receipt", "submitted_at", "late", "draft", "integrity",
+                *[f"part {p}" for p in tbl["parts"]], *tbl["metrics"],
+                "questions_answered", "questions_asked", "loads", "minutes", "mark", "comment",
+                "marker"])
+    for r in tbl["rows"]:
+        when = (datetime.fromtimestamp(r["ts"], tz=timezone.utc).strftime("%Y-%m-%d %H:%M:%SZ")
+                if r["ts"] else "")
+        w.writerow([_cell(r["student_id"]), r["receipt"], when,
+                    "yes" if r["late"] else "", "yes" if r["draft"] else "", _cell(r["verdict"]),
+                    *[(f"{v[0]}/{v[1]}" if v else "")
+                      for v in (r["parts"][p] for p in tbl["parts"])],
+                    *[r["metrics"][m] or "" for m in tbl["metrics"]],
+                    r["answered"], r["questions"], r["loads"], r["minutes"],
+                    _cell(r["mark"]), _cell(r["comment"]), _cell(r["marker"])])
+    return out.getvalue()

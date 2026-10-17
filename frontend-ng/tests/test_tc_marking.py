@@ -13,7 +13,6 @@ import sys
 import threading
 import time
 import urllib.request
-from http.server import ThreadingHTTPServer
 from pathlib import Path
 
 import pytest
@@ -76,8 +75,7 @@ def course(tmp_path, monkeypatch, tls_pair, trust_tls):
 
     cert, key = tls_pair
     ctx = server._tls_context(str(cert), str(key))
-    httpd = ThreadingHTTPServer(("127.0.0.1", 0), server.Handler)
-    httpd.socket = ctx.wrap_socket(httpd.socket, server_side=True)
+    httpd = server.TLSServer(("127.0.0.1", 0), server.Handler, ctx)
     threading.Thread(target=httpd.serve_forever, daemon=True).start()
     url = f"https://127.0.0.1:{httpd.server_address[1]}"
 
@@ -327,3 +325,122 @@ def test_a_networking_submission_reports_no_sources(course):
     as it always has."""
     rep = _get(course["url"], "/api/receipt?receipt=" + course["receipt"], course["admin"])
     assert rep["sources"] == []
+
+
+# -- the Activities tab ---------------------------------------------------------- #
+def test_the_activities_tab_counts_codes_and_submissions_without_reading_them(course,
+                                                                              monkeypatch):
+    """The counts come from COUNT(*), not from loading every proof to take its len()."""
+    from gini_teaching_center import server
+    monkeypatch.setattr(server._STORE, "activity_submissions",
+                        lambda *a: pytest.fail("loaded every submission to count them"))
+    monkeypatch.setattr(server._STORE, "codes_for",
+                        lambda *a: pytest.fail("loaded every code to count them"))
+    rows = _get(course["url"], "/api/activities?course=comp535", course["admin"])
+    lab1 = next(r for r in rows if r["lab"] == "lab1")
+    assert (lab1["vended"], lab1["submitted"]) == (1, 1)
+
+
+def test_the_submission_list_leaves_the_proof_on_disk(course):
+    from gini_teaching_center import server
+    rows = server._STORE.course_submissions("comp535")
+    assert [r["receipt"] for r in rows] == [course["receipt"]]
+    assert "data" not in rows[0]
+    assert server._STORE.submission_by_receipt(course["receipt"])["data"]   # still whole by receipt
+
+
+# -- the marker's mark ---------------------------------------------------------- #
+def test_a_mark_and_comment_are_there_tomorrow_with_who_and_when(course):
+    url, tok, rc = course["url"], course["admin"], course["receipt"]
+    assert _get(url, f"/api/mark?receipt={rc}", tok) == {"current": None, "history": []}
+    r = _post(url, "/api/mark", {"receipt": rc, "mark": "7/10", "comment": "Part C missing"}, tok)
+    assert r["ok"] and r["current"]["mark"] == "7/10" and r["current"]["marker"] == "boss"
+    _post(url, "/api/mark", {"receipt": rc, "mark": "8/10", "comment": "regraded"}, tok)
+    got = _get(url, f"/api/mark?receipt={rc}", tok)
+    assert got["current"]["mark"] == "8/10" and got["current"]["ts"] > 0
+    assert [h["mark"] for h in got["history"]] == ["7/10", "8/10"]      # every save kept
+
+
+def test_the_report_itself_still_carries_no_mark(course):
+    url, tok, rc = course["url"], course["admin"], course["receipt"]
+    _post(url, "/api/mark", {"receipt": rc, "mark": "9"}, tok)
+    rep = _get(url, f"/api/receipt?receipt={rc}", tok)
+    assert "mark" not in rep and "score" not in rep and "grade" not in rep
+
+
+def test_a_mark_needs_staff_of_that_course(course):
+    url, rc = course["url"], course["receipt"]
+    import urllib.error
+    with pytest.raises(urllib.error.HTTPError):
+        _post(url, "/api/mark", {"receipt": rc, "mark": "10"})          # nobody signed in
+    with pytest.raises(urllib.error.HTTPError):
+        _get(url, f"/api/mark?receipt={rc}")
+
+
+def test_a_mark_is_not_in_the_students_proof(course):
+    from gini_teaching_center import server
+    _post(course["url"], "/api/mark", {"receipt": course["receipt"], "mark": "6"}, course["admin"])
+    data = server._STORE.submission_by_receipt(course["receipt"])["data"]
+    assert '"mark"' not in data
+
+
+# -- the class view and its export --------------------------------------------- #
+def test_the_class_view_has_a_row_per_submission_and_a_column_summary(course):
+    url, tok, rc = course["url"], course["admin"], course["receipt"]
+    _post(url, "/api/mark", {"receipt": rc, "mark": "8"}, tok)
+    t = _get(url, "/api/activity/table?course=comp535&lab=lab1", tok)
+    assert [r["receipt"] for r in t["rows"]] == [rc]
+    assert t["rows"][0]["mark"] == "8"
+    assert t["summary"]["submissions"] == 1
+
+
+def test_each_row_is_read_from_its_proof_once(course, monkeypatch):
+    url, tok = course["url"], course["admin"]
+    _get(url, "/api/activity/table?course=comp535&lab=lab1", tok)
+    from gini_teaching_center import activities
+    monkeypatch.setattr(activities, "summarize",
+                        lambda *a: pytest.fail("re-read a proof the cache already had"))
+    t = _get(url, "/api/activity/table?course=comp535&lab=lab1", tok)
+    assert len(t["rows"]) == 1
+
+
+def test_the_export_is_a_csv_the_gradebook_can_take(course):
+    url, tok, rc = course["url"], course["admin"], course["receipt"]
+    _post(url, "/api/mark", {"receipt": rc, "mark": "8", "comment": "good, see Part C"}, tok)
+    req = urllib.request.Request(url + "/api/activity/table.csv?course=comp535&lab=lab1")
+    req.add_header("Authorization", f"Bearer {tok}")
+    with urllib.request.urlopen(req, timeout=10) as r:
+        assert r.headers["Content-Type"].startswith("text/csv")
+        assert "attachment" in r.headers["Content-Disposition"]
+        body = r.read().decode()
+    import csv
+    import io
+    rows = list(csv.DictReader(io.StringIO(body)))
+    assert rows[0]["receipt"] == rc and rows[0]["mark"] == "8"
+    assert rows[0]["comment"] == "good, see Part C"
+
+
+def test_a_cell_a_spreadsheet_would_run_as_a_formula_is_quoted():
+    from gini_teaching_center.activities import _cell
+    assert _cell("=HYPERLINK(\"x\")") == "'=HYPERLINK(\"x\")"
+    assert _cell("260012345") == "260012345"
+
+
+def test_the_column_summary_says_when_nobody_passed():
+    from gini_teaching_center.activities import class_table
+    def sub(i, ok):
+        return ({"receipt": f"R{i}", "ts": i, "artifact_hash": f"h{i}"},
+                {"table": {"metrics": [{"id": "share_stride", "ok": ok, "pending": False}],
+                           "parts": {"A": [2, 2]}, "questions": []}})
+    t = class_table([sub(i, False) for i in range(3)], {}, {})
+    assert t["summary"]["metrics"]["share_stride"] == {"passed": 0, "failed": 3, "pending": 0,
+                                                       "of": 3}
+    assert t["summary"]["parts_complete"] == {"A": 3}
+
+
+def test_a_rehearsal_is_shown_but_not_counted():
+    from gini_teaching_center.activities import class_table
+    rows = [({"receipt": "R1", "ts": 1, "draft": 1},
+             {"table": {"metrics": [{"id": "m", "ok": True}], "parts": {}, "questions": []}})]
+    t = class_table(rows, {}, {})
+    assert len(t["rows"]) == 1 and t["summary"]["submissions"] == 0

@@ -451,8 +451,8 @@ class Handler(BaseHTTPRequestHandler):
             if p == "/api/activities":
                 out = []
                 for a in _STORE.activities(course):
-                    out.append({**a, "vended": len(_STORE.codes_for(a["id"])),
-                                "submitted": len(_STORE.activity_submissions(a["id"])),
+                    out.append({**a, "vended": _STORE.code_count(a["id"]),
+                                "submitted": _STORE.submission_count(a["id"]),
                                 # Staff-only route (the auth gate is just above) and the
                                 # console needs these to fill the editor. Keys included:
                                 # this is the one place a teacher edits them.
@@ -483,7 +483,80 @@ class Handler(BaseHTTPRequestHandler):
                 # expected answer beside the given one. Nothing compares them.
                 questions=_STORE.questions_for_code(row["code"])))
 
+        if p in ("/api/activity/table", "/api/activity/table.csv"):
+            course, lab = self._q("course"), self._q("lab").strip().lower()
+            if not self._may(course):
+                return self._send(403, {"error": "That is not your course."})
+            act = _STORE.activity(_act.activity_id(course, lab))
+            if not act:
+                return self._send(404, {"error": "No such activity."})
+            tbl = self._class_table(act)
+            if p.endswith(".csv"):
+                body = _act.class_csv(tbl).encode("utf-8")
+                self.send_response(200)
+                self.send_header("Content-Type", "text/csv; charset=utf-8")
+                self.send_header("Content-Disposition",
+                                 f'attachment; filename="{course}-{lab}-marks.csv"')
+                self.send_header("Content-Length", str(len(body)))
+                self.end_headers()
+                self.wfile.write(body)
+                return None
+            return self._send(200, tbl)
+
+        if p == "/api/mark":
+            # Its own route, not a field of /api/receipt: the report is what GINI read out of the
+            # chain and stays free of any judgement; this is what a person decided about it.
+            row = _STORE.submission_by_receipt(self._q("receipt").strip().upper())
+            if not row:
+                return self._send(404, {"error": _NOT_HERE_YET})
+            act = _STORE.activity(row["activity"]) or {}
+            if not self._may(act.get("course", "")):
+                return self._send(403, {"error": "That is not your course."})
+            return self._send(200, {"current": _STORE.mark_for(row["receipt"]),
+                                    "history": _STORE.mark_history(row["receipt"])})
+
         self._send(404, {"error": f"No endpoint at {p} for {self.command}."})
+
+    def _class_table(self, act: dict) -> dict:
+        """Every submission to one activity, as rows. Each row is computed from its proof ONCE and
+        cached (`submission_summary`): a submission never changes, and re-reading thirty proofs per
+        click is the lag the Activities tab used to have."""
+        ver = _act.summary_version()
+        subs = []
+        for row in _STORE.activity_submission_list(act["id"]):
+            summ = _STORE.summary_get(row["receipt"], ver)
+            if summ is None:
+                full = _STORE.submission_by_receipt(row["receipt"]) or {}
+                summ = _act.summarize(full, act, _STORE.questions_for_code(row["code"]))
+                _STORE.summary_put(row["receipt"], ver, summ)
+            subs.append((row, summ))
+        # Shared topologies counted across the whole COURSE, as the submissions list counts them:
+        # two students who shared one may well have handed it to different labs.
+        twins: dict[str, int] = {}
+        for r in _STORE.course_submissions(act["course"]):
+            h = r.get("artifact_hash") or ""
+            if h:
+                twins[h] = twins.get(h, 0) + 1
+        return _act.class_table(subs, _STORE.activity_marks(act["id"]), twins)
+
+    def _mark(self, me: dict, b: dict) -> dict:
+        """Record what a marker decided. Staff of the submission's course only; kept outside the
+        proof chain, and never computed — see the `submission_mark` table."""
+        row = _STORE.submission_by_receipt(str(b.get("receipt") or "").strip().upper())
+        if not row:
+            return {"ok": False, "error": _NOT_HERE_YET}
+        act = _STORE.activity(row["activity"]) or {}
+        if not self._may(act.get("course", "")):
+            return {"ok": False, "error": "That is not your course."}
+        mark = str(b.get("mark") or "").strip()
+        comment = str(b.get("comment") or "").strip()
+        if len(mark) > 40:
+            return {"ok": False,
+                    "error": "Keep the mark to 40 characters — the comment is for words."}
+        if len(comment) > 4000:
+            return {"ok": False, "error": "That comment is over 4000 characters."}
+        current = _STORE.mark_put(row["receipt"], mark, comment, me.get("who", ""), time.time())
+        return {"ok": True, "current": current}
 
     def _console_post(self, p: str, me: dict, b: dict) -> None:
         # --- the site as a whole (admin only). Its own branch, NOT under the /api/staff prefix:
@@ -542,6 +615,10 @@ class Handler(BaseHTTPRequestHandler):
                 c["archived"] = 0 if int(c.get("archived", 0)) else 1
                 _STORE.put_course(c)
             return self._send(200, {"ok": True})
+
+        # --- a mark: scoped by the SUBMISSION's course, which the body does not get to name ---
+        if p == "/api/mark":
+            return self._send(200, self._mark(me, b))
 
         # --- everything below is course-scoped ---
         course = b.get("course", "")
@@ -686,7 +763,7 @@ class Handler(BaseHTTPRequestHandler):
         if (b.get("confirm") or "").strip().lower() != lab:
             return {"ok": False, "error": f"Type the lab id ({lab}) to confirm."}
 
-        subs = len(_STORE.activity_submissions(aid))
+        subs = _STORE.submission_count(aid)
         if subs:
             return {"ok": False, "error": f"{lab} has {subs} submission"
                                           f"{'' if subs == 1 else 's'} and cannot be deleted — "
@@ -1142,6 +1219,53 @@ def _tls_context(cert: str, key: str) -> "ssl.SSLContext":
     return ctx
 
 
+# Long enough for a phone on a bad link, short enough that a socket which never speaks gives its
+# thread back. It no longer holds anybody else up either way — see TLSServer.
+HANDSHAKE_TIMEOUT = 10.0
+
+
+class TLSServer(ThreadingHTTPServer):
+    """HTTPS where the handshake happens on the connection's OWN thread.
+
+    The obvious shape — `httpd.socket = ctx.wrap_socket(httpd.socket, server_side=True)` — wraps
+    the LISTENING socket, so `accept()` performs the handshake, and `accept()` runs on the one
+    thread that serves the loop. Every connection was handshaken in single file before any worker
+    saw it, and a connection that opened TCP and then said nothing held the line until it did.
+
+    Browsers do exactly that. Chrome and Safari open a spare "preconnect" socket so the next
+    request has one ready, and send no ClientHello on it until they need it. Measured on that
+    shape: a request that takes 8 ms took forever — it timed out — while one silent socket was
+    open. That was the Teaching Center's "the Activities tab takes ages to show": the tab fires
+    two requests at once, which is what opens the spare.
+
+    Here `accept()` returns the plain socket and the handshake runs in `finish_request`, which
+    ThreadingMixIn calls on the worker thread. A silent socket now costs one thread for at most
+    HANDSHAKE_TIMEOUT, and nobody else waits for it.
+    """
+
+    def __init__(self, addr, handler, ctx):
+        self.ctx = ctx
+        super().__init__(addr, handler)
+
+    def finish_request(self, request, client_address):
+        import ssl
+        request.settimeout(HANDSHAKE_TIMEOUT)
+        try:
+            tls = self.ctx.wrap_socket(request, server_side=True)
+        except (ssl.SSLError, OSError):
+            return                 # a scanner, a plain-HTTP probe, or a preconnect never used
+        try:
+            tls.settimeout(None)
+            self.RequestHandlerClass(tls, client_address, self)
+        finally:
+            # wrap_socket DETACHED `request`, so shutdown_request() closing it closes nothing;
+            # the TLS socket is the one holding the descriptor now.
+            try:
+                tls.close()
+            except OSError:
+                pass
+
+
 def backfill_release_codes() -> list[str]:
     """Give every pre-existing lab a release code. Returns the ids it touched.
 
@@ -1223,7 +1347,7 @@ def serve(host: str = "0.0.0.0", port: int = PORT,
         print(f"  admin    {who}\n")
 
     try:
-        httpd = ThreadingHTTPServer((host, port), Handler)
+        httpd = TLSServer((host, port), Handler, ctx)
     except OSError as e:
         # A busy port is an ordinary thing — usually the last copy of this server, still running.
         # A traceback here reads as a bug in the Teaching Center and buries the one useful fact.
@@ -1236,7 +1360,6 @@ def serve(host: str = "0.0.0.0", port: int = PORT,
             f"port:\n\n"
             f"    lsof -nP -iTCP:{port} -sTCP:LISTEN\n\n"
             f"Then stop that process, or start this one on a different port with --port.") from e
-    httpd.socket = ctx.wrap_socket(httpd.socket, server_side=True)
     httpd.serve_forever()
 
 

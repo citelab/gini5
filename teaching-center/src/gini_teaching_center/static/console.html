@@ -203,6 +203,10 @@ hand-in time: everyone is then due when code vending stops, however early they b
       <div class="card"><table id="a-list"></table></div>
     </div>
 
+    <div class="card" id="class-card" hidden>
+      <div id="class-out"></div>
+    </div>
+
     <div class="card">
       <h2 style="font-size:21px">Submissions</h2>
       <div class="note">Work arrives on its own as students finish, with no name on it. Enter the
@@ -623,6 +627,8 @@ async function loadActs(){
                     already sent stops working.">New link</button>
             <button class="flat" style="margin-left:10px"
                     data-lab="${esc(a.lab)}" onclick="editAct(ACTS[this.dataset.lab])">Edit</button>
+            ${a.submitted ? `<button class="go" style="margin-left:10px;padding:9px 16px"
+                    data-lab="${esc(a.lab)}" onclick="openClass(this.dataset.lab)">Results</button>` : ''}
             ${a.submitted
               ? `<span class="note" style="margin-left:12px">${a.submitted} submitted — close it,
                  it cannot be deleted</span>`
@@ -912,6 +918,111 @@ async function linkRef(ref, on){
   if (r.ok) { say(on ? 'Linked.' : 'Unlinked.', true); loadLibrary(); }
 }
 
+// ---- the class view -----------------------------------------------------------
+// Every submission to one lab as a row, every metric as a column. The column summary is the
+// teaching signal: "0 of 28 passed share_stride" means the LAB is broken, not the cohort, and that
+// is worth knowing on the Monday rather than in the post-mortem. Nothing here is a mark except the
+// Mark column, which is what a person typed.
+let CLASS_LAB = '';
+async function openClass(lab){
+  CLASS_LAB = lab;
+  $('#class-card').hidden = false;
+  $('#class-out').innerHTML = `<div class="note">Reading ${esc(lab)}'s submissions…</div>`;
+  const t = await api('/api/activity/table?course=' + encodeURIComponent(COURSE)
+                      + '&lab=' + encodeURIComponent(lab));
+  if (!t || t.ok === false) { $('#class-out').innerHTML = ''; return; }
+  $('#class-out').innerHTML = classBlock(lab, t);
+  $('#class-card').scrollIntoView({behavior:'smooth', block:'start'});
+}
+
+function classBlock(lab, t){
+  const n = t.summary.submissions;
+  const verdictTag = v => v === 'passed' ? '<span class="tag live">ok</span>'
+                        : v === 'failed' ? '<span class="tag warn">failed</span>'
+                        : v === 'pending' ? '<span class="tag draft">n/m</span>' : '—';
+  // The signal: a metric NOBODY passed, among the submissions where it was measured at all.
+  const broken = t.metrics.filter(m => { const c = t.summary.metrics[m];
+                                         return c && c.of && !c.passed && (c.failed || c.pending); });
+  const head = '<tr><th>Student<th>Receipt<th>Arrived'
+    + t.parts.map(p => `<th>Part ${esc(p)}`).join('')
+    + t.metrics.map(m => `<th class="mono" style="text-transform:none">${esc(m)}`).join('')
+    + (t.questions ? '<th>Answers' : '') + '<th>Look at<th>Mark<th>';
+  const sumRow = '<tr style="background:#f2f5f1"><td colspan="3"><b>' + n + ' submitted</b>'
+    + t.parts.map(p => `<td class="mono">${t.summary.parts_complete[p]}/${n} done`).join('')
+    + t.metrics.map(m => { const c = t.summary.metrics[m];
+        return `<td class="mono" style="color:${c.passed ? 'inherit' : 'var(--red)'}">`
+             + `${c.passed}/${c.of} ok`; }).join('')
+    + (t.questions ? '<td>' : '') + '<td><td><td>';
+  const rows = t.rows.map(r => '<tr>'
+    + `<td>${r.student_id ? '<span class="mono">' + esc(r.student_id) + '</span>'
+                          : '<span class="tag draft">unclaimed</span>'}`
+    + (r.draft ? ' <span class="tag draft">rehearsal</span>' : '')
+    + `<td class="mono">${esc(r.receipt)}`
+    + `<td>${when(r.ts)}${r.late ? ' <span class="tag warn">late</span>' : ''}`
+    + (r.twins ? ` <span class="tag warn">shared topology ×${r.twins + 1}</span>` : '')
+    + t.parts.map(p => { const v = r.parts[p];
+        return `<td class="mono" style="color:${v && v.length && v[0] < v[1] ? 'var(--amber)' : 'inherit'}">`
+             + (v && v.length ? `${v[0]}/${v[1]}` : '—'); }).join('')
+    + t.metrics.map(m => `<td>${verdictTag(r.metrics[m])}`).join('')
+    + (t.questions ? `<td class="mono">${r.answered}/${r.questions}` : '')
+    + `<td class="mono">${r.look_at || ''}`
+    + `<td class="mono">${esc(r.mark) || '<span class="note" style="margin:0">—</span>'}`
+    + `<td><button class="flat" onclick="openReceipt('${esc(r.receipt)}')">Open</button>`).join('');
+  return `<div class="rowb" style="margin-top:0;justify-content:space-between">
+      <h2 style="font-size:21px;margin:0">Results — ${esc(lab)}</h2>
+      <span><button class="go" onclick="classCsv()">Download CSV</button>
+            <button class="flat" onclick="openClass(CLASS_LAB)">Refresh</button>
+            <button class="flat" onclick="$('#class-card').hidden=true">Close</button></span>
+    </div>
+    <div class="note">One row per submission, read from each proof. "n/m" is not measured —
+      nothing to compare, not a failure. Only the Mark column is a judgement, and a person typed it.</div>
+    ${broken.length ? `<div class="note" style="color:var(--red);font-size:16px">
+      Nobody passed ${broken.map(m => '<span class="mono">' + esc(m) + '</span>').join(', ')}
+      — with ${n} submission${n === 1 ? '' : 's'}, that points at the lab or its metric before it
+      points at the class.</div>` : ''}
+    <div style="overflow-x:auto;margin-top:14px"><table>${head}${sumRow}${rows}</table></div>`;
+}
+
+// Same download shape as the topology: fetch with the session header, hand the browser a blob.
+async function classCsv(){
+  const res = await fetch('/api/activity/table.csv?course=' + encodeURIComponent(COURSE)
+                          + '&lab=' + encodeURIComponent(CLASS_LAB),
+                          {headers: {'Authorization': 'Bearer ' + TOKEN}});
+  if (!res.ok) { say('Could not export that table.'); return; }
+  const blob = await res.blob();
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(blob);
+  a.download = `${COURSE}-${CLASS_LAB}-marks.csv`;
+  document.body.appendChild(a); a.click(); a.remove();
+  URL.revokeObjectURL(a.href);
+}
+
+// ---- the mark ---------------------------------------------------------------
+// What the marker decided, stored BESIDE the submission and never in its proof. Every save is
+// kept; the latest is the mark. GINI fills in nothing here.
+async function loadMark(receipt){
+  const m = await api('/api/mark?receipt=' + encodeURIComponent(receipt));
+  const box = $('#mark-box');
+  if (!box || !m || m.ok === false) return;
+  const cur = m.current || {};
+  $('#mk-mark').value = cur.mark || '';
+  $('#mk-comment').value = cur.comment || '';
+  const hist = (m.history || []);
+  $('#mk-hist').innerHTML = hist.length
+    ? `Last saved by ${esc(cur.marker || '?')}, ${when(cur.ts)}.`
+      + (hist.length > 1 ? ` <details style="display:inline"><summary style="display:inline;cursor:pointer">`
+         + `${hist.length - 1} earlier</summary>${hist.slice(0, -1).reverse().map(h =>
+             `<div class="mono" style="margin-top:4px">${when(h.ts)} · ${esc(h.marker)} · `
+             + `${esc(h.mark) || '—'}${h.comment ? ' — ' + esc(h.comment) : ''}</div>`).join('')}</details>` : '')
+    : 'Not marked yet.';
+}
+
+async function saveMark(receipt){
+  const r = await api('/api/mark', {receipt, mark: $('#mk-mark').value, comment: $('#mk-comment').value});
+  if (r && r.ok) { say('Mark saved.', true); loadMark(receipt);
+                   if (CLASS_LAB && !$('#class-card').hidden) openClass(CLASS_LAB); }
+}
+
 // ---- the report -------------------------------------------------------------
 async function openReceipt(receipt){
   const rc = (receipt || $('#r-code').value).trim().toUpperCase();
@@ -965,6 +1076,16 @@ async function openReceipt(receipt){
       <div class="note">A reading of the log below — nothing here is a mark, and every line points
         at recorded actions. The raw log is unchanged underneath.</div>
       ${cookBlock(r.cooked)}
+      <div class="card" id="mark-box" style="margin-top:14px;padding:18px 20px">
+        <b>Mark</b> <span class="note" style="margin:0">— yours, not GINI's. Kept beside the
+          submission, never in its proof.</span>
+        <div class="rowb" style="margin-top:10px;align-items:flex-start">
+          <input id="mk-mark" placeholder="e.g. 8/10" maxlength="40" style="max-width:160px">
+          <textarea id="mk-comment" placeholder="Comment for the record" style="flex:1;min-height:60px"></textarea>
+          <button class="go" onclick="saveMark('${esc(r.receipt)}')">Save mark</button>
+        </div>
+        <div class="note" id="mk-hist"></div>
+      </div>
       ${qBlock(r.questions)}
       ${measBlock(r.measurements, r.measurement_tally)}
       ${srcBlock(r.sources)}
@@ -973,6 +1094,7 @@ async function openReceipt(receipt){
         events. The answers above are repeated here as they were entered.</div>
       <pre>${esc(r.narration)}</pre>
     </div>`;
+  loadMark(r.receipt);
 }
 
 // WHAT GINI MEASURED, across every kind of lab in one place — a rider's reading, a probe's
@@ -1072,6 +1194,10 @@ function cookBlock(c){
     rows.push(row('Wiring', (parts.length ? parts.join(' &nbsp;·&nbsp; ') : `${w.passed}/${w.total}`)
       + ' <span class="note" style="margin:0">(at the last Load)</span>'));
   }
+  // Per check, when the Loads recorded the checklist as data: the ones still open, by name.
+  const open = (w && w.checks || []).filter(x => !x.passed);
+  if (open.length) rows.push(row('Open checks',
+    `<span class="mono">${open.map(x => esc((x.part ? x.part + ' · ' : '') + x.id)).join(' &nbsp; ')}</span>`));
   const b = c.builds;
   if (b) rows.push(row('Builds', `${b.loads} Load${b.loads===1?'':'s'} — ${b.failed} failed, ${b.built} built; `
     + `last Load <b style="color:${b.last_ok?'var(--green)':'var(--red)'}">${b.last_ok?'BUILT':'FAILED'}</b> at ${hm(b.last_t)}`
@@ -1085,6 +1211,18 @@ function cookBlock(c){
   if (t) rows.push(row('Test', `${esc(t.prog)} ran ${t.runs}× — last output (${hm(t.last_t)}):`
     + `<pre style="margin:6px 0 0;max-height:180px;overflow:auto">${
         t.last_out.length ? t.last_out.map(esc).join('\n') : '(printed nothing)'}</pre>`));
+  // What each grading workload printed — the transcript behind the metrics above, for the day a
+  // student says the metric is wrong and their output was right.
+  for (const g2 of (c.graded_runs || [])) rows.push(row(`Run · ${esc(g2.run)}`,
+    `<span class="mono">${esc(g2.what)}</span> (${hm(g2.t)})`
+    + `<pre style="margin:6px 0 0;max-height:180px;overflow:auto">${
+        g2.out.length ? g2.out.map(esc).join('\n') : '(printed nothing)'}</pre>`));
+  // Typed at the console. For A-Lab 02 and 03 this is where the student's own measurements are.
+  const k = c.commands;
+  if (k) rows.push(row('Console', `${k.count} command${k.count===1?'':'s'} typed`
+    + (k.count > k.recent.length ? ` — the last ${k.recent.length}:` : ':')
+    + `<pre style="margin:6px 0 0;max-height:260px;overflow:auto">${k.recent.map(x =>
+        '$ ' + esc(x.cmd) + (x.out.length ? '\n' + x.out.map(esc).join('\n') : '')).join('\n')}</pre>`));
   const n = c.network;
   if (n) rows.push(row('Network', `${n.placed} placed, ${n.connected} connected, ${n.runs} run(s), `
     + `${n.commands} command(s); live checks ${n.checks_passed}/${n.checks}`));
