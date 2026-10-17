@@ -85,6 +85,17 @@ jobs:
           done
           exit 0                    # explicit, so a future edit has to mean it to break this
 
+      # A virtualenv FIRST, exactly as the README tells a contributor. `dev.sh` refuses to install
+      # into a Python that is not one (PEP 668 — see its own message), and setup-python's
+      # interpreter is not: this step's absence is what turned every run red from 2026-09-14,
+      # when that guard landed, until it was added. Activated for every later step through
+      # GITHUB_PATH / GITHUB_ENV, so `python3` below and `dev.sh test` are all the same venv.
+      - name: virtualenv
+        run: |
+          python3 -m venv .venv
+          echo "$PWD/.venv/bin" >> "$GITHUB_PATH"
+          echo "VIRTUAL_ENV=$PWD/.venv" >> "$GITHUB_ENV"
+
       # The script, not a hand-written pip line: `gini` is a namespace package split across
       # gini-core and gini-toolkit, and dev.sh installs core FIRST for the reason in the comment
       # above. Using it here also means CI exercises the command the README tells contributors to
