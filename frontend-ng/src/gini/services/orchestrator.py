@@ -815,6 +815,9 @@ _SHIPPED_HASHES = {
         "06d8456674075e38cdf75791c82648d525f193b8a80ae23b2958bc4c24051acc",   # 2026-08-21, loops
         "f01b0b5a78d49d97d1ab8943b111a62f02ad4b69656589a8cf4a79916884468c",   # reverse-path, prune
     }),
+    "rip2.lua": frozenset({
+        "3cf85fcc40f0e2b98fee00b3be71b2c50fc7da015ab08e6f3bb23744c359ca62",   # 2026-10-14
+    }),
 }
 
 
@@ -835,7 +838,7 @@ def _seed_examples(scripts: Path, shared: Path) -> None:
     finished answer on top of an exercise. Never overwrites a file the user edited."""
     ex = Path(__file__).resolve().parents[1] / "data" / "examples"
     try:
-        for name in ("mcast_tree.lua", "rip_reference.lua"):
+        for name in ("mcast_tree.lua", "rip_reference.lua", "rip2.lua"):
             src, dst = ex / name, scripts / name
             if not src.exists():
                 continue

@@ -27,6 +27,14 @@ def test_a_fresh_install_gets_the_current_modules(tmp_path):
         (EXAMPLES / "rip_reference.lua").read_bytes()
 
 
+def test_the_simple_rip_without_split_horizon_is_seeded_too(tmp_path):
+    """rip2.lua is the plain distance-vector module the Debug-networks-2 tables were captured
+    under (test_routing_model's counting-to-infinity case). It has no split horizon on purpose:
+    the loop it makes when a link fails is the thing to find."""
+    scripts = _seed(tmp_path)
+    assert (scripts / "rip2.lua").read_bytes() == (EXAMPLES / "rip2.lua").read_bytes()
+
+
 def test_an_untouched_old_copy_is_brought_up_to_date(tmp_path):
     scripts, shared = tmp_path / "scripts", tmp_path / "shared"
     scripts.mkdir(); shared.mkdir()
