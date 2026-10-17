@@ -1,8 +1,8 @@
 # A-Lab 02 — fair share: tickets, an honest lottery, and stride scheduling.
 # The student handout (ALab02_Scheduling_Student.docx) lives with the course materials; `where`
 # and the part titles are its words. The build plan it was implemented from is
-# docs/design/a-lab-02.md; what was built, the measured numbers behind every tolerance below, and
-# the test report are in docs/design/a-lab-02-report.md.
+# kept privately; what was built, the measured numbers behind every tolerance below, and
+# the test report are kept privately with the solutions (GINI_ALAB02_SOLUTIONS).
 #
 # Why the id is still `a-lab-02` and not a topic slug like A-Lab 01's: it is the student's folder
 # name (~/.gini/xv6-lab/<machine>/a-lab-02/), and the placeholder that shipped before this lab
@@ -404,7 +404,7 @@ runs:
     policy: 3
     command: "sharetest -s 10 5 1"
 
-# Tolerances are calibrated from gold runs on one hart (docs/design/a-lab-02-report.md, "Calibration"):
+# Tolerances are calibrated from gold runs on one hart (the private A-Lab 02 report, "Calibration"):
 #   lottery, 30 s:  worst share off by 1.2-4.6 points over 12 runs (mean 2.3)  -> tolerance 8
 #   stride,  30 s:  0.5 points off in every run (it is deterministic)          -> tolerance 3
 #   sharetest -s:   the waker takes 62% after waking in every gold run, and 100% with the join
