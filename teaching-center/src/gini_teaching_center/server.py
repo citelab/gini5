@@ -1259,11 +1259,39 @@ class TLSServer(ThreadingHTTPServer):
             self.RequestHandlerClass(tls, client_address, self)
         finally:
             # wrap_socket DETACHED `request`, so shutdown_request() closing it closes nothing;
-            # the TLS socket is the one holding the descriptor now.
-            try:
-                tls.close()
-            except OSError:
-                pass
+            # the TLS socket is the one holding the descriptor now, and closing it well is ours.
+            _close_gracefully(tls)
+
+
+def _close_gracefully(tls) -> None:
+    """Close a served connection so the client still gets the response it was sent.
+
+    A refusal (401, 403) answers without reading the POST body. Closing a socket that still holds
+    unread input makes Linux send a RESET instead of a FIN, and a reset can arrive before the
+    client has read the response — so it sees "remote end closed connection without response"
+    where it should see the 403. macOS does not, which is why this passed locally and failed the
+    first CI run that reached the tests. So: swallow whatever is already buffered (without
+    waiting for more), half-close, then close — the order socketserver's own shutdown_request
+    uses, which the plain listening-socket wrap used to get for free.
+    """
+    import socket
+    import ssl
+    try:
+        tls.setblocking(False)
+        for _ in range(64):                    # bounded: a client streaming junk gets 4 MB, no more
+            if not tls.recv(65536):
+                break
+    except (ssl.SSLError, BlockingIOError, OSError):
+        pass                                   # nothing more buffered — the normal way out
+    try:
+        tls.setblocking(True)
+        tls.shutdown(socket.SHUT_WR)
+    except OSError:
+        pass
+    try:
+        tls.close()
+    except OSError:
+        pass
 
 
 def backfill_release_codes() -> list[str]:
