@@ -51,18 +51,49 @@ typedef struct cp_evt {                  /* a link event for on_link, queued lik
 
 static gr_cp_module_t *g_modules[GR_CP_MAX_MODULES];
 static int             g_nmod = 0;
+/* Detached but not yet stopped. A module leaves g_modules on the CLI thread (cp del, or a
+ * cp add that replaces it) but its stop() -- which closes the Lua state -- must not run while
+ * the control thread may be inside one of its callbacks. So removal only parks it here, and
+ * the control thread buries it at the top of its next loop, where nothing is in flight. */
+static gr_cp_module_t *g_dead[GR_CP_MAX_MODULES];
+static int             g_ndead = 0;
 static cp_timer_t      g_timers[GR_CP_MAX_TIMERS];
 static int             g_next_timer_id = 1;
 static cp_pkt_t       *g_qhead = NULL, *g_qtail = NULL;
 static cp_evt_t       *g_ehead = NULL, *g_etail = NULL;
 static pthread_mutex_t cp_lock = PTHREAD_MUTEX_INITIALIZER;
-static pthread_cond_t  cp_cond = PTHREAD_COND_INITIALIZER;
+static pthread_cond_t  cp_cond;
+static pthread_once_t  cp_cond_once = PTHREAD_ONCE_INIT;
 static int             g_running = 0;
+
+/* MONOTONIC, not REALTIME. Every tick deadline and the loop's timed wait are absolute times on
+ * this clock, and the realtime clock STEPS: a laptop that slept has its Docker VM's clock
+ * yanked forward or back on resume. Forward, every timer fired at once; backward by N seconds,
+ * no tick fired for N seconds -- three missed ticks and every neighbour aged this router's
+ * routes out, with nothing in any log to say why the network "just stopped working". The
+ * monotonic clock cannot step. (macOS lacks pthread_condattr_setclock; the router is only
+ * built for Linux, but keep it compiling there.) */
+#if defined(__linux__)
+#define CP_CLOCK CLOCK_MONOTONIC
+#else
+#define CP_CLOCK CLOCK_REALTIME
+#endif
+
+static void cp_cond_init(void)
+{
+    pthread_condattr_t attr;
+    pthread_condattr_init(&attr);
+#if defined(__linux__)
+    pthread_condattr_setclock(&attr, CP_CLOCK);
+#endif
+    pthread_cond_init(&cp_cond, &attr);
+    pthread_condattr_destroy(&attr);
+}
 
 static long long now_ms(void)
 {
     struct timespec ts;
-    clock_gettime(CLOCK_REALTIME, &ts);
+    clock_gettime(CP_CLOCK, &ts);
     return (long long)ts.tv_sec * 1000 + ts.tv_nsec / 1000000;
 }
 
@@ -159,6 +190,7 @@ static int svc_timer_add(gr_cp_module_t *self, int period_ms,
                          void (*cb)(gr_cp_module_t *self, void *arg), void *arg)
 {
     int id = -1, i;
+    pthread_once(&cp_cond_once, cp_cond_init);
     pthread_mutex_lock(&cp_lock);
     for (i = 0; i < GR_CP_MAX_TIMERS; i++)
         if (!g_timers[i].used)
@@ -270,6 +302,7 @@ void gr_cp_deliver(gpacket_t *pkt)
 {
     int i, want = 0;
     if (g_nmod == 0) return;                 /* fast path: nothing loaded */
+    pthread_once(&cp_cond_once, cp_cond_init);
     pthread_mutex_lock(&cp_lock);
     for (i = 0; i < g_nmod; i++)
         if (filter_match(&g_modules[i]->filter, pkt)) { want = 1; break; }
@@ -294,6 +327,7 @@ void gr_cp_link_event(int iface, int up, int metric)
     if (g_nmod == 0) return;                 /* nothing loaded: nobody to tell */
     if ((e = (cp_evt_t *)malloc(sizeof *e)) == NULL) return;
     e->iface = iface; e->up = up; e->metric = metric; e->next = NULL;
+    pthread_once(&cp_cond_once, cp_cond_init);
     pthread_mutex_lock(&cp_lock);
     if (g_etail) g_etail->next = e; else g_ehead = e;
     g_etail = e;
@@ -301,20 +335,54 @@ void gr_cp_link_event(int iface, int up, int metric)
     pthread_mutex_unlock(&cp_lock);
 }
 
-static void dispatch_link(cp_evt_t *e)
+/* Both dispatchers walk a SNAPSHOT of the module list taken under the lock, not g_modules
+ * itself: `cp del` and a replacing `cp add` shift that array on the CLI thread. */
+static void dispatch_link(gr_cp_module_t **mods, int nmod, cp_evt_t *e)
 {
     int i;
-    for (i = 0; i < g_nmod; i++)
-        if (g_modules[i]->on_link)
-            g_modules[i]->on_link(g_modules[i], e->iface, e->up, e->metric);
+    for (i = 0; i < nmod; i++)
+        if (mods[i]->on_link)
+            mods[i]->on_link(mods[i], e->iface, e->up, e->metric);
 }
 
-static void dispatch(gpacket_t *pkt)
+static void dispatch(gr_cp_module_t **mods, int nmod, gpacket_t *pkt)
 {
     int i;
-    for (i = 0; i < g_nmod; i++)
-        if (g_modules[i]->on_packet && filter_match(&g_modules[i]->filter, pkt))
-            g_modules[i]->on_packet(g_modules[i], pkt);
+    for (i = 0; i < nmod; i++)
+        if (mods[i]->on_packet && filter_match(&mods[i]->filter, pkt))
+            mods[i]->on_packet(mods[i], pkt);
+}
+
+/* Take a module out of g_modules and park it in g_dead. Called with cp_lock HELD. Its timers
+ * go now, so no callback of its can be scheduled again; the stop() itself waits for bury(). */
+static void detach_locked(int i)
+{
+    gr_cp_module_t *m = g_modules[i];
+    int t;
+    for (t = 0; t < GR_CP_MAX_TIMERS; t++)
+        if (g_timers[t].used && g_timers[t].owner == m)
+            g_timers[t].used = 0;
+    for (t = i; t + 1 < g_nmod; t++) g_modules[t] = g_modules[t + 1];
+    g_modules[--g_nmod] = NULL;
+    if (g_ndead < GR_CP_MAX_MODULES) g_dead[g_ndead++] = m;
+}
+
+/* Run stop() and free every parked module. Called WITHOUT the lock, on a thread that is not
+ * inside any module callback: the control loop between turns, or stop_all at shutdown. */
+static void bury(void)
+{
+    gr_cp_module_t *dead[GR_CP_MAX_MODULES];
+    int n, i;
+    pthread_mutex_lock(&cp_lock);
+    n = g_ndead;
+    for (i = 0; i < n; i++) dead[i] = g_dead[i];
+    g_ndead = 0;
+    pthread_mutex_unlock(&cp_lock);
+    for (i = 0; i < n; i++)
+    {
+        if (dead[i]->stop) dead[i]->stop(dead[i]);
+        free(dead[i]);
+    }
 }
 
 /* ---- the control thread -------------------------------------------------- */
@@ -322,12 +390,23 @@ static void *gr_cp_loop(void *unused)
 {
     (void)unused;
     pthread_setcanceltype(PTHREAD_CANCEL_ASYNCHRONOUS, NULL);
+    pthread_once(&cp_cond_once, cp_cond_init);
     pthread_mutex_lock(&cp_lock);
     g_running = 1;
     while (g_running)
     {
         long long now = now_ms();
         long long next = now + 1000;   /* cap the idle wait at 1s */
+        gr_cp_module_t *mods[GR_CP_MAX_MODULES];
+        int nmod = g_nmod, m;
+        for (m = 0; m < nmod; m++) mods[m] = g_modules[m];
+        if (g_ndead)                   /* something was removed since the last turn */
+        {
+            pthread_mutex_unlock(&cp_lock);
+            bury();
+            pthread_mutex_lock(&cp_lock);
+            continue;                  /* re-snapshot: the list changed under us */
+        }
 
         /* collect due timer callbacks under the lock, then fire them unlocked */
         struct { void (*cb)(gr_cp_module_t *, void *); gr_cp_module_t *owner; void *arg; }
@@ -358,7 +437,7 @@ static void *gr_cp_loop(void *unused)
         while (evts)                   /* link changes first: they explain what follows */
         {
             cp_evt_t *e = evts; evts = evts->next;
-            dispatch_link(e);
+            dispatch_link(mods, nmod, e);
             free(e);
         }
         for (i = 0; i < ndue; i++)
@@ -366,7 +445,7 @@ static void *gr_cp_loop(void *unused)
         while (pkts)
         {
             cp_pkt_t *n = pkts; pkts = pkts->next;
-            dispatch(&n->pkt);
+            dispatch(mods, nmod, &n->pkt);
             free(n);
         }
 
@@ -419,16 +498,43 @@ const char *gr_cp_names(void)
     return buf;
 }
 
+/* The first word of a module's args: for Lua the script path, which is what identifies "the
+ * same protocol" across two `cp add` lines (the tick after it may differ). */
+static void first_word(const char *args, char *out, size_t outlen)
+{
+    size_t n = 0;
+    out[0] = '\0';
+    if (!args) return;
+    while (*args == ' ' || *args == '\t') args++;
+    while (args[n] && args[n] != ' ' && args[n] != '\t' && args[n] != '\n' && n + 1 < outlen)
+    {
+        out[n] = args[n];
+        n++;
+    }
+    out[n] = '\0';
+}
+
 int gr_cp_add(const char *name, const char *args, char *out, size_t outlen)
 {
     unsigned i;
+    int k, replaced = -1;
     gr_cp_module_t *m = NULL;
+    char script[256];
 
-    if (g_nmod >= GR_CP_MAX_MODULES)
+    first_word(args, script, sizeof script);
+    pthread_once(&cp_cond_once, cp_cond_init);
+    pthread_mutex_lock(&cp_lock);
+    for (k = 0; k < g_nmod; k++)             /* the same script already running? */
+        if (strcmp(g_modules[k]->name, name) == 0 && script[0]
+            && strcmp(g_modules[k]->script, script) == 0)
+            replaced = k;
+    if (replaced < 0 && g_nmod >= GR_CP_MAX_MODULES)
     {
+        pthread_mutex_unlock(&cp_lock);
         snprintf(out, outlen, "control plane full (%d modules)", g_nmod);
         return -1;
     }
+    pthread_mutex_unlock(&cp_lock);
     for (i = 0; i < sizeof(CP_REGISTRY) / sizeof(CP_REGISTRY[0]); i++)
         if (strcmp(name, CP_REGISTRY[i].name) == 0) { m = CP_REGISTRY[i].ctor(); break; }
     if (!m)
@@ -436,6 +542,7 @@ int gr_cp_add(const char *name, const char *args, char *out, size_t outlen)
         snprintf(out, outlen, "unknown control module: %s   (have: %s)", name, gr_cp_names());
         return -1;
     }
+    strncpy(m->script, script, sizeof m->script - 1);
     if (m->start && m->start(m, &SERVICES, args) != 0)   /* may register timers (safe) */
     {
         snprintf(out, outlen, "cp add %s: start failed", name);
@@ -443,11 +550,51 @@ int gr_cp_add(const char *name, const char *args, char *out, size_t outlen)
         free(m);
         return -1;
     }
+    /* The new copy is running before the old one goes, so the protocol never stops: its
+     * routes stay in the table until the replacement has learned its own. Re-find the old
+     * one -- the list may have moved while start() ran unlocked. */
     pthread_mutex_lock(&cp_lock);
-    g_modules[g_nmod++] = m;
+    replaced = -1;
+    for (k = 0; k < g_nmod; k++)
+        if (strcmp(g_modules[k]->name, name) == 0 && script[0]
+            && strcmp(g_modules[k]->script, script) == 0)
+        {
+            replaced = k;
+            break;
+        }
+    if (replaced >= 0)
+        detach_locked(replaced);
+    if (g_nmod < GR_CP_MAX_MODULES)
+        g_modules[g_nmod++] = m;
     pthread_cond_signal(&cp_cond);
     pthread_mutex_unlock(&cp_lock);
-    snprintf(out, outlen, "control module '%s' started", name);
+    if (replaced >= 0)
+        snprintf(out, outlen, "control module '%s' restarted: replaced the copy of %s that was "
+                 "already running (two copies would fight over one route table)", name, script);
+    else
+        snprintf(out, outlen, "control module '%s' started", name);
+    return 0;
+}
+
+int gr_cp_del(int index, char *out, size_t outlen)
+{
+    char what[300];
+    pthread_mutex_lock(&cp_lock);
+    if (index < 0 || index >= g_nmod)
+    {
+        int n = g_nmod;
+        pthread_mutex_unlock(&cp_lock);
+        if (n == 0)
+            snprintf(out, outlen, "no control modules loaded");
+        else
+            snprintf(out, outlen, "cp del: no module [%d]  (cp list shows 0..%d)", index, n - 1);
+        return -1;
+    }
+    snprintf(what, sizeof what, "%s %s", g_modules[index]->name, g_modules[index]->script);
+    detach_locked(index);
+    pthread_cond_signal(&cp_cond);           /* wake the control thread to bury it */
+    pthread_mutex_unlock(&cp_lock);
+    snprintf(out, outlen, "control module [%d] %s removed", index, what);
     return 0;
 }
 
@@ -468,6 +615,7 @@ void gr_cp_stop_all(void)
         if (snap[i]->stop) snap[i]->stop(snap[i]);
         free(snap[i]);
     }
+    bury();                                  /* and whatever cp del had parked */
 }
 
 int gr_cp_status(char *out, size_t outlen)
@@ -495,9 +643,12 @@ int gr_cp_list(char *out, size_t outlen)
     if (g_nmod == 0) n = snprintf(out, outlen, "no control modules loaded");
     else
     {
+        /* One line per module, with what it was started with: `lua lua` said nothing about
+         * WHICH scripts were running, or that the same one was running twice. */
         n = snprintf(out, outlen, "control modules (%d):", g_nmod);
         for (i = 0; i < g_nmod && n < (int)outlen; i++)
-            n += snprintf(out + n, outlen - n, " %s", g_modules[i]->name);
+            n += snprintf(out + n, outlen - n, "\n  [%d] %s %s", i, g_modules[i]->name,
+                          g_modules[i]->script);
     }
     pthread_mutex_unlock(&cp_lock);
     return 0;

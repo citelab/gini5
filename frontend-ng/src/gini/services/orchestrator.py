@@ -817,6 +817,7 @@ _SHIPPED_HASHES = {
     }),
     "rip2.lua": frozenset({
         "3cf85fcc40f0e2b98fee00b3be71b2c50fc7da015ab08e6f3bb23744c359ca62",   # 2026-10-14
+        "4347e7827bcee10df9f657486427b9c5ceb0308824472363962ee6bd0c772f30",   # speaks at load
     }),
 }
 

@@ -113,7 +113,7 @@ int CLIInit(router_config *rarg)
     registerCLI("gnc", gncCmd, SHELP_GNC, USAGE_GNC, LHELP_GNC);
     registerCLI("gpipe", gpipeCmd,
                 "build and inspect the router's packet-processing pipeline",
-                "gpipe list | add <module> [arg] | clear | trace <ip> | cp add|list|status|stop"
+                "gpipe list | add <module> [arg] | clear | trace <ip> | cp add|list|status|del|stop"
                 " | mcast join|leave|show",
                 "gpipe.hlp");
 

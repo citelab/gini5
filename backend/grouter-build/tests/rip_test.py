@@ -138,6 +138,24 @@ def main() -> int:
             print(f"RESULT: FAIL — r1 still routes to {r3_lan} after the link went down")
             return 1
         print(f"[r1] dropped {r3_lan} after the R2-R3 link went down")
+
+        # a second `cp add` of the same script REPLACES the running copy: before, it started a
+        # twin, and two instances of one protocol flipped the route table between their
+        # answers on every advertisement (a student who typed the command twice, or reloaded
+        # an edited script, saw RIP "sometimes work")
+        out = cli(routers["r1"], f"gpipe cp add lua {RIP} {TICK_MS}")
+        listing = cli(routers["r1"], "gpipe cp list")
+        if "replaced" not in out or "control modules (1)" not in listing:
+            print(f"RESULT: FAIL — a second cp add did not replace the first: {out!r} / {listing!r}")
+            return 1
+        print(f"[r1] cp add again: {out.splitlines()[-1]}")
+        # and one module can be removed by itself, by its cp list index
+        out = cli(routers["r1"], "gpipe cp del 0")
+        listing = cli(routers["r1"], "gpipe cp list")
+        if "removed" not in out or "no control modules loaded" not in listing:
+            print(f"RESULT: FAIL — cp del 0 did not remove the module: {out!r} / {listing!r}")
+            return 1
+        print(f"[r1] cp del 0: {out}")
         print()
         print("RESULT: PASS — rip_reference.lua converges in dynamic mode and handles a failure.")
         return 0

@@ -55,7 +55,7 @@ int gr_control(const char *line, char *out, size_t outlen)
     if (!tok)
     {
         snprintf(out, outlen, "usage: add acl <cidr> | add counter | list | clear | trace <a.b.c.d>"
-                 " | cp add <name> [args] | cp list | cp stop"
+                 " | cp add <name> [args] | cp list | cp del <n> | cp stop"
                  " | mcast join|leave <group> <iface> | mcast show");
         return 0;
     }
@@ -155,9 +155,19 @@ int gr_control(const char *line, char *out, size_t outlen)
             gr_cp_stop_all();
             snprintf(out, outlen, "control plane stopped (all modules removed)");
         }
+        else if (sub && strcmp(sub, "del") == 0)      /* one module, by its cp list index */
+        {
+            char *idx = strtok(NULL, " \t\n");
+            if (!idx)
+            {
+                snprintf(out, outlen, "usage: cp del <n>   (n from cp list)");
+                return -1;
+            }
+            return gr_cp_del(atoi(idx), out, outlen);
+        }
         else
-            snprintf(out, outlen, "usage: cp add <name> [args] | cp list | cp status | cp stop"
-                     "   (modules: %s)", gr_cp_names());
+            snprintf(out, outlen, "usage: cp add <name> [args] | cp list | cp status | "
+                     "cp del <n> | cp stop   (modules: %s)", gr_cp_names());
     }
     else if (strcmp(tok, "mcast") == 0)     /* B3: multicast membership */
     {

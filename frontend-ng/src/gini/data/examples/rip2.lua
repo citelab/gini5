@@ -12,6 +12,18 @@
 -- hands it over as interfaces()[i].cost, so a route learned over an interface costs
 -- what the neighbour advertised PLUS that link's cost. With every cost 1 this is
 -- plain hop count. interfaces() is re-read every tick, since costs can change live.
+--
+-- When it speaks: every tick, and ALSO once at load, whenever a link changes, and in
+-- answer to a neighbour that has just started. The first tick is a whole period after
+-- `cp add` (5 s unless you say otherwise), and a router that hears nothing until then
+-- knows only its own LANs for that long -- on a four-router chain that was 15-20 s
+-- before a ping worked, which reads as "RIP is broken" when it is only slow. Worse, a
+-- router that has just (re)loaded believes the FIRST vector it hears, whatever the
+-- cost, until a cheaper one arrives a tick later. A just-started router's vector is
+-- all cost 0 (its own LANs and nothing else), so a neighbour that receives one
+-- answers at once, and the newcomer has every neighbour's vector within a round trip.
+-- What is said is unchanged: the whole vector, the same on every interface. No split
+-- horizon, no poison reverse -- that is rip3's job.
 
 INF = 16
 local dv, myifaces = {}, {}
@@ -69,20 +81,25 @@ local function snapshot() -- what `gpipe cp status` shows: publish() sets it
   publish(table.concat(lines, "\n"))
 end
 
+local function advertise() -- the whole vector, the same on every interface
+  local vec = {}
+  for net, r in pairs(dv) do vec[net] = r.cost end
+  local msg = encode(vec)
+  for _, itf in ipairs(myifaces) do send(itf.iface, msg) end
+end
+
 function init(list) -- our own LANs cost 0
   myifaces = list
   for _, itf in ipairs(list) do
     set_route(net_of(itf.ip), {cost = 0, connected = true, iface = itf.iface})
   end
+  advertise() -- say so now rather than a whole tick from now
   snapshot()
 end
 
 function tick() -- advertise the whole vector, then age
   myifaces = interfaces() -- pick up link costs changed since the last tick
-  local vec = {}
-  for net, r in pairs(dv) do vec[net] = r.cost end
-  local msg = encode(vec)
-  for _, itf in ipairs(myifaces) do send(itf.iface, msg) end
+  advertise()
   for net, r in pairs(dv) do
     if not r.connected then
       r.age = (r.age or 0) + 1
@@ -100,11 +117,15 @@ function on_link_change(iface, up, cost) -- a link went down, came back, or chan
       elseif up and r.connected then r.cost = 0 end                   -- our LAN is back
     end
   end
+  advertise() -- the news, good or bad, goes now rather than at the next tick
   snapshot()
 end
 
 function on_message(iface, src, data) -- a neighbour's vector arrived
-  for net, cost in pairs(decode(data)) do
+  local vec = decode(data)
+  local newborn = next(vec) ~= nil -- only its own LANs: it has just started
+  for net, cost in pairs(vec) do
+    if cost > 0 then newborn = false end
     local r = dv[net]
     if not (r and r.connected) then -- never override a connected LAN
       local newc = math.min(cost + cost_of(iface), INF)
@@ -113,5 +134,6 @@ function on_message(iface, src, data) -- a neighbour's vector arrived
       end
     end
   end
+  if newborn then advertise() end -- answer now; it would otherwise wait a whole tick
   snapshot()
 end

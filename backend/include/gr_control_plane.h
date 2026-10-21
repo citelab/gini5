@@ -94,6 +94,10 @@ struct gr_cp_module
     /* OPTIONAL: an interface went up or down, or its cost changed. Runs on the control thread,
      * like everything else a module does. NULL = not interested. Appended last. */
     void (*on_link)(gr_cp_module_t *self, int iface, int up, int metric);
+    /* What this instance was started with: the first word of its args (a Lua module's script
+     * path). Set by gr_cp_add, so a second `cp add lua /scripts/rip.lua` can find the copy
+     * already running and replace it instead of starting a twin. Appended last. */
+    char           script[256];
 };
 
 /* ---- runtime entry points ---- */
@@ -103,8 +107,19 @@ struct gr_cp_module
 pthread_t gr_cp_thread_init(void);
 
 /* Register (and start) a control module by name, with optional args. 0 on success, -1 on
- * failure (unknown name / start() failed). Backs `gpipe cp add`. */
+ * failure (unknown name / start() failed). Backs `gpipe cp add`.
+ *
+ * A module of the same name started with the same first argument (for Lua, the same script)
+ * is REPLACED: the running copy is removed once the new one has started. Before this every
+ * `cp add` was another instance -- a student who typed the command twice, or reloaded an
+ * edited script, had two protocols writing one route table, and the table flipped between
+ * their answers on every advertisement. */
 int  gr_cp_add(const char *name, const char *args, char *out, size_t outlen);
+
+/* Remove ONE module, by its index in `cp list`. Backs `gpipe cp del <n>`. The module is
+ * detached at once (no more packets, timers or link events reach it); its stop() runs on
+ * the control thread at the next turn of its loop, where no callback can be in flight. */
+int  gr_cp_del(int index, char *out, size_t outlen);
 
 /* Stop + unregister every loaded control module. Backs `gpipe cp stop`. */
 void gr_cp_stop_all(void);

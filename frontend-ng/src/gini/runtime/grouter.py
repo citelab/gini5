@@ -88,18 +88,36 @@ class Router:
         if op == "cp":                                 # B2: control-plane modules
             sub = parts[1] if len(parts) >= 2 else ""
             if sub == "add" and len(parts) >= 3:
+                # the same script again REPLACES the running copy, as the C router does
                 name, cargs = parts[2], " ".join(parts[3:])
+                script = cargs.split()[0] if cargs.split() else ""
+                same = [i for i, (n, a) in enumerate(self.cp_modules)
+                        if n == name and script and a.split()[:1] == [script]]
+                for i in reversed(same):
+                    del self.cp_modules[i]
                 self.cp_modules.append((name, cargs))
+                if same:
+                    return (f"control module '{name}' restarted: replaced the copy of {script} "
+                            f"that was already running (two copies would fight over one route table)")
                 return f"control module '{name}' started"
             if sub == "list":
                 if not self.cp_modules:
                     return "no control modules loaded"
-                return "control modules (%d): %s" % (
-                    len(self.cp_modules), " ".join(n for n, _ in self.cp_modules))
+                return "control modules (%d):%s" % (
+                    len(self.cp_modules),
+                    "".join(f"\n  [{i}] {n} {a.split()[0] if a.split() else ''}"
+                            for i, (n, a) in enumerate(self.cp_modules)))
+            if sub == "del" and len(parts) >= 3 and parts[2].isdigit():
+                i = int(parts[2])
+                if i >= len(self.cp_modules):
+                    return (f"cp del: no module [{i}]" if self.cp_modules
+                            else "no control modules loaded")
+                n, a = self.cp_modules.pop(i)
+                return f"control module [{i}] {n} {a.split()[0] if a.split() else ''} removed"
             if sub == "stop":
                 self.cp_modules.clear()
                 return "control plane stopped (all modules removed)"
-            return "usage: cp add lua <script> | cp list | cp stop  (control plane = Lua)"
+            return "usage: cp add lua <script> | cp list | cp del <n> | cp stop  (control plane = Lua)"
         if op == "mcast":                              # B3: multicast membership
             sub = parts[1] if len(parts) >= 2 else ""
             if sub in ("join", "leave") and len(parts) >= 4:
