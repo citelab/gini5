@@ -25,13 +25,50 @@ import time
 GROUTER = os.environ.get("GROUTER_BIN", "/usr/local/bin/grouter")
 
 
-def resolve(host: str) -> str:
-    for _ in range(20):                      # Docker DNS can lag at startup
+#: How long to wait for a peer's container name to appear in Docker DNS before giving up.
+RESOLVE_S = float(os.environ.get("GINI_PEER_RESOLVE_S", "120"))
+#: What an unresolved peer becomes. The C router learns the real address from the first datagram
+#: the peer sends it (tun.c, tun_recvfrom), so a placeholder heals; a hostname never could.
+UNRESOLVED = "0.0.0.0"
+
+
+#: The router's name, for log lines (set by main). A module global rather than an argument so
+#: the tests that monkeypatch `resolve` with a one-argument lambda keep working.
+ROUTER_NAME = "router"
+
+
+def resolve(host: str, deadline_s: float | None = None) -> str:
+    """The peer container's address, waiting for Docker DNS to know it.
+
+    Compose starts a lab's containers in no particular order, and a name resolves only once
+    that container is attached to the network. On a slow laptop (Windows, Docker Desktop,
+    eight containers) the gap can run well past ten seconds. This used to try for ten and then
+    hand back the bare HOSTNAME -- which `ifconfig add -dstip` parses with sscanf, leaving the
+    destination as whatever was on the stack. The interface still received (its socket was
+    bound), so the router heard every neighbour that started after it and was heard by none
+    of them: RIP tables with every route pointing one way, pings that never came back, and
+    "it works sometimes" depending on which container won the start. Now the wait is long,
+    says what it is waiting for, and gives up to a placeholder the router can recover from.
+    """
+    name = ROUTER_NAME
+    limit = RESOLVE_S if deadline_s is None else deadline_s
+    t0 = time.monotonic()
+    said = 0.0
+    while True:
         try:
             return socket.gethostbyname(host)
         except OSError:
+            waited = time.monotonic() - t0
+            if waited >= limit:
+                print(f"[{name}] WARNING: peer '{host}' never appeared in Docker DNS after "
+                      f"{waited:.0f} s; the link to it will come up when it speaks first.",
+                      file=sys.stderr)
+                return UNRESOLVED
+            if waited - said >= 5:
+                print(f"[{name}] waiting for peer '{host}' to come up ({waited:.0f} s)",
+                      file=sys.stderr)
+                said = waited
             time.sleep(0.5)
-    return host
 
 
 def build_config(cfg: dict) -> str:
@@ -147,6 +184,8 @@ def main() -> int:
     import json
     cfg = json.loads(raw)
     name = cfg.get("name", "r1")
+    global ROUTER_NAME
+    ROUTER_NAME = name
 
     confdir = "/run"
     conf = os.path.join(confdir, f"{name}.conf")

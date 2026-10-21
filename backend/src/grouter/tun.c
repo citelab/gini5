@@ -237,14 +237,29 @@ int tun_recvfrom(vpl_data_t *vpl, void *buf, int len)
     }
     /*
      * Each tun interface is a dedicated point-to-point UDP link, so only the peer
-     * sends here. We deliberately do NOT reject on a sender-address mismatch: in a
-     * dynamic fabric (Docker) the peer's address is resolved at startup and may differ
-     * slightly from the datagram's observed source (DNS timing, NAT). Dropping on a
-     * mismatch silently breaks the whole link. Note a mismatch at high verbosity only.
+     * sends here -- and where it sends FROM is where it is. The configured peer address
+     * is only ever a guess made at startup: run_grouter.py resolved the peer's container
+     * name then, and a name Docker DNS did not yet know came through as 0.0.0.0 (it used
+     * to come through as the name itself, which sscanf turned into stack garbage), so this
+     * interface received every frame the peer sent and answered into the void. A peer
+     * container that restarts gets a new address too, and its neighbours kept sending to
+     * the old one. So the observed source wins, every time: the first datagram from a peer
+     * we could not place, or from a peer that moved, re-aims the link. The output thread
+     * reads these two fields while we write them; each store is a single aligned word, so
+     * the worst case is one datagram sent to the new address with the old port.
      */
     if ((rcvaddr.sin_addr.s_addr != dstaddr->sin_addr.s_addr) ||
         rcvaddr.sin_port != dstaddr->sin_port)
-        verbose(3, "[tun_recvfrom]:: sender differs from configured peer (accepting anyway)");
+    {
+        char was[32];
+        strncpy(was, inet_ntoa(dstaddr->sin_addr), sizeof was - 1);   /* static buffer */
+        was[sizeof was - 1] = '\0';
+        verbose(2, "[tun_recvfrom]:: peer is at %s:%d (was %s:%d): link re-aimed",
+                inet_ntoa(rcvaddr.sin_addr), ntohs(rcvaddr.sin_port),
+                was, ntohs(dstaddr->sin_port));
+        dstaddr->sin_addr.s_addr = rcvaddr.sin_addr.s_addr;
+        dstaddr->sin_port = rcvaddr.sin_port;
+    }
 
     verbose(2, "[tun_recvfrom]:: Destination MAC is %s ", MAC2Colon(tmpbuf, buf));
     /* The byte count, like recvfrom itself. It returned EXIT_SUCCESS (0), so the caller's

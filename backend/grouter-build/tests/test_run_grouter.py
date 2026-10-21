@@ -103,6 +103,27 @@ def test_config_passes_the_links_cost_to_the_router():
         assert "-metric" not in cfg(plain)
 
 
+def test_an_unresolved_peer_becomes_a_placeholder_not_a_hostname():
+    """resolve() used to try for ten seconds and then return the HOSTNAME, which `ifconfig add
+    -dstip` fed to sscanf: the destination was stack garbage, the interface still received, and
+    the router heard every neighbour that started after it and was heard by none of them. The
+    placeholder is one the router can recover from (tun.c learns the peer from its first
+    datagram, see peer_learn_test.py)."""
+    assert run_grouter.resolve("no-such-peer.invalid", deadline_s=0) == "0.0.0.0"
+    assert run_grouter.resolve("127.0.0.1", deadline_s=0) == "127.0.0.1"
+    saved = run_grouter.RESOLVE_S
+    run_grouter.RESOLVE_S = 0
+    try:
+        cfg = run_grouter.build_config({"name": "r1", "ifaces": [
+            {"ip": "10.0.1.1/24", "mac": "02:00:00:01:01:01",
+             "port": {"peer_host": "no-such-peer.invalid", "peer_port": 5000,
+                      "bind_port": 5001}}]})
+    finally:
+        run_grouter.RESOLVE_S = saved
+    line = next(l for l in cfg.splitlines() if l.startswith("ifconfig add tun1"))
+    assert "-dstip 0.0.0.0 " in line and "no-such-peer" not in line
+
+
 if __name__ == "__main__":
     test_cmd_uses_valid_option_spelling()
     test_cmd_options_are_accepted_by_the_binary()
@@ -111,6 +132,7 @@ if __name__ == "__main__":
     test_config_gives_the_router_its_real_netmask()
     test_router_lab_delay_is_applied_at_boot()
     test_config_passes_the_links_cost_to_the_router()
+    test_an_unresolved_peer_becomes_a_placeholder_not_a_hostname()
     print("ok")
     test_openflow_mode_adds_flag_and_drops_routes()
     print("test_run_grouter: ALL PASS")
