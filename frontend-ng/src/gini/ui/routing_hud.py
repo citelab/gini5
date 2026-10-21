@@ -199,12 +199,19 @@ class RoutingHud(QWidget):
             pa, pb = fit[e.a], fit[e.b]
             src = e.a if (e.a, e.b) in hi else (e.b if (e.b, e.a) in hi else None)
             faulty = bool(fault and ({(e.a, e.b), (e.b, e.a)} & fault))
+            down = bool(getattr(e, "down", False))
             if faulty:
                 # Where traffic DIES, painted on the link itself: in L2 a forwarding loop's
                 # cycle (the destination is a host MAC, and hosts are not drawn), in L3 a hop
                 # whose route crosses a failed link. The red ring marks who is cut off; this
                 # marks where.
                 p.setPen(QPen(QColor(t.accent_for("red")), 3, Qt.DashLine))
+            elif down:
+                # A link a router reports DOWN, with nothing routed across it. It stays drawn:
+                # under a routing protocol the routes leave a failed link within a tick, and a
+                # picture that simply dropped the line showed a smaller network working
+                # perfectly where the real one had just lost a link.
+                p.setPen(QPen(QColor(t.accent_for("red")), 1.6, Qt.DotLine))
             elif src is None:
                 p.setPen(QPen(QColor(t.line), 1.4))
             else:
@@ -214,12 +221,14 @@ class RoutingHud(QWidget):
             p.drawLine(pa, pb)
             # The link's COST at the midpoint -- never its delay. Delay is a router setting, and
             # two numbers on one edge read as the same kind of thing; cost is what routing uses.
-            if getattr(e, "cost", None) is not None:
+            # A down link says so instead: its cost is moot while nothing can cross it.
+            if down or getattr(e, "cost", None) is not None:
                 mid = QPointF((pa.x() + pb.x()) / 2, (pa.y() + pb.y()) / 2)
-                p.setPen(QColor(t.text if src else t.muted))
+                p.setPen(QColor(t.accent_for("red")) if down else
+                         QColor(t.text if src else t.muted))
                 p.setFont(QFont(self.font().family(), 8))
                 p.drawText(int(mid.x()) - 20, int(mid.y()) - 14, 40, 12,
-                           Qt.AlignCenter, f"cost {e.cost}")
+                           Qt.AlignCenter, "down" if down else f"cost {e.cost}")
         self._paint_control_overlay(p, fit)
         # nodes
         # `loops` holds router ids only in the router-keyed trace; in the subnet trace it holds
@@ -584,7 +593,7 @@ class RoutingHudController(QObject):
                  switch_devices=None, neighbours_of=None, mac_of=None, ip_of=None,
                  topo_links=None,
                  passthrough_of=None, controllers_of=None, log=None,
-                 interval_ms: int = 2500, cost_of=None) -> None:
+                 interval_ms: int = 2500, cost_of=None, iface_links=None) -> None:
         super().__init__(parent)
         self.hud = RoutingHud(parent, theme)
         self._router_devices = router_devices
@@ -601,6 +610,9 @@ class RoutingHudController(QObject):
         self._controllers_of = controllers_of
         # cost_of(a_rid, b_rid) -> int | None: the link cost to label an edge with
         self._cost_of = cost_of
+        # iface_links() -> {rid: {"tun1": link_id, ...}}: which drawn link each router interface
+        # sits on, so an interface a router reports down marks its edge down (Edge.down)
+        self._iface_links = iface_links
         # Static port map + last-good flow dumps, for the lifetime of this run.
         # See collect_network_data: it is what stops a timed-out poll blanking the picture.
         self._run_cache: dict = {}
@@ -679,19 +691,23 @@ class RoutingHudController(QObject):
     def _build(self):
         """Assemble the live model (blocking CLI reads — call off the GUI thread)."""
         switches = list(self._switch_devices()) if self._switch_devices else []
+        topo = self._topo_links() if self._topo_links else None
+        through = self._passthrough_of() if self._passthrough_of else None
+        ifl = self._iface_links() if self._iface_links else None
         if not switches:
-            # No SDN in this topology: take the original path, where adjacency is inferred
-            # from the routers' own connected routes rather than from the drawn links.
-            model = collect_router_data(self._router_devices(), self._query, self._delay_prop)
+            # No SDN in this topology. Adjacency is the drawn topology's (plus anything the
+            # routers' own connected routes add), so a link that failed is still on the map,
+            # marked down, instead of vanishing the moment the protocol routed around it.
+            model = collect_router_data(self._router_devices(), self._query, self._delay_prop,
+                                        topo_links=topo, passthrough=through, iface_links=ifl)
         else:
             model = collect_network_data(
                 self._router_devices(), switches, self._query, self._delay_prop,
                 neighbours_of=self._neighbours_of,
                 mac_of=self._mac_of() if self._mac_of else None,
                 ip_of=self._ip_of() if self._ip_of else None,
-                topo_links=self._topo_links() if self._topo_links else None,
-                passthrough=self._passthrough_of() if self._passthrough_of else None,
-                run_cache=self._run_cache)
+                topo_links=topo, passthrough=through, run_cache=self._run_cache,
+                iface_links=ifl)
         if self._cost_of is not None:
             for e in model.edges:
                 try:

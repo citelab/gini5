@@ -509,3 +509,101 @@ def test_a_converged_network_has_no_loop_to_paint():
     from gini.domain.routing_model import trace
     tr = trace(_debug_networks(), "r2")
     assert not tr.looping and not tr.loops and not tr.fault_edges
+
+
+# --- a failed link stays on the map --------------------------------------------------------- #
+_SHOW = "Index\tNetwork\t\tNetmask\t\tNexthop\t\tInterface\tOrigin\n"
+
+
+def _ifc(*rows):
+    """`ifconfig show` as the C router prints it: (device, U|D, ip) per row."""
+    return "Device\tState\tIP address\tMAC address\t\tMTU\tCost\n" + "".join(
+        f"{d}\t{s}\t{ip}\t02:00:00:00:00:01\t1500\t1\n" for d, s, ip in rows)
+
+
+def _triangle_after_failure(state="D"):
+    """R1-R2-R3 under RIP, after the R1-R2 link (10.0.1.0/24) failed: both ends report the
+    interface down, the connected routes are gone, and traffic between R1 and R2 goes via R3.
+    `state="U"` is the same network before the failure, with the link idle."""
+    r1 = _SHOW + ("[0]\t10.0.2.0\t255.255.255.0\t0.0.0.0\t\ttun2\tC\n"
+                  "[1]\t10.0.3.0\t255.255.255.0\t10.0.2.2\t\ttun2\tD\n")
+    r2 = _SHOW + ("[0]\t10.0.3.0\t255.255.255.0\t0.0.0.0\t\ttun2\tC\n"
+                  "[1]\t10.0.2.0\t255.255.255.0\t10.0.3.1\t\ttun2\tD\n")
+    r3 = _SHOW + ("[0]\t10.0.2.0\t255.255.255.0\t0.0.0.0\t\ttun1\tC\n"
+                  "[1]\t10.0.3.0\t255.255.255.0\t0.0.0.0\t\ttun2\tC\n")
+    infos = [("r1", "R1", r1, _ifc(("tun1", state, "10.0.1.1"), ("tun2", "U", "10.0.2.1"))),
+             ("r2", "R2", r2, _ifc(("tun1", state, "10.0.1.2"), ("tun2", "U", "10.0.3.2"))),
+             ("r3", "R3", r3, _ifc(("tun1", "U", "10.0.2.2"), ("tun2", "U", "10.0.3.1")))]
+    topo = [("r1", "r2", "l12"), ("r1", "r3", "l13"), ("r2", "r3", "l23")]
+    ifl = {"r1": {"tun1": "l12", "tun2": "l13"}, "r2": {"tun1": "l12", "tun2": "l23"},
+           "r3": {"tun1": "l13", "tun2": "l23"}}
+    return infos, topo, ifl
+
+
+def test_a_failed_link_stays_on_the_map_marked_down_once_the_protocol_routed_around_it():
+    """Adjacency derived from routes alone loses the link: its connected routes went with the
+    interfaces, and RIP's replacement routes point the other way. The HUD then drew a two-link
+    network working perfectly -- 'it should show disconnected, but it shows connected'."""
+    from gini.domain.routing_model import contract_links
+    infos, topo, ifl = _triangle_after_failure()
+    gone = assemble_model(infos)
+    assert frozenset(("r1", "r2")) not in {frozenset((e.a, e.b)) for e in gone.edges}
+    m = assemble_model(infos, contract_links({"r1", "r2", "r3"}, topo, set()), iface_links=ifl)
+    by = {frozenset((e.a, e.b)): e for e in m.edges}
+    assert by[frozenset(("r1", "r2"))].down
+    assert not by[frozenset(("r1", "r3"))].down and not by[frozenset(("r2", "r3"))].down
+    # and the trace still follows the real tables around it: R1 reaches R2's segment via R3
+    assert forwarding_tree(m, "r1").per_dest["10.0.3.0/24"].path == ["r1", "r3"]
+    assert ("r1", "r2") not in forwarding_tree(m, "r1").edges_used
+
+
+def test_collect_router_data_draws_the_topology_and_marks_the_dead_link():
+    """The live path: the HUD controller hands in the drawn links and the interface map."""
+    infos, topo, ifl = _triangle_after_failure()
+    text = {(rid, "route show"): rt for rid, _n, rt, _i in infos}
+    text.update({(rid, "ifconfig show"): it for rid, _n, _rt, it in infos})
+    m = collect_router_data([(r, r.upper()) for r in ("r1", "r2", "r3")],
+                            lambda name, cmd: text[(name.lower(), cmd)], lambda rid, k: "",
+                            topo_links=topo, passthrough=set(), iface_links=ifl)
+    assert {(e.a, e.b, e.down) for e in m.edges} == \
+        {("r1", "r2", True), ("r1", "r3", False), ("r2", "r3", False)}
+
+
+def test_a_link_going_down_is_a_change_the_timeline_records():
+    """Under static routing a failure changes no table, so the scrub had no tick for it."""
+    from gini.domain.routing_model import contract_links, model_signature
+    before, topo, ifl = _triangle_after_failure("U")
+    after, _, _ = _triangle_after_failure("D")
+    links = contract_links({"r1", "r2", "r3"}, topo, set())
+    assert model_signature(assemble_model(before, links, iface_links=ifl)) != \
+        model_signature(assemble_model(after, links, iface_links=ifl))
+
+
+def test_through_a_switch_each_end_of_the_edge_knows_its_own_link():
+    """R1--S1--R2 contracts to one edge, but R1's interface is on the R1-S1 link and R2's on
+    the S1-R2 link; a failure of either marks the edge down."""
+    from gini.domain.routing_model import contract_links
+    assert contract_links({"r1", "r2"}, [("r1", "s1", "a"), ("s1", "r2", "b")], {"s1"}) \
+        == [("r1", "r2", "a", "b")]
+    r1 = _SHOW + "[0]\t10.0.1.0\t255.255.255.0\t0.0.0.0\t\ttun1\tC\n"
+    infos = [("r1", "R1", r1, _ifc(("tun1", "U", "10.0.1.1"))),
+             ("r2", "R2", r1, _ifc(("tun1", "D", "10.0.1.2")))]
+    m = assemble_model(infos, [("r1", "r2", "a", "b")],
+                       iface_links={"r1": {"tun1": "a"}, "r2": {"tun1": "b"}})
+    assert m.edges[0].down
+    m = assemble_model(infos, [("r1", "r2", "a", "b")], iface_links={"r1": {"tun1": "a"}})
+    assert not m.edges[0].down, "an end whose link is unknown cannot mark it"
+
+
+def test_the_drawn_topology_does_not_lose_a_neighbour_the_routes_know():
+    """Two routers sharing a segment through something the walk does not pass -- the route-
+    derived adjacency the router-only map always had is kept alongside the drawn one."""
+    r = _SHOW + "[0]\t10.0.1.0\t255.255.255.0\t0.0.0.0\t\ttun1\tC\n"
+    infos = [("r1", "R1", r, _ifc(("tun1", "U", "10.0.1.1"))),
+             ("r2", "R2", r, _ifc(("tun1", "U", "10.0.1.2")))]
+    text = {(rid, "route show"): rt for rid, _n, rt, _i in infos}
+    text.update({(rid, "ifconfig show"): it for rid, _n, _rt, it in infos})
+    m = collect_router_data([("r1", "r1"), ("r2", "r2")], lambda n, c: text[(n, c)],
+                            lambda rid, k: "",
+                            topo_links=[("r1", "x", "a"), ("x", "r2", "b")], passthrough=set())
+    assert [(e.a, e.b) for e in m.edges] == [("r1", "r2")]

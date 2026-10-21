@@ -24,6 +24,8 @@ void gr_route_del(int index);                                          /* write 
 int  gr_route_del_match(uchar *net, uchar *mask);   /* 1 if a route was deleted */
 /* delete net/mask only if it is still the CONNECTED route on `iface`; 1 if it was */
 int  gr_route_withdraw_connected(uchar *net, uchar *mask, int iface);                       /* write (by net/mask) */
+/* copy all MAX_ROUTES entries into `out` under the read lock (for `route show`) */
+void gr_route_snapshot(route_entry_t *out);                             /* read  */
 
 /* ARP cache (rwlock-protected) */
 int  gr_arp_find(uchar *ip_addr, uchar *mac_out);                       /* read  */

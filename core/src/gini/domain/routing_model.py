@@ -82,6 +82,13 @@ class Edge:
     # the link's abstract routing cost (domain/link_props.py), set by the HUD controller from the
     # topology; None when the lab is not weighted. This, not latency, is what the HUD labels.
     cost: int | None = None
+    # The link is DOWN at one end or both: a router reports the interface on it as state D. Kept
+    # on the map rather than dropped from it. Under a routing protocol a failed link leaves the
+    # routes within a tick -- the connected routes go when the interfaces do, and the protocol
+    # re-routes around it -- so adjacency derived from routes made the link vanish, and a picture
+    # with no link drawn where one has failed looked like a network with one link fewer that was
+    # working perfectly. The HUD draws a down edge dotted red; see assemble_model(iface_links=).
+    down: bool = False
 
 
 @dataclass
@@ -490,9 +497,11 @@ def derive_edges(routers) -> list:
     switch). Robust to switch-mediated topologies where routers have no direct link.
 
     Or if A has a route whose NEXT HOP is one of B's addresses: a next hop is on a shared segment
-    by definition. This is what keeps a failed link on the map. Its connected routes go when
-    the interfaces go down, at both ends, but a static route still points across it -- and a
-    link that vanished could not be drawn as the place traffic dies."""
+    by definition. This is what keeps a failed link on the map under STATIC routing. Its
+    connected routes go when the interfaces go down, at both ends, but a static route still
+    points across it -- and a link that vanished could not be drawn as the place traffic dies.
+    Under a routing protocol the routes leave too, so the live HUD draws the topology's links
+    as well (contract_links + Edge.down); this is the fallback when no topology is given."""
     seen: set = set()
     out: list = []
     for a in routers:
@@ -582,8 +591,9 @@ def ovs_port_peers(peers_in_link_order, iface_verbose=None) -> dict:
     return out
 
 
-def contract_edges(drawn, links, passthrough) -> list:
-    """Adjacency between the nodes the HUD DRAWS, contracting everything else away.
+def contract_links(drawn, links, passthrough) -> list:
+    """Adjacency between the nodes the HUD DRAWS, contracting everything else away, with the
+    topology link at each end: [(a_rid, b_rid, link_at_a, link_at_b)].
 
     `derive_edges` infers router adjacency from connected routes, which is exactly right
     when the only thing between two routers is wire or a classic switch. It cannot help
@@ -598,19 +608,29 @@ def contract_edges(drawn, links, passthrough) -> list:
     on the far side. Machines are NOT passthrough: a host is an endpoint, and walking
     through one would invent a link between two networks that a host merely sits on.
 
+    The link ids are what lets a failed link stay on the map: a router names the interface it
+    reports down, the glue knows which link that interface sits on, and the edge whose end is
+    that link is drawn down (assemble_model). Through a switch the two ends sit on different
+    links -- R1--S1 and S1--R2 -- which is why each end is recorded separately. A link given
+    as a bare (a, b) pair has no id, and an edge over it is never marked down.
+
     drawn:       set of rids the HUD draws (routers + ovs)
-    links:       [(a_rid, b_rid)] from the topology
+    links:       [(a_rid, b_rid)] or [(a_rid, b_rid, link_id)] from the topology
     passthrough: set of rids that may be walked THROUGH but are never drawn
     """
     adj: dict = {}
-    for a, b in links:
-        adj.setdefault(a, []).append(b)
-        adj.setdefault(b, []).append(a)
+    for l in links:
+        a, b = l[0], l[1]
+        lid = l[2] if len(l) > 2 else None
+        adj.setdefault(a, []).append((b, lid))
+        adj.setdefault(b, []).append((a, lid))
     out, seen = [], set()
     for start in drawn:
-        stack, visited = list(adj.get(start, [])), set()
+        # (node, the link we left `start` by, the link we arrived at `node` by)
+        stack = [(n, lid, lid) for n, lid in adj.get(start, [])]
+        visited = set()
         while stack:
-            cur = stack.pop()
+            cur, first, last = stack.pop()
             if cur in visited or cur == start:
                 continue
             visited.add(cur)
@@ -618,19 +638,35 @@ def contract_edges(drawn, links, passthrough) -> list:
                 key = frozenset((start, cur))
                 if key not in seen:
                     seen.add(key)
-                    out.append(tuple(sorted((start, cur))))
+                    if (start, cur) == tuple(sorted((start, cur))):
+                        out.append((start, cur, first, last))
+                    else:
+                        out.append((cur, start, last, first))
             elif cur in passthrough:
-                stack.extend(adj.get(cur, []))
+                stack.extend((n, first, lid) for n, lid in adj.get(cur, []))
     return out
 
 
+def contract_edges(drawn, links, passthrough) -> list:
+    """`contract_links` as plain [(a_rid, b_rid)] pairs, for callers that only want adjacency."""
+    return [(a, b) for a, b, _la, _lb in contract_links(drawn, links, passthrough)]
+
+
+def _down_links(router, iface_links) -> set:
+    """The topology links a router's DOWN interfaces sit on, given {device: link_id} for it."""
+    by_dev = (iface_links or {}).get(router.rid) or {}
+    return {by_dev[d] for d in router.down_ifaces if d in by_dev}
+
+
 def assemble_model(router_infos, links=None, latency_of=None,
-                   ovs_infos=None, mac_of=None, ip_of=None) -> RoutingModel:
+                   ovs_infos=None, mac_of=None, ip_of=None, iface_links=None,
+                   keep_derived=False) -> RoutingModel:
     """Build a RoutingModel from per-router CLI text.
 
     router_infos: [(rid, name, route_show_text, ifconfig_show_text)]
-    links:        [(a_rid, b_rid)] to draw; None → derive adjacency from connected routes (handles
-                  switch-mediated segments)
+    links:        [(a_rid, b_rid)] or [(a_rid, b_rid, link_at_a, link_at_b)] (contract_links) to
+                  draw; None → derive adjacency from connected routes (handles switch-mediated
+                  segments)
     latency_of:   optional callable(a_rid, b_rid) -> float|None  (configured delay-VNF latency)
     ovs_infos:    [(rid, name, openflow_entry_text, port_peer, controller_rid)] — SDN switches to
                   draw as transit nodes. Requires `links` to route through them
@@ -639,6 +675,15 @@ def assemble_model(router_infos, links=None, latency_of=None,
     ip_of:        {rid: ip} for HOSTS as well as routers -- hosts are not nodes, but the
                   model must be able to tell which subnet one sits in to identify the
                   switch that delivers that subnet (see delivery_via).
+    iface_links:  {rid: {device_name: link_id}} -- which topology link each router interface
+                  sits on (the compiler's addressing, tun1 = the first compiled interface).
+                  With it, an edge one of whose end links a router reports DOWN is marked
+                  `Edge.down` instead of disappearing. Only router ends are read: an OVS does
+                  not report its ports' state here, so an edge between two switches is never
+                  marked down.
+    keep_derived: with `links` given, ALSO keep any adjacency the routes derive that the links
+                  did not produce (the router-only map, which used to be route-derived alone
+                  and must not lose a neighbour it used to show).
     """
     routers = [RouterNode(rid, name, parse_iface_ips(iface_text), parse_routes(route_text),
                           down_ips=parse_iface_down(iface_text),
@@ -653,18 +698,36 @@ def assemble_model(router_infos, links=None, latency_of=None,
         from .flowtable import parse as parse_flows       # local: keeps import graph flat
         ovs.append(OvsNode(rid, name, parse_flows(entry_text or ""),
                            dict(port_peer or {}), controller, reachable=reachable))
-    pairs = list(links) if links is not None else [(e.a, e.b) for e in derive_edges(routers)]
-    edges = [Edge(a, b, latency_of(a, b) if latency_of else None) for (a, b) in pairs]
+    if links is None:
+        quads = [(e.a, e.b, None, None) for e in derive_edges(routers)]
+    else:
+        quads = [(l[0], l[1], l[2], l[3]) if len(l) > 3 else (l[0], l[1], None, None)
+                 for l in links]
+        if keep_derived:
+            have = {frozenset((a, b)) for a, b, _la, _lb in quads}
+            quads += [(e.a, e.b, None, None) for e in derive_edges(routers)
+                      if frozenset((e.a, e.b)) not in have]
+    down = {r.rid: _down_links(r, iface_links) for r in routers} if iface_links else {}
+    edges = [Edge(a, b, latency_of(a, b) if latency_of else None,
+                  down=bool((la is not None and la in down.get(a, ()))
+                            or (lb is not None and lb in down.get(b, ()))))
+             for (a, b, la, lb) in quads]
     return RoutingModel(routers, edges, ovs=ovs, mac_of=mac_of, ip_of=ip_of)
 
 
-def collect_router_data(routers, query, delay_prop, links=None):
+def collect_router_data(routers, query, delay_prop, links=None, topo_links=None,
+                        passthrough=None, iface_links=None):
     """Live glue (decoupled via callbacks, so it's testable with fakes and needs no Docker):
 
-    routers:    [(rid, name)] of the router-role devices
-    query:      callable(name, cmd) -> text        (e.g. MainWindow.element_query)
-    delay_prop: callable(rid, key) -> str          (device property, e.g. "DelayEgress")
-    links:      optional [(a_rid, b_rid)]; None → derive adjacency from the live routes
+    routers:     [(rid, name)] of the router-role devices
+    query:       callable(name, cmd) -> text        (e.g. MainWindow.element_query)
+    delay_prop:  callable(rid, key) -> str          (device property, e.g. "DelayEgress")
+    links:       optional [(a_rid, b_rid)]; None → derive adjacency from the live routes
+    topo_links:  optional [(a_rid, b_rid, link_id)] from the drawn topology. With it (and no
+                 `links`) adjacency is the drawn one, contracted through `passthrough` devices,
+                 PLUS whatever the routes derive -- so a failed link stays on the map, marked
+                 down through `iface_links` (see assemble_model).
+    iface_links: {rid: {device_name: link_id}}, see assemble_model
 
     Returns a RoutingModel built from each router's live `route show` + `ifconfig show`, with edge
     latency = source egress delay + destination ingress delay (the configured delay VNF)."""
@@ -675,12 +738,17 @@ def collect_router_data(routers, query, delay_prop, links=None):
         return hop_latency(parse_delay_base(delay_prop(a, "DelayEgress")),
                            parse_delay_base(delay_prop(b, "DelayIngress")))
 
-    return assemble_model(infos, links, latency_of=latency_of)
+    keep = False
+    if links is None and topo_links is not None:
+        links = contract_links({rid for rid, _ in routers}, topo_links, set(passthrough or ()))
+        keep = True
+    return assemble_model(infos, links, latency_of=latency_of, iface_links=iface_links,
+                          keep_derived=keep)
 
 
 def collect_network_data(routers, switches, query, delay_prop, links=None,
                          neighbours_of=None, mac_of=None, topo_links=None,
-                         passthrough=None, run_cache=None, ip_of=None):
+                         passthrough=None, run_cache=None, ip_of=None, iface_links=None):
     """Live glue for the Network HUD: routers AND OpenFlow switches in one model.
 
     Everything beyond `collect_router_data` is about the switches:
@@ -755,10 +823,11 @@ def collect_network_data(routers, switches, query, delay_prop, links=None,
     # route-derived adjacency would draw a router-to-router line straight across them.
     if ovs_infos and links is None and topo_links is not None:
         drawn = {rid for rid, _ in routers} | {i[0] for i in ovs_infos}
-        links = contract_edges(drawn, topo_links, set(passthrough or ()))
+        links = contract_links(drawn, topo_links, set(passthrough or ()))
 
     return assemble_model(infos, links, latency_of=latency_of,
-                          ovs_infos=ovs_infos, mac_of=mac_of, ip_of=ip_of)
+                          ovs_infos=ovs_infos, mac_of=mac_of, ip_of=ip_of,
+                          iface_links=iface_links)
 
 
 # -- P4: convergence recording (pure; the HUD scrub renders straight off this) ------------------ #
@@ -795,6 +864,12 @@ def model_signature(model: RoutingModel) -> tuple:
                     proj.add((mac.strip().lower(), str(a)))
                     break
         sig.append((rid, tuple(sorted(proj))))
+    # Which links are down. Under static routing a failure changes no table at all -- that is the
+    # lesson -- so without this the scrub timeline had no tick for it, and replaying the run showed
+    # the link going down nowhere.
+    down = tuple(sorted((e.a, e.b) for e in model.edges if getattr(e, "down", False)))
+    if down:
+        sig.append(("down", down))
     return tuple(sig)
 
 

@@ -70,6 +70,19 @@ int gr_route_withdraw_connected(uchar *net, uchar *mask, int iface)
     return found;
 }
 
+/* A copy of the whole table, taken under the read lock, for `route show`. The CLI used to
+ * print the live table with no lock at all while the control thread rewrote it (a RIP
+ * tick adds and deletes several entries in a row), so the listing could show a row half
+ * written -- a network with the previous entry's next hop -- or the same route twice as
+ * the shifting array moved it under the walk. printf is slow and may block on the console
+ * pipe, so the lock is held only for the memcpy, never for the printing. */
+void gr_route_snapshot(route_entry_t *out)
+{
+    pthread_rwlock_rdlock(&route_lock);
+    memcpy(out, route_tbl, sizeof(route_entry_t) * MAX_ROUTES);
+    pthread_rwlock_unlock(&route_lock);
+}
+
 int gr_route_del_match(uchar *net, uchar *mask)
 {
     int i, found = 0;

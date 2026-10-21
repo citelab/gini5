@@ -338,3 +338,16 @@ def test_a_poll_that_straddled_a_topology_swap_is_discarded(app):
     # ...and a consistent poll is accepted again
     ctrl._on_model(_model(), good_pos, {})
     assert ctrl.hud._fit() == before
+
+
+def test_a_down_link_is_still_drawn(app):
+    """A link the routers report down stays on the panel, dotted red and labelled, instead of
+    vanishing with its routes (which is what made a failed link look like a working one)."""
+    from gini.ui.routing_hud import RoutingHud
+    m = _model()
+    m.edges[0].down = True
+    h = RoutingHud(None, _theme(app), m, {"R1": (0, 0), "R2": (100, 0), "R3": (200, 0)})
+    h.resize(360, 300)
+    h.grab()
+    assert len(h._fit()) == 3
+    h.close()

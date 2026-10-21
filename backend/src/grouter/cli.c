@@ -795,7 +795,13 @@ void routeCmd()
             }
         }
         else if (!strcmp(next_tok, "show"))
-            printRouteTable(route_tbl);
+        {
+            /* Print a locked copy, not the live table: the control thread may be rewriting
+             * it this instant (see gr_route_snapshot). */
+            route_entry_t snap[MAX_ROUTES];
+            gr_route_snapshot(snap);
+            printRouteTable(snap);
+        }
     }
     return;
 }

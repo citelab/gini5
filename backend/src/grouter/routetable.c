@@ -233,7 +233,8 @@ void printRouteTable(route_entry_t route_tbl[])
 			iface = findInterface(route_tbl[i].interface);
 			printf("[%d]\t%s\t%s\t%s\t\t%s\t%c\n", i, IP2Dot(tmpbuf, route_tbl[i].network),
 			       IP2Dot((tmpbuf+20), route_tbl[i].netmask), IP2Dot((tmpbuf+40), route_tbl[i].nexthop),
-			       iface->device_name, route_tbl[i].origin ? route_tbl[i].origin : '?');
+			       iface ? iface->device_name : "?",
+			       route_tbl[i].origin ? route_tbl[i].origin : '?');
 			rcount++;
 		}
 	printf("-----------------------------------------------------------------\n");

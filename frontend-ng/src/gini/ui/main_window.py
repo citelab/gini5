@@ -113,6 +113,9 @@ class MainWindow(QMainWindow):
     #: A signal rather than a direct call because the receiver builds a dialog, and Qt widgets may
     #: only be touched on the GUI thread — the same rule `ui/worker_host` exists to keep.
     update_checked = Signal(dict)
+    # a link's cut/restore commands have run at every end: (link_id, up, why, ends that refused).
+    # Emitted from the worker that sent them, received on the GUI thread (_on_link_applied).
+    _link_applied = Signal(str, bool, str, list)
 
     def __init__(self, app) -> None:
         super().__init__()
@@ -242,6 +245,10 @@ class MainWindow(QMainWindow):
         self._run_links = None                  # (structure, costs, installed routes, static)
         # link failures (domain/link_faults.py): one clock per link, owned here
         self.ctx.bus.link_state_requested.connect(self._on_link_state_requested)
+        self._link_applied.connect(self._on_link_applied)
+        # {link_id: (up it is heading for, [(up, why) requested meanwhile])} while a link's
+        # commands are out at its ends; one change at a time per link, in the order asked
+        self._link_inflight: dict = {}
         self._run_cfg = None                    # the RuntimeConfig this Run launched
         self._faults = None                     # link_faults.Schedule while running
         self._fault_t0 = 0.0
@@ -1618,8 +1625,11 @@ class MainWindow(QMainWindow):
                         cost_of=self._hud_cost_of,
                         mac_of=self._hud_mac_of,
                         ip_of=self._hud_ip_of,
-                        topo_links=lambda: [(l.source_id, l.target_id)
+                        topo_links=lambda: [(l.source_id, l.target_id, l.id)
                                             for l in self.ctx.topology.links.values()],
+                        # which drawn link each router interface sits on, so an interface a
+                        # router reports down keeps its link on the map, marked down
+                        iface_links=self._hud_iface_links,
                         # only self-learning L2 devices may be walked THROUGH; a machine is an
                         # endpoint, and bridging one would invent a link that does not exist
                         passthrough_of=lambda: {
@@ -3340,6 +3350,29 @@ class MainWindow(QMainWindow):
                 out[did] = ips
         return out
 
+    def _hud_iface_links(self) -> dict:
+        """{router_id: {"tun1": link_id, ...}}: the drawn link under each router interface.
+
+        The gRouter names its interfaces tun1, tun2, ... in the order the compiler emitted them,
+        which is the order of the addressing's interface list (eth0 is tun1; see
+        link_faults.endpoints, which cuts a link by the same arithmetic). It is what lets the
+        Network HUD turn "tun2 is down" into "the R1 ↔ R2 link is down" and keep that link on
+        the map instead of losing it with its routes.
+        """
+        addr = getattr(self.ctx, "addressing", None) or {}
+        by_name = {d.name: d.id for d in self.ctx.topology.devices.values()}
+        out: dict = {}
+        for name, info in addr.items():
+            did = by_name.get(name)
+            if did is None or info.get("role") != "router":
+                continue
+            links = {f"tun{i + 1}": i_info.get("link_id")
+                     for i, i_info in enumerate(info.get("interfaces") or [])
+                     if i_info.get("link_id")}
+            if links:
+                out[did] = links
+        return out
+
     def _controller_app_live(self, d) -> None:
         """The App property changed on a running controller: restart THAT container.
 
@@ -3888,6 +3921,7 @@ class MainWindow(QMainWindow):
     def _stop_link_faults(self) -> None:
         self._fault_timer.stop()
         self._faults = None
+        self._link_inflight = {}                     # whatever lands now lands on a stopped lab
         self.ctx.failed_links = set()
         self.canvas.scene_.set_failed_links(set())   # a stopped lab has no failed links
 
@@ -3906,30 +3940,71 @@ class MainWindow(QMainWindow):
             return
         if link_id not in self.ctx.topology.links:
             return
-        if up == (link_id not in self.ctx.failed_links):
-            return                                  # already in that state
+        if up == self._link_heading(link_id):
+            return                                  # already in, or heading for, that state
         if self._faults is not None:
             now = time.monotonic() - self._fault_t0
             (self._faults.restore if up else self._faults.fail_now)(link_id, now)
         self._apply_link_state(link_id, up, "manual")
 
+    def _link_heading(self, link_id: str) -> bool:
+        """Up or down: the state the link will be in once everything in flight for it lands."""
+        st = self._link_inflight.get(link_id)
+        if st is None:
+            return link_id not in self.ctx.failed_links
+        up, queue = st
+        return queue[-1][0] if queue else up
+
     def _apply_link_state(self, link_id: str, up: bool, why: str) -> None:
         """Cut or restore a link at every end at once -- router interfaces, switch ports, machine
-        interfaces -- and say so. Static routes are deliberately NOT recomputed: that is what
-        static routing does, and the contrast is the lesson. Dynamic routing reacts on its own.
-        Under static routing the log names the routes left pointing across the dead link, since
-        a network that black-holes without a word looks broken rather than static."""
+        interfaces -- and say so ONCE THE ENDS HAVE TAKEN IT. The canvas used to mark the link
+        failed the instant the clock fired, seconds before the last `ifconfig down` had run: for
+        those seconds the canvas showed a cut while the routers, and the Network HUD reading
+        them, showed it carrying traffic -- which it was. Now the commands go out first and the
+        canvas, the inspector, the log and the proof chain follow when they are done
+        (_on_link_applied), so what gBuilder shows is what the routers report. A second change
+        asked for while one is out waits its turn, so the ends never see them out of order.
+
+        Static routes are deliberately NOT recomputed: that is what static routing does, and the
+        contrast is the lesson. Dynamic routing reacts on its own. Under static routing the log
+        names the routes left pointing across the dead link, since a network that black-holes
+        without a word looks broken rather than static."""
+        if link_id not in self.ctx.topology.links:
+            return
+        st = self._link_inflight.get(link_id)
+        if st is not None:
+            st[1].append((up, why))
+            return
+        self._link_inflight[link_id] = (up, [])
+        self._link_send(link_id, up, why)
+
+    def _link_send(self, link_id: str, up: bool, why: str) -> None:
+        """Send the cut/restore to every end off the GUI thread; _link_applied says when done."""
         from ..domain import link_faults as LF
+        cmds = LF.commands(self._run_cfg, link_id, up)
+
+        def work():
+            refused = []
+            for kind, element, cmd in cmds:
+                out = self._link_cmd(kind, element, cmd)
+                if out.startswith(("(query failed", "(not running)", "cannot connect")) \
+                        or "no port on link" in out or "usage" in out:
+                    refused.append(f"{element}: {out[:100]}")
+            self._link_applied.emit(link_id, up, why, refused)
+        run_off_gui(self, work)
+
+    def _on_link_applied(self, link_id: str, up: bool, why: str, refused: list) -> None:
+        """The ends have answered: now the lab's picture changes, and the next change waits."""
         from ..domain import link_props as LP
+        st = self._link_inflight.pop(link_id, None)
         topo = self.ctx.topology
         link = topo.links.get(link_id)
-        if link is None:
-            return
+        if link is None or not self._running or self._run_cfg is None:
+            return                                  # the lab stopped, or lost the link, meanwhile
         if up:
             self.ctx.failed_links.discard(link_id)
         else:
             self.ctx.failed_links.add(link_id)
-        cmds = LF.commands(self._run_cfg, link_id, up)
         a, b = topo.devices.get(link.source_id), topo.devices.get(link.target_id)
         ends = f"{a.name if a else '?'} ↔ {b.name if b else '?'}"
         if why == "random":
@@ -3939,23 +4014,20 @@ class MainWindow(QMainWindow):
             reason = "by hand"
         self.ctx.log(f"Link {ends} {'repaired' if up else 'FAILED'} ({reason}).",
                      "info" if up else "error")
+        if refused:
+            # Still marked: an end that took it has cut the link as far as it is concerned.
+            # Saying which end did not is what makes the canvas and the routers agree.
+            self.ctx.log(f"Link {ends}: not every end took it: " + "; ".join(refused),
+                         "error")
         if not up and self._run_links is not None and self._run_links[3]:
             from ..services import link_push
             self.ctx.log(link_push.failure_note(
                 link_push.stranded(self._run_cfg, self._run_links[2], link_id)), "info")
         self.ctx.bus.link_state_changed.emit(link_id, up, why)
-
-        def work():
-            failed = []
-            for kind, element, cmd in cmds:
-                out = self._link_cmd(kind, element, cmd)
-                if out.startswith(("(query failed", "(not running)", "cannot connect")) \
-                        or "no port on link" in out or "usage" in out:
-                    failed.append(f"{element}: {out[:100]}")
-            if failed:
-                self.ctx.log(f"Link {ends}: not every end took it: " + "; ".join(failed),
-                             "error")
-        run_off_gui(self, work)
+        if st is not None and st[1]:
+            next_up, next_why = st[1][0]
+            self._link_inflight[link_id] = (next_up, st[1][1:])
+            self._link_send(link_id, next_up, next_why)
 
     def _link_cmd(self, kind: str, element: str, cmd: str) -> str:
         """Run one link command at one end. Routers and switches answer on their consoles; a

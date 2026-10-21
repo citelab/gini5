@@ -47,10 +47,15 @@ def _window(t, now=0.0):
     return app, w, sent, logs
 
 
-def _settle(app, sent=None, n=0, tries=200):
+def _settle(app, sent=None, n=0, tries=200, until=None):
+    """Pump events until `n` commands were sent, or `until()` holds. The canvas changes only
+    after the ends have answered, so a test about what gBuilder SHOWS waits on the state."""
     for _ in range(tries):
         app.processEvents()
-        if sent is not None and len(sent) >= n:
+        if until is not None:
+            if until():
+                break
+        elif sent is not None and len(sent) >= n:
             break
         time.sleep(0.01)
     app.processEvents()
@@ -64,7 +69,7 @@ def test_a_random_failure_cuts_the_link_at_every_end():
     ev = w._faults.next_event()
     w._fault_t0 = time.monotonic() - ev.at - 0.01            # as if that much time had passed
     w._fault_tick()
-    _settle(app, sent, 2)
+    _settle(app, until=lambda: sm.id in w.ctx.failed_links)
     assert ("fabric", "S1", f"link {sm.id} down") in sent
     assert ("machine", "M1", f"link {sm.id} down") in sent
     assert sm.id in w.ctx.failed_links
@@ -77,7 +82,7 @@ def test_fail_now_and_restore_on_a_router_link():
     app, w, sent, _logs = _window(t)
     w._start_link_faults()
     w.api.fail_link("R1-R2")
-    _settle(app, sent, 2)
+    _settle(app, until=lambda: rr.id in w.ctx.failed_links)
     assert sorted(sent) == [("router", "R1", "ifconfig down tun1"),
                             ("router", "R2", "ifconfig down tun1")]
     sent.clear()
@@ -85,7 +90,7 @@ def test_fail_now_and_restore_on_a_router_link():
     _settle(app, tries=20)
     assert sent == []
     w.api.restore_link("R1-R2")
-    _settle(app, sent, 2)
+    _settle(app, until=lambda: rr.id not in w.ctx.failed_links)
     assert sorted(sent) == [("router", "R1", "ifconfig up tun1"),
                             ("router", "R2", "ifconfig up tun1")]
     assert rr.id not in w.ctx.failed_links
@@ -115,13 +120,13 @@ def test_the_canvas_and_inspector_show_a_failed_link():
     btn = w.inspector.findChild(QPushButton, "LinkFailButton")
     assert btn is not None and btn.text() == "Fail now"
     btn.click()
-    _settle(app, sent, 2)
+    _settle(app, until=lambda: rr.id in sc.failed_links)
     assert rr.id in sc.failed_links and sc.edges[rr.id]._label.startswith("✕")
     assert "DOWN" in sc.edges[rr.id].toolTip()
     btn = w.inspector.findChild(QPushButton, "LinkFailButton")
     assert btn.text() == "Restore"
     btn.click()
-    _settle(app, sent, 4)
+    _settle(app, until=lambda: rr.id not in sc.failed_links)
     assert rr.id not in sc.failed_links and not sc.edges[rr.id]._label.startswith("✕")
     w._stop_link_faults()
 
@@ -131,7 +136,7 @@ def test_stopping_the_lab_forgets_failures():
     app, w, sent, _logs = _window(t)
     w._start_link_faults()
     w.api.fail_link(rr.id)
-    _settle(app, sent, 2)
+    _settle(app, until=lambda: rr.id in w.ctx.failed_links)
     w._stop_link_faults()
     assert not w.ctx.failed_links and not w.canvas.scene_.failed_links
     assert not w._fault_timer.isActive()
@@ -175,4 +180,72 @@ def test_a_pinned_seed_is_kept_with_the_lab():
     w._start_link_faults()
     assert w._faults.seed == 4242
     assert any("seed 4242" in m for m in logs)
+    w._stop_link_faults()
+
+
+def _gated_window(t):
+    """A window whose link commands block until the test opens the gate -- the ends taking
+    their time, which is what every real `docker compose exec` does."""
+    import threading
+    app, w, sent, logs = _window(t)
+    gate = threading.Event()
+
+    def slow(kind, element, cmd):
+        gate.wait(5)
+        sent.append((kind, element, cmd))
+        return ""
+    w._link_cmd = slow
+    return app, w, sent, logs, gate
+
+
+def test_the_canvas_marks_a_link_failed_only_once_every_end_took_it():
+    """The canvas used to go red the instant the clock fired, seconds before the last
+    `ifconfig down` ran -- so the canvas said cut while the routers, and the Network HUD reading
+    them, said connected. Now the picture follows the ends."""
+    t, rr, rs, sm = _topology()
+    app, w, sent, logs, gate = _gated_window(t)
+    w._start_link_faults()
+    w.api.fail_link(rr.id)
+    _settle(app, tries=20)
+    assert rr.id not in w.ctx.failed_links and rr.id not in w.canvas.scene_.failed_links
+    assert not any("FAILED" in m for m in logs), "nothing to announce until it has happened"
+    gate.set()
+    _settle(app, until=lambda: rr.id in w.ctx.failed_links)
+    assert rr.id in w.canvas.scene_.failed_links
+    assert any("R1 ↔ R2 FAILED (by hand)" in m for m in logs)
+    w._stop_link_faults()
+
+
+def test_a_restore_asked_while_the_failure_is_still_out_waits_its_turn():
+    """Two changes to one link never cross on the wire: the restore goes out after the last
+    `ifconfig down` has answered, and the link ends up in the state asked for last."""
+    t, rr, rs, sm = _topology()
+    app, w, sent, logs, gate = _gated_window(t)
+    w._start_link_faults()
+    w.api.fail_link(rr.id)
+    _settle(app, tries=10)
+    w.api.restore_link(rr.id)                               # heading down → a restore is news
+    w.api.restore_link(rr.id)                               # ...but only once
+    _settle(app, tries=10)
+    assert sent == []
+    gate.set()
+    _settle(app, until=lambda: len(sent) >= 4 and rr.id not in w.ctx.failed_links
+            and any("repaired" in m for m in logs))
+    assert sorted(sent[:2]) == [("router", "R1", "ifconfig down tun1"),
+                                ("router", "R2", "ifconfig down tun1")]
+    assert sorted(sent[2:]) == [("router", "R1", "ifconfig up tun1"),
+                                ("router", "R2", "ifconfig up tun1")]
+    assert rr.id not in w.ctx.failed_links
+    w._stop_link_faults()
+
+
+def test_an_end_that_refused_is_named_and_the_link_is_still_marked():
+    t, rr, rs, sm = _topology()
+    app, w, sent, logs = _window(t)
+    w._link_cmd = lambda kind, element, cmd: "(query failed: R2 timed out)" if element == "R2" \
+        else ""
+    w._start_link_faults()
+    w.api.fail_link(rr.id)
+    _settle(app, until=lambda: rr.id in w.ctx.failed_links)
+    assert any("not every end took it: R2: (query failed" in m for m in logs)
     w._stop_link_faults()
