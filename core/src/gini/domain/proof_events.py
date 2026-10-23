@@ -47,11 +47,21 @@ LAB_OPEN, TUNE, SPAWN, BUILD = "lab_open", "tune", "spawn", "build"
 #: something that was never a check. A phenomenon observed is not a test failed.
 OBSERVE = "observe"
 STOPPED, RESUMED = "stopped", "resumed"
+#: The T-Labs, which run in GINI's own simulator rather than on a kernel (`domain.schedlab`).
+#: Two entries and no more: the schedule a student found that reaches one of the level's goals,
+#: and the verdict of Try every schedule. Not one per click — clicks are the noise IGNORED exists
+#: to keep out. Because the engine is pure and lives in gini-core, BOTH are certificates: the
+#: Teaching Center replays a `schedule` and re-explores a `proved` entry's code and says whether
+#: the chain's claim holds, the way `check_sources` pairs a file with the build that compiled it.
+SCHEDULE, PROVED = "schedule", "proved"
 
 CONSTRUCTION = (PLACE, REMOVE, CONNECT, DISCONNECT, CONFIGURE)
 OPERATION = (RUN, STOP, OPEN_CONSOLE, MEASURE, INVOKE, COMMAND,
-             LAB_OPEN, TUNE, SPAWN, BUILD)
-WITNESSED = (WITNESS, OBJECTIVE, OBSERVE)
+             LAB_OPEN, TUNE, SPAWN, BUILD, SCHEDULE)
+#: `proved` sits with the witnessed tier: it is a fact GINI established by exhaustive search, not
+#: something the student typed — though over a simulator, not a running network, and
+#: `narration` says which.
+WITNESSED = (WITNESS, OBJECTIVE, OBSERVE, PROVED)
 #: A student's own words, and the weakest tier there is — deliberately NOT folded in with
 #: `witnessed`, because a witness is something GINI measured and an answer is something a person
 #: typed. Nothing here checks it against the teacher's key; that is a person's job.
@@ -474,6 +484,54 @@ def submit(artifact: dict, objectives) -> tuple[str, dict]:
              "kind": str(_field(r, "kind")), "status": str(_field(r, "status"))}
             for r in objectives or []]
     return SUBMIT, {"artifact": dict(artifact or {}), "objectives": rows}
+
+
+# -- the T-Labs ---------------------------------------------------------------- #
+def _code(code) -> list:
+    return [[clip(str(t), 40) for t in list(th)[:64]] for th in list(code or [])[:8]]
+
+
+def schedule(lab: str, level: str, version: str, start: int, code, moves, goal: str,
+             result: str, threads=()) -> tuple[str, dict]:
+    """A student's schedule reached one of a T-Lab level's goals — the deadlock, both inside, a
+    counter that ends at 4. Recorded ONCE per goal per level, when the goal is first met; the
+    lab's session enforces that, not this.
+
+    The entry carries everything needed to replay it: the code the schedule ran on (tile ids per
+    thread — in Fix it that is the student's own arrangement), which starting state, and the
+    moves as thread numbers. `result` is what the run reached in the level's own words, so the
+    narration can say it and the server can check it.
+    """
+    return SCHEDULE, {
+        "lab": clip(lab, 40), "level": clip(level, 40), "version": clip(version, 40),
+        "start": int(start or 0), "code": _code(code),
+        "moves": [int(m) for m in list(moves or [])[:400]],
+        "goal": clip(goal, 40), "result": clip(result, 120),
+        "threads": [clip(str(n), 24) for n in list(threads or [])[:8]]}
+
+
+def proved(lab: str, level: str, version: str, code, ok: bool, reason: str = "",
+           starts=(), summary=None) -> tuple[str, dict]:
+    """Try every schedule was pressed on a version that can be proved — a shipped correct version
+    or the student's fix — and this is what GINI found. FAILED ATTEMPTS ARE RECORDED, with the
+    reason the student was shown: "tried and was told why not" is part of the story, as a probe
+    that failed before it passed is.
+
+    `summary` is `{start: {states, total, outcomes: [[label, paths], …]}}` per starting state —
+    the numbers the Every schedule tab showed. Small, and enough for a marker to read "20
+    schedules, 2 end at 5" without re-running anything.
+    """
+    summ = {}
+    for s, v in (summary or {}).items():
+        v = v or {}
+        summ[str(s)] = {"states": int(v.get("states") or 0),
+                        "total": (int(v["total"]) if v.get("total") is not None else None),
+                        "outcomes": [[clip(str(o[0]), 80), int(o[1] or 0)]
+                                     for o in list(v.get("outcomes") or [])[:32]]}
+    return PROVED, {
+        "lab": clip(lab, 40), "level": clip(level, 40), "version": clip(version, 40),
+        "code": _code(code), "ok": bool(ok), "reason": clip(reason, 160),
+        "starts": [int(s) for s in list(starts or [])[:16]], "summary": summ}
 
 
 def _field(row, key: str):

@@ -149,6 +149,22 @@ def describe(entry: Entry) -> str:
     if k == ev.OBJECTIVE:
         return (f"Objective \"{d.get('say') or d.get('id')}\" went "
                 f"{d.get('from', '?')} → {d.get('to', '?')}.")
+    if k == ev.SCHEDULE:
+        # The schedule in the thread's own names, shortened to the last word so "Thread A" reads
+        # as A and "producer" stays producer — the way the lab's trace labels its columns.
+        names = [str(n).split()[-1] if str(n).split() else "?" for n in d.get("threads") or []]
+        order = " ".join(names[m] if 0 <= m < len(names) else str(m)
+                         for m in d.get("moves") or [])
+        return (f"On {d.get('lab', '?')}, level {d.get('level', '?')} ({d.get('version', '?')}): "
+                f"reached {d.get('result') or d.get('goal', '?')} with the schedule "
+                f"{order or '(none)'}.")
+    if k == ev.PROVED:
+        n = len(d.get("starts") or [])
+        where = f" from {_count(n, 'start')}" if n > 1 else ""
+        verdict = (f"proved{where}" if d.get("ok")
+                   else f"not proved — {d.get('reason') or 'no reason recorded'}")
+        return (f"GINI tried every schedule on {d.get('lab', '?')}, level {d.get('level', '?')} "
+                f"({d.get('version', '?')}) — {verdict}.")
     if k == ev.ANSWER:
         # The question is quoted with it. A marker reading the transcript top to bottom should not
         # have to hold three prompts in their head to know which one this replies to.
@@ -186,6 +202,7 @@ def summarize(entries) -> dict:
     for e in entries:
         kinds[e.kind] = kinds.get(e.kind, 0) + 1
     witnesses = [e for e in entries if e.kind == ev.WITNESS]
+    proofs = [e for e in entries if e.kind == ev.PROVED]
     return {
         "entries": len(entries),
         "kinds": kinds,
@@ -194,6 +211,10 @@ def summarize(entries) -> dict:
         "witnessed": sum(kinds.get(k, 0) for k in ev.WITNESSED),
         "witness_passed": sum(1 for e in witnesses if e.data.get("verdict") == "ok"),
         "witness_total": len(witnesses),
+        # A T-Lab's proofs are witnessed over a simulator, not a network, so they are counted
+        # apart from the live checks and the closing paragraph says which is which.
+        "proved_ok": sum(1 for e in proofs if e.data.get("ok")),
+        "proved_total": len(proofs),
         "imported": kinds.get(ev.LOAD, 0),
         "first_t": entries[0].t if entries else 0.0,
         "last_t": entries[-1].t if entries else 0.0,
@@ -273,6 +294,10 @@ def narrate(entries, verdict=None) -> str:
     else:
         out.append("  Witnessed by GINI on the running network — none. Nothing in this chain was "
                    "measured on a live lab.")
+    if s["proved_total"]:
+        out.append(f"  Proved by GINI's scheduler simulator — {s['proved_ok']}/{s['proved_total']} "
+                   f"attempt(s) at Try every schedule held, {k.get(ev.SCHEDULE, 0)} goal "
+                   f"schedule(s) found.")
 
     acc = account_for_artifact(entries)
     if acc.total:

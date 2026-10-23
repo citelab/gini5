@@ -762,3 +762,69 @@ def test_nothing_is_recorded_before_a_code_is_armed(rec):
     rec.note_build("M1", "sched", True)
     rec.note_tune("M1", "quantum", 1, 9)
     assert rec._chain is None
+
+
+# -- the T-Labs: a schedule and a proof ---------------------------------------- #
+def test_a_goal_schedule_records_what_it_ran_on_so_it_can_be_replayed(rec):
+    """The code, the start and the moves are the certificate: the Teaching Center replays them
+    on the same level file and confirms the result the entry claims."""
+    rec.arm(CODE)
+    rec.note_schedule("t-lab-02", "rdv", "bad", 0, (("a1", "wb", "sa", "a2"),
+                                                     ("b1", "wa", "sb", "b2")),
+                      (0, 0, 1, 1), "dl", "deadlock", ("Thread A", "Thread B"))
+    d = _data(rec, ev.SCHEDULE)[0]
+    assert d["code"] == [["a1", "wb", "sa", "a2"], ["b1", "wa", "sb", "b2"]]
+    assert (d["moves"], d["goal"], d["result"], d["start"]) == ([0, 0, 1, 1], "dl", "deadlock", 0)
+    assert d["threads"] == ["Thread A", "Thread B"]
+
+
+def test_a_proof_records_its_verdict_and_a_failed_attempt_is_recorded_too(rec):
+    rec.arm(CODE)
+    rec.note_proved("t-lab-02", "buffer", "fix", (("pwm",), ("cwf",)), False,
+                    "a schedule deadlocks", (0, 1, 2),
+                    {0: {"states": 17, "total": None, "outcomes": [("both finish", 0)]}})
+    rec.note_proved("t-lab-02", "buffer", "fix", (("pwe",), ("cwf",)), True, "", (0, 1, 2), {})
+    ds = _data(rec, ev.PROVED)
+    assert [d["ok"] for d in ds] == [False, True]
+    assert ds[0]["reason"] == "a schedule deadlocks"
+    assert ds[0]["summary"] == {"0": {"states": 17, "total": None,
+                                      "outcomes": [["both finish", 0]]}}
+    assert ds[0]["starts"] == [0, 1, 2]
+
+
+def test_a_schedule_is_an_operation_and_a_proof_is_witnessed(rec):
+    """`summarize` counts a schedule as something the student did and a proof as something GINI
+    established — over a simulator, which the closing paragraph says."""
+    assert ev.SCHEDULE in ev.OPERATION and ev.SCHEDULE not in ev.WITNESSED
+    assert ev.PROVED in ev.WITNESSED and ev.PROVED not in ev.OPERATION
+
+
+def test_the_narration_reads_a_schedule_in_the_threads_own_names(rec):
+    from gini.domain import narration as N
+    rec.arm(CODE)
+    rec.note_schedule("t-lab-02", "lost", "instr", 0, (("p1",), ("c1",)), (0, 0, 1, 1, 0, 1),
+                      "g4", "ends at 4", ("producer", "consumer"))
+    rec.note_schedule("t-lab-02", "rdv", "bad", 0, (("a1",), ("b1",)), (0, 0, 1, 1),
+                      "dl", "deadlock", ("Thread A", "Thread B"))
+    rec.note_proved("t-lab-02", "buffer", "fix", (("pwe",), ("cwf",)), True, "", (0, 1, 2))
+    rec.note_proved("t-lab-02", "rdv", "fix", (("a1",), ("b1",)), False, "no schedule finishes",
+                    (0,))
+    lines = [N.describe(e) for e in rec._chain.entries
+             if e.kind in (ev.SCHEDULE, ev.PROVED)]
+    assert lines[0] == ("On t-lab-02, level lost (instr): reached ends at 4 with the schedule "
+                        "producer producer consumer consumer producer consumer.")
+    assert lines[1] == "On t-lab-02, level rdv (bad): reached deadlock with the schedule A A B B."
+    assert lines[2] == ("GINI tried every schedule on t-lab-02, level buffer (fix) — proved from "
+                        "3 starts.")
+    assert lines[3] == ("GINI tried every schedule on t-lab-02, level rdv (fix) — not proved — "
+                        "no schedule finishes.")
+    s = N.summarize(rec._chain.entries)
+    assert (s["proved_ok"], s["proved_total"]) == (1, 2)
+    assert "Proved by GINI's scheduler simulator — 1/2 attempt(s)" in N.narrate(rec._chain.entries)
+
+
+def test_recording_a_t_lab_event_can_never_break_the_lab(rec):
+    rec.arm(CODE)
+    rec._chain = None
+    rec.note_schedule("t-lab-02", "rdv", "bad", 0, (("a1",), ("b1",)), (0,), "dl", "deadlock")
+    rec.note_proved("t-lab-02", "rdv", "fix", (("a1",), ("b1",)), True)

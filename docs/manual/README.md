@@ -67,6 +67,7 @@ GINI coinage — say the textbook term, show the label. The glossary
 | os-programs | [os-14-programs.md](os-14-programs.md) | the launchable workloads and what each exercises |
 | os-known-issues | [os-15-known-issues.md](os-15-known-issues.md) | verified bugs and stale comments, as of 2026-08-30 |
 | os-glossary | [os-16-glossary.md](os-16-glossary.md) | every GINI label mapped to its textbook term ("asked/couldn't/seized" → system call/exception/device interrupt, "shadow" → pluggable policy, …) |
+| os-scheduler-lab | [os-17-scheduler-lab.md](os-17-scheduler-lab.md) | T-Lab 02: the student is the scheduler — a simulator, not xv6; every schedule enumerated; the level file; proofs the Teaching Center re-checks |
 
 ## Source-of-truth map
 

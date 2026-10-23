@@ -401,3 +401,90 @@ def test_the_card_for_one_says_it_is_coming_rather_than_what_it_is(with_unreleas
     card = hub._cards["lab-later"]
     texts = [c.text() for c in card.findChildren(type(card.stat))]
     assert any("Details when this one is released." in t for t in texts), texts
+
+
+# --------------------------------------------------------------------------- #
+# the T-Lab band: tiles that open, not arm
+# --------------------------------------------------------------------------- #
+
+def test_the_t_labs_are_a_second_band_and_do_not_mix_with_the_assignments(two_labs, app):
+    """A T-Lab is a simulator: nothing is armed, nothing is re-linked. So its tiles are kept
+    apart from the assignment tiles, whose set the tests above pin."""
+    hub = _hub(app)
+    assert set(hub._cards) == {"lab-one", "lab-two"}
+    assert "t-lab-02" in hub._tcards
+    card = hub._tcards["t-lab-02"]
+    assert card.stat.text() == "4 levels"
+    texts = [c.text() for c in card.findChildren(type(card.stat))]
+    assert any("Pick which thread runs next" in t for t in texts), texts
+
+
+def test_a_t_lab_tile_wears_a_hue_no_assignment_tile_wears(two_labs, app):
+    """The seven-hue ceiling is for the whole page: the band continues the count rather than
+    starting it over, or the first T-Lab would match the first assignment."""
+    hub = _hub(app)
+    hues = [c._accent for c in hub._cards.values()] + [c._accent for c in hub._tcards.values()]
+    assert len(set(hues)) == len(hues)
+
+
+def test_a_t_lab_opens_with_no_provider_and_no_machine_and_is_recorded(two_labs, app):
+    calls = []
+
+    class _Rec:
+        def note_lab_open(self, *args):
+            calls.append(("lab_open", args))
+
+        def note_schedule(self, *args):
+            calls.append(("schedule", args))
+
+        def note_proved(self, *args):
+            calls.append(("proved", args))
+
+    hub = _hub(app, recorder=_Rec(), provider=None, live=False)
+    from gini.domain import schedlab as S
+    hub._open_tlab(S.get("t-lab-02"))
+    try:
+        assert hub._tlab is not None and hub._tlab.isVisible()
+        assert calls == [("lab_open", ("M1", "t-lab-02"))]
+        # the student finds level 3's deadlock and then proves a fix
+        hub._tlab._level_btns[2].click()
+        for t in (0, 0, 1, 1):
+            hub._tlab._run_btns[t].click()
+        hub._tlab._version_btns["fix"].click()
+        hub._tlab._pick_tile(0, 1); hub._tlab._down.click()
+        hub._tlab._explore.click()
+        kinds = [k for k, _ in calls]
+        assert kinds == ["lab_open", "schedule", "proved"]
+        sched = calls[1][1]
+        assert sched[:3] == ("t-lab-02", "rdv", "bad") and sched[5] == (0, 0, 1, 1)
+        assert sched[6:8] == ("dl", "deadlock")
+        proved = calls[2][1]
+        assert proved[:3] == ("t-lab-02", "rdv", "fix") and proved[4] is True
+    finally:
+        hub.close()
+        assert hub._tlab is None, "closing the hub closes the T-Lab it opened"
+
+
+def test_an_unreleased_t_lab_is_shown_but_does_not_open(two_labs, app, monkeypatch):
+    from gini.domain import schedlab as S
+    real = S.get("t-lab-02")
+    held = S.LevelFile(id="t-lab-03", title="T-Lab 03 — Monitors", released=False)
+    monkeypatch.setattr(S, "catalog", lambda: (real, held))
+    hub = _hub(app)
+    assert hub._tcards["t-lab-03"].stat.text() == "not released yet"
+    hub._open_tlab(held)
+    assert hub._tlab is None
+
+
+def test_a_t_lab_level_file_that_will_not_load_does_not_take_the_hub_down(two_labs, app,
+                                                                             monkeypatch):
+    from gini.domain import schedlab as S
+
+    def boom():
+        raise S.LevelError("level 2 uses a tile 'zz' that is not defined")
+    monkeypatch.setattr(S, "catalog", boom)
+    logs = []
+    hub = _hub(app, on_log=lambda lvl, msg: logs.append((lvl, msg)))
+    assert set(hub._cards) == {"lab-one", "lab-two"}
+    assert hub._tcards == {}
+    assert logs and "would not load" in logs[0][1]

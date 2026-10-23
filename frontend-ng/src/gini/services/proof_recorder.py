@@ -576,6 +576,22 @@ class ProofRecorder:
         """
         self._guard(lambda: self._record(ev.measure(str(name or ""), dict(result or {}))))
 
+    # -- the T-Labs ----------------------------------------------------------- #
+    def note_schedule(self, lab: str, level: str, version: str, start: int, code, moves,
+                      goal: str, result: str, threads=()) -> None:
+        """A schedule the student played reached one of the level's goals. Once per goal per
+        level — `sched_lab.Session` keeps the set, so Undo and replay do not repeat it."""
+        self._guard(lambda: self._record(
+            ev.schedule(str(lab or ""), str(level or ""), str(version or ""), int(start or 0),
+                        code, moves, str(goal or ""), str(result or ""), threads)))
+
+    def note_proved(self, lab: str, level: str, version: str, code, ok: bool, reason: str = "",
+                    starts=(), summary=None) -> None:
+        """Try every schedule, on a version that can be proved: the verdict, held or not."""
+        self._guard(lambda: self._record(
+            ev.proved(str(lab or ""), str(level or ""), str(version or ""), code, bool(ok),
+                      str(reason or ""), starts, summary)))
+
     def note_observed(self, device: str, kind: str, detail: str,
                       pid: int | None = None) -> None:
         """A phenomenon the kernel showed — from MachineState's watcher, off the poll thread.

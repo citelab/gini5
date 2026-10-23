@@ -1089,6 +1089,7 @@ async function openReceipt(receipt){
       ${qBlock(r.questions)}
       ${measBlock(r.measurements, r.measurement_tally)}
       ${srcBlock(r.sources)}
+      ${recheckBlock(r.rechecks)}
       <div class="big" style="font-size:19px;margin-top:30px">Raw log — as captured</div>
       <div class="note">The proof of activity exactly as recorded, ${Number(r.entries)||0}
         events. The answers above are repeated here as they were entered.</div>
@@ -1161,6 +1162,32 @@ function srcBlock(src){
         ? `<div class="note">Not sent: ${esc(f.omitted)}. Its hash still travelled, so the
            check above is still meaningful.</div>`
         : `<pre style="max-height:420px">${esc(f.text)}</pre>`}
+    </div>`).join('')}
+  </div>`;
+}
+
+// THE T-LAB CLAIMS, re-run on this server. A T-Lab (the scheduler lab) runs in GINI's own
+// simulator, and the engine is pure and ships in gini-core, so every schedule a student recorded
+// can be replayed here and every "proved" re-explored. A claim that does not hold is SHOWN beside
+// its row, like an edited source file, never refused: it means the entry was hand-edited, or the
+// code changed after the proof — things the lab itself cannot produce. "Not checked" is this
+// server's gini-core being older than the lab, which is not the student's doing.
+function recheckBlock(rows){
+  if (!rows || !rows.length) return '';
+  return `<div style="margin-top:20px">
+    <div class="big" style="font-size:17px">Their scheduler work, re-run here</div>
+    <div class="note">Each schedule was replayed and each proof explored again on this server, on
+      the level file it ships. A claim that holds is a certificate; one that does not is a thing
+      to ask about.</div>
+    ${rows.map(c => `<div class="rowb" style="margin:6px 0">
+      <span class="tag kind">${esc(c.kind)}</span>
+      <span class="mono"><b>${esc(c.level)}</b> · ${esc(c.version)}${c.goal ? ' · ' + esc(c.goal) : ''}</span>
+      <span class="note" style="margin:0">${esc(c.claimed)}</span>
+      ${c.confirmed === null || c.confirmed === undefined
+        ? `<span class="tag draft">not checked — ${esc(c.why)}</span>`
+        : c.confirmed
+          ? `<span class="tag live">re-checks</span>`
+          : `<span class="tag warn">does not re-check — ${esc(c.why)}</span>`}
     </div>`).join('')}
   </div>`;
 }

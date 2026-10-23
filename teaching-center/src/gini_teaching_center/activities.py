@@ -388,6 +388,104 @@ def check_sources(shadows: dict | None, proof: dict) -> list:
     return out
 
 
+def recheck_tlabs(proof: dict) -> list:
+    """Re-run every T-Lab claim in the chain against the engine and say whether it holds.
+    REPORTED, never refused — the same rule as `check_sources`.
+
+    A T-Lab's engine (`gini.domain.schedlab`) is pure and lives in gini-core, which this server
+    depends on, so a `schedule` entry can be REPLAYED here — the same code, the same start, the
+    same moves — and a `proved` entry's code can be explored again. A claim that does not
+    re-check is shown the way an edited source file is shown: a tag beside the row, for the marker
+    to weigh. It means the entry was hand-edited, or the code was changed after the proof, or the
+    "fix" moved a tile the face pins — none of which the lab itself can produce.
+
+    `confirmed` is True, False, or None when the check could not be run at all: a server whose
+    gini-core predates the engine, or a level file this server does not ship. Saying "not
+    checked" beats a false "not confirmed" on a student who did nothing wrong.
+    """
+    try:
+        from gini.domain import schedlab as _sl
+    except Exception:                                   # noqa: BLE001 — an older gini-core
+        _sl = None
+    out = []
+    for i, entry in enumerate(proof.get("entries") or []):
+        kind = (entry or {}).get("kind", "")
+        if kind not in (_ev.SCHEDULE, _ev.PROVED):
+            continue
+        d = entry.get("data") or {}
+        row = {"kind": "schedule" if kind == _ev.SCHEDULE else "proof",
+               "lab": str(d.get("lab", "")), "level": str(d.get("level", "")),
+               "version": str(d.get("version", "")), "start": int(d.get("start") or 0),
+               "goal": str(d.get("goal", "")),
+               "claimed": (str(d.get("result", "")) if kind == _ev.SCHEDULE
+                           else ("proved" if d.get("ok")
+                                 else f"not proved: {d.get('reason', '')}")),
+               "confirmed": None, "why": "", "seq": entry.get("seq", i)}
+        out.append(row)
+        if _sl is None:
+            row["why"] = "this server's gini-core has no scheduler engine"
+            continue
+        try:
+            row["confirmed"], row["why"] = _recheck_one(_sl, kind, d)
+        except Exception as e:                          # noqa: BLE001 — a report must render
+            row["confirmed"], row["why"] = None, f"could not re-check: {e}"
+    return out
+
+
+def _recheck_one(sl, kind: str, d: dict) -> tuple:
+    lab = sl.get(str(d.get("lab", "")))
+    if lab is None:
+        return None, f"this server does not ship the level file {d.get('lab', '')!r}"
+    lv = lab.level(str(d.get("level", "")))
+    if lv is None:
+        return None, f"the level file has no level {d.get('level', '')!r}"
+    version = str(d.get("version", ""))
+    code = tuple(tuple(str(t) for t in th) for th in (d.get("code") or []))
+    if len(code) != len(lv.threads) or any(t not in lv.tiles for th in code for t in th):
+        return False, "the code names a tile the level does not have"
+    # The code must be one the face can show: a shipped version verbatim, or in Fix it a
+    # rearrangement of the broken version's tiles that leaves every pinned tile where it was.
+    if version == "fix":
+        if lv.fix is None:
+            return False, "the level has no Fix it"
+        base = lv.code_of(lv.fix.from_version)
+        for t, th in enumerate(code):
+            if sorted(th) != sorted(base[t]):
+                return False, "the fix is not a rearrangement of the level's lines"
+            for pin in lv.fix.pinned:
+                if pin in base[t] and base[t].index(pin) != th.index(pin):
+                    return False, f"the fix moved {pin!r}, which the level pins"
+    else:
+        if lv.version(version) is None:
+            return False, f"the level has no version {version!r}"
+        if code != lv.code_of(version):
+            return False, f"the code is not the level's {version!r} version"
+    if kind == _ev.SCHEDULE:
+        start = int(d.get("start") or 0)
+        if lv.starts and not (0 <= start < len(lv.starts)):
+            return False, "the start is not one the level has"
+        moves = [int(m) for m in d.get("moves") or []]
+        if any(m not in (0, 1) for m in moves):
+            return False, "the schedule names a thread the level does not have"
+        goal = str(d.get("goal", ""))
+        if goal not in sl.goals_reached(lv, version, code, moves, start):
+            return False, f"replaying the schedule does not reach the goal {goal!r}"
+        rep = sl.replay(lv, code, moves, start)
+        claimed = str(d.get("result", ""))
+        if claimed == "deadlock" and not rep.deadlock:
+            return False, "replaying the schedule does not deadlock"
+        if claimed not in ("deadlock", "both_inside", "") and (
+                not rep.done or sl.outcome_label(lv, rep.st) != claimed):
+            return False, f"replaying the schedule does not end with {claimed!r}"
+        return True, ""
+    proof = sl.prove(lv, code)
+    if proof.proved != bool(d.get("ok")):
+        return False, ("exploring this code proves it, but the entry says it was not"
+                       if proof.proved else
+                       f"exploring this code does not prove it: {proof.reason}")
+    return True, ""
+
+
 def measurements(proof: dict) -> list[dict]:
     """Everything GINI MEASURED while the work was happening, as rows a marker can scan.
 
@@ -446,6 +544,24 @@ def measurements(proof: dict) -> list[dict]:
                 "detail": f"{d.get('from', '')} -> {d.get('to', '')}",
                 "summary": str(d.get("say", "")),
                 "seq": entry.get("seq", i), "t": entry.get("t", 0.0)})
+        elif kind == _ev.SCHEDULE:
+            # A goal the student's own schedule reached — the deadlock, both inside, the lost
+            # update. `ok` is True because the entry only exists when the goal was met; whether
+            # it holds is `recheck_tlabs`'s question, shown beside this row.
+            moves = d.get("moves") or []
+            out.append({
+                "kind": "schedule", "name": f"{d.get('level', '')} · {d.get('goal', '')}",
+                "ok": True, "pending": False,
+                "detail": f"{d.get('result', '')} in {len(moves)} step"
+                          f"{'' if len(moves) == 1 else 's'}",
+                "summary": "", "seq": entry.get("seq", i), "t": entry.get("t", 0.0)})
+        elif kind == _ev.PROVED:
+            out.append({
+                "kind": "proof", "name": f"{d.get('level', '')} · {d.get('version', '')}",
+                "ok": bool(d.get("ok")), "pending": False,
+                "detail": (f"proved from {len(d.get('starts') or [])} start(s)" if d.get("ok")
+                           else str(d.get("reason", ""))),
+                "summary": "", "seq": entry.get("seq", i), "t": entry.get("t", 0.0)})
     return out
 
 
@@ -643,6 +759,15 @@ def report(row: dict, activity: dict, twins: list, attempts: list | None = None,
     measured = measurements(proof)
     qa = answered(proof, questions)
     srcs = check_sources(payload.get("shadows"), proof)
+    rechecks = recheck_tlabs(proof)
+    cooked = cook(proof, (activity or {}).get("title", ""), qa, measured, srcs)
+    # A T-Lab claim that did not re-check is the one thing a marker must not skim past, so it
+    # joins the cooked view's look-at list beside a failed Load or a mismatched file.
+    for r in rechecks:
+        if r["confirmed"] is False:
+            cooked.setdefault("look_at", []).append(
+                f"T-Lab: the {r['kind']} on level {r['level']} ({r['version']}) does not "
+                f"re-check — {r['why']}")
     return {
         "receipt": row.get("receipt", ""),
         "activity": row.get("activity", ""),
@@ -660,8 +785,11 @@ def report(row: dict, activity: dict, twins: list, attempts: list | None = None,
         "within_session": within_session(row, activity or {}),
         # The COOKED view — a reading of the chain for the grader, shown first. The raw log below
         # (`narration`) is left exactly as captured; see gini.domain.grader_view.
-        "cooked": cook(proof, (activity or {}).get("title", ""), qa, measured, srcs),
+        "cooked": cooked,
         "narration": narrate(proof),
+        # Every T-Lab claim in the chain, replayed or re-explored here. Confirmed, not confirmed
+        # (with why), or not checked (an older gini-core); never a refusal — see `recheck_tlabs`.
+        "rechecks": rechecks,
         # Prompt, what the student wrote, and the teacher's key — side by side and unjudged.
         # There is no mark here and no auto-comparison: a person reads these.
         "questions": qa,

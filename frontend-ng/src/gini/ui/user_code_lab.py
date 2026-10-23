@@ -68,7 +68,9 @@ class UserCodeLab(QDialog):
         # engine. Same split as `on_console`.
         self._on_relink = on_relink
         self._panel = None
+        self._tlab = None
         self._cards: dict = {}
+        self._tcards: dict = {}
 
         t = theme.theme
         # A real window, not an owned dialog: a student leaves this open beside the canvas and
@@ -154,6 +156,7 @@ class UserCodeLab(QDialog):
             lbl = QLabel("No assignments are installed.")
             lbl.setStyleSheet(_scss(f"color:{t.muted};font-size:12px;border:none;"))
             self._col.addWidget(lbl)
+            self._build_tlab_band(0)
             return
 
         band = QFrame()
@@ -191,6 +194,104 @@ class UserCodeLab(QDialog):
         for _ in range((-len(specs)) % 3):
             row.addStretch(1)
         self._col.addWidget(band)
+        self._build_tlab_band(len(specs))
+
+    def _build_tlab_band(self, used_hues: int) -> None:
+        """The T-Labs, a second band under the assignments.
+
+        A T-Lab is a simulator, not a kernel: it opens with no machine running and nothing is
+        armed or re-linked, so a tile here OPENS rather than chooses. It still lives on this hub
+        because this is where the course's work is reached from, and because the chain records a
+        T-Lab under the same code as everything else done on this machine.
+
+        Hues continue from where the assignments stopped, so every tile on the page stays apart
+        from every other — the seven-hue ceiling in `LAB_HUES` is for the whole page.
+        """
+        from ..domain import schedlab as _sl
+        try:
+            labs = _sl.catalog()
+        except Exception as e:                     # noqa: BLE001 — a bad level file is logged
+            self._log("error", f"a T-Lab level file would not load: {e}")
+            labs = ()
+        if not labs:
+            return
+        t = self.theme.theme
+        band = QFrame()
+        band.setObjectName("TLabBand")
+        band.setStyleSheet(f"QFrame#TLabBand{{background:{t.panel2};"
+                           f"border:1px solid {t.line};border-radius:12px;}}")
+        v = QVBoxLayout(band)
+        v.setContentsMargins(12, 8, 12, 12)
+        v.setSpacing(8)
+        cap = QLabel("T-LABS · RUN WITHOUT THE MACHINE")
+        cap.setStyleSheet(_scss(f"color:{t.faint};font-size:10px;font-weight:700;"
+                                "letter-spacing:2px;border:none;"))
+        v.addWidget(cap)
+        row = None
+        for i, lab in enumerate(labs):
+            if i % 3 == 0:
+                row = QHBoxLayout()
+                row.setSpacing(8)
+                v.addLayout(row)
+            blurb = lab.summary or ("Details when this one is released." if not lab.released
+                                    else "A scheduler lab in GINI's own simulator.")
+            card = LayerCard(self.theme, lab.title, blurb, hue_for(lab, used_hues + i))
+            card.set_stat("not released yet" if not lab.released
+                          else f"{len(lab.levels)} level{'s' if len(lab.levels) != 1 else ''}")
+            card.clicked.connect(lambda lab=lab: self._open_tlab(lab))
+            self._tcards[lab.id] = card
+            row.addWidget(card)
+        for _ in range((-len(labs)) % 3):
+            row.addStretch(1)
+        self._col.addWidget(band)
+
+    def _open_tlab(self, lab) -> None:
+        """Open a T-Lab in its own window, with no machine, no provider and no container.
+
+        Recorded as a `lab_open` like any face, and the lab's own events — a goal schedule, a
+        proof — go into the chain through `_tlab_event`. Both pass through `lab_record.record`,
+        which swallows whatever the recorder throws: a lab that stopped opening because the chain
+        hiccuped would be a worse bug than a missing entry.
+        """
+        if not lab.released:
+            self._log("info", f"{lab.title} is not released yet.")
+            return
+        from .lab_record import record
+        record(self._recorder, "note_lab_open", self._machine(), lab.id)
+        from .sched_lab import SchedLab
+        old = self._tlab
+        self._tlab = None
+        if old is not None:
+            try:
+                old.close()
+                old.deleteLater()
+            except RuntimeError:
+                pass
+        self._tlab = SchedLab(self, self.theme, lab=lab, device=self.device,
+                              on_event=self._tlab_event)
+        self._tlab.show()
+        self._tlab.raise_()
+
+    def _tlab_event(self, kind: str, p: dict) -> None:
+        from .lab_record import record
+        if kind == "goal":
+            record(self._recorder, "note_schedule", p.get("lab"), p.get("level"),
+                   p.get("version"), p.get("start", 0), p.get("code"), p.get("moves"),
+                   p.get("goal"), p.get("result"), p.get("threads", ()))
+        elif kind == "proved":
+            record(self._recorder, "note_proved", p.get("lab"), p.get("level"),
+                   p.get("version"), p.get("code"), p.get("ok"), p.get("reason", ""),
+                   p.get("starts", ()), p.get("summary"))
+
+    def closeEvent(self, e) -> None:  # noqa: N802
+        # The T-Lab window is promoted (no Qt parent), so nothing closes it for us.
+        if self._tlab is not None:
+            try:
+                self._tlab.close()
+            except RuntimeError:
+                pass
+            self._tlab = None
+        super().closeEvent(e)
 
     def refresh(self) -> None:
         """Re-read each assignment's progress on THIS machine, and light the armed one.

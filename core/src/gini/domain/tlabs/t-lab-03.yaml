@@ -1,0 +1,7 @@
+# T-Lab 03 — a placeholder tile. The hub shows the whole term's T-Labs from the start so students
+# can see what is coming; this one has no levels and cannot be opened until it is released.
+# What it turns out to be is a teaching decision, so the tile says it is coming rather than
+# inventing what it is.
+id: t-lab-03
+title: "T-Lab 03"
+released: false

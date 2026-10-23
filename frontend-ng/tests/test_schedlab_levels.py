@@ -48,9 +48,13 @@ def test_every_level_has_the_words_the_face_shows(lab):
 
 
 def test_the_catalog_lists_it_and_the_hub_fields_are_filled(lab):
-    assert [t.id for t in S.catalog()] == ["t-lab-02"]
+    """T-Lab 02 first, then the two placeholders the hub shows as "coming": released: false,
+    no levels, so they draw a tile and refuse to open."""
+    assert [t.id for t in S.catalog()] == ["t-lab-02", "t-lab-03", "t-lab-04"]
     assert lab.title.startswith("T-Lab 02")
     assert lab.summary and lab.released
+    for held in S.catalog()[1:]:
+        assert held.released is False and held.levels == ()
 
 
 def _cases():

@@ -48,6 +48,9 @@ KIND = {
     # their editor after every edit, to see the checklist move. The hub above it is a window for
     # the same reason — it stays open behind the panel and is where they switch assignments.
     "UserCode": WINDOW, "UserCodeLab": WINDOW,
+    # A T-Lab is played for a whole sitting beside the notes, with no machine to go back to —
+    # a student alt-tabs between it and the course PDF.
+    "SchedLab": WINDOW,
 }
 
 #: The other side of the rule, with the reason spelled out for each.
