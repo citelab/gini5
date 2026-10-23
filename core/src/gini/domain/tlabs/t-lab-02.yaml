@@ -1,0 +1,165 @@
+# T-Lab 02 — You are the scheduler. The level file `gini.domain.schedlab` loads.
+# Written from the reference engine (docs/design/t-lab-02-reference/engine.js) and checked
+# against it field by field; the agreement test in tests/test_schedlab_levels.py keeps it so.
+#
+# The format is meant to outlive this lab: later T-Labs (monitors, readers-writers, ...) are new
+# files of the same shape. Two threads per level is a limit of THIS release (§2.4 of the plan).
+#
+# Template placeholders, used by `state`, `state_extra`, `outcome`:
+#   {var}        a shared variable                      {counter}, {lock}, {items}
+#   {sem:name}   a semaphore as students see it: stored count minus the number queued, with a
+#                true minus sign (U+2212), so -2 means two are waiting (notes, Figure 9.4)
+#   {reg}        the register of the thread that just moved, as "<short> = <value>", "–" if unset
+#
+# Rules the engine applies to every level, not written per level:
+#   - an outcome whose run recorded an error is labelled "finishes, but <error>" and is wrong
+#   - `correct_when` (if given) must also hold at the finish
+#   - "proved" = at least one finished outcome, every outcome correct, no stuck state, and (if the
+#     level has `mutex_check`) no state with both threads inside — from EVERY entry in `starts`
+
+id: t-lab-02
+title: "T-Lab 02 — You are the scheduler"
+summary: "Pick which thread runs next, break the code, then prove a fix across every schedule."
+
+levels:
+
+  - id: lost
+    title: "Lost update"
+    source: "Notes · Worked example 9.3"
+    setup: "counter starts at 5. The producer adds 1 and the consumer takes 1 away, so it should end at 5."
+    asks: "Of all the orders the scheduler could pick, how many end at 5? Guess, then switch to Lines of C and guess again."
+    hint: "Press a Run button: you decide who goes next."
+    threads: [producer, consumer]
+    state_head: "counter / registers"
+    shade_both_inside: true
+    count_schedules: true
+    shared: {counter: 5}
+    registers:
+      - {name: register1, short: r1}
+      - {name: register2, short: r2}
+    semaphores: {lock: 1}
+    semaphore_notes: {lock: "a mutex: starts at 1"}
+    tiles:
+      pinc: {text: "counter++",                 op: atomic_add, var: counter, k: 1,  cs: true}
+      cdec: {text: "counter--",                 op: atomic_add, var: counter, k: -1, cs: true}
+      p1:   {text: "register1 = counter",       op: load,  reg: register1, var: counter, cs: true}
+      p2:   {text: "register1 = register1 + 1", op: add,   reg: register1, k: 1,  cs: true}
+      p3:   {text: "counter = register1",       op: store, var: counter, reg: register1, cs: true}
+      c1:   {text: "register2 = counter",       op: load,  reg: register2, var: counter, cs: true}
+      c2:   {text: "register2 = register2 - 1", op: add,   reg: register2, k: -1, cs: true}
+      c3:   {text: "counter = register2",       op: store, var: counter, reg: register2, cs: true}
+      acq:  {text: "wait(&lock)",   op: wait,   sem: lock}
+      rel:  {text: "signal(&lock)", op: signal, sem: lock}
+    versions:
+      - {id: line,   label: "Lines of C",   code: [[pinc], [cdec]]}
+      - {id: instr,  label: "Instructions", code: [[p1, p2, p3], [c1, c2, c3]]}
+      - {id: locked, label: "With a lock",  code: [[acq, p1, p2, p3, rel], [acq, c1, c2, c3, rel]],
+         proves: "Proved: with the lock, every schedule ends at 5."}
+    default: instr
+    state: "{counter} / {reg}"
+    state_extra: {lock: " · lock {sem:lock}"}      # appended when the code uses that semaphore
+    outcome: "ends at {counter}"
+    correct_when: {counter: 5}
+    wrong_note: {by: counter, notes: {4: "4: the ++ is lost", 6: "6: the -- is lost"}}
+    goals:
+      - {id: g4,    version: instr,  chip: "End at 4",        text: "Make counter end at 4",  reach: {finished: true, shared: {counter: 4}}}
+      - {id: g6,    version: instr,  chip: "End at 6",        text: "Make counter end at 6",  reach: {finished: true, shared: {counter: 6}}}
+      - {id: proof, version: locked, chip: "Proof: always 5", text: "Show that with the lock every schedule ends at 5", prove: true}
+
+  - id: lockvar
+    title: "The lock that lets both in"
+    source: "Notes · Worked examples 9.4 and 9.10"
+    setup: "lock = 0 means free. Each process waits while the lock is taken, takes it, runs its critical section and gives it back."
+    asks: "Testing the lock and setting it are two steps. Where exactly is the gap?"
+    hint: "Press a Run button: you decide who goes next."
+    threads: [P0, P1]
+    state_head: "lock"
+    shade_both_inside: true
+    mutex_check: "both inside the critical section"
+    shared: {lock: 0}
+    tiles:
+      w:   {text: "while (lock == 1) ;",           op: spin_while, var: lock, value: 1}
+      s1:  {text: "lock = 1",                      op: set, var: lock, value: 1}
+      cs:  {text: "critical section",              op: nop, cs: true, mark: cs}
+      z:   {text: "lock = 0",                      op: set, var: lock, value: 0, cs: true}
+      tas: {text: "while (test_and_set(&lock)) ;", op: test_and_set, var: lock}
+    versions:
+      - {id: plain, label: "Lock variable", code: [[w, s1, cs, z], [w, s1, cs, z]]}
+      - {id: tas,   label: "Test-and-set",  code: [[tas, cs, z], [tas, cs, z]],
+         proves: "Proved: test-and-set never lets both in, and both always finish."}
+    default: plain
+    state: "lock = {lock}"
+    outcome: "both finish"
+    goals:
+      - {id: both,  version: plain, chip: "Both inside",       text: "Get both processes into the critical section", reach: both_inside}
+      - {id: proof, version: tas,   chip: "Proof: never both", text: "Show that test-and-set never lets both in", prove: true}
+
+  - id: rdv
+    title: "Rendezvous"
+    source: "Slides · Rendezvous solutions"
+    setup: "a1 must happen before b2, and b1 before a2. Each thread says it has arrived, then waits for the other. Both semaphores start at 0."
+    asks: "What goes wrong when each thread waits before it signals?"
+    hint: "Press a Run button: you decide who goes next."
+    threads: [Thread A, Thread B]
+    state_head: "aArrived · bArrived"
+    semaphores: {aArrived: 0, bArrived: 0}
+    semaphore_notes: {aArrived: "A has arrived", bArrived: "B has arrived"}
+    tiles:
+      a1: {text: "statement a1",      op: nop, emit: a1}
+      sa: {text: "aArrived.signal()", op: signal, sem: aArrived}
+      wb: {text: "bArrived.wait()",   op: wait,   sem: bArrived}
+      a2: {text: "statement a2",      op: nop, needs: {event: b1, error: "a2 ran before b1"}}
+      b1: {text: "statement b1",      op: nop, emit: b1}
+      sb: {text: "bArrived.signal()", op: signal, sem: bArrived}
+      wa: {text: "aArrived.wait()",   op: wait,   sem: aArrived}
+      b2: {text: "statement b2",      op: nop, needs: {event: a1, error: "b2 ran before a1"}}
+    versions:
+      - {id: bad, label: "Wait, then signal", code: [[a1, wb, sa, a2], [b1, wa, sb, b2]]}
+    default: bad
+    fix: {from: bad, pinned: [a1, a2, b1, b2],
+          proves: "Proved: no schedule deadlocks, and a1 always comes before b2 and b1 before a2."}
+    state: "{sem:aArrived} · {sem:bArrived}"
+    outcome: "both get past the meeting point"
+    goals:
+      - {id: dl,  version: bad, chip: "Deadlock",         text: "Find a schedule that deadlocks", reach: deadlock}
+      - {id: fix, version: fix, chip: "Fix: never stuck", text: "Move the tiles so that no schedule deadlocks", prove: true}
+
+  - id: buffer
+    title: "Two waits in the wrong order"
+    source: "Notes · Worked example 9.15"
+    setup: "A bounded buffer with 2 slots, starting full. mutex guards the buffer, empty counts free slots, full counts items. Each process does one round."
+    asks: "The producer holds the lock and waits for a free slot. Who could free one?"
+    hint: "Press a Run button: you decide who goes next."
+    threads: [producer, consumer]
+    state_head: "mutex, empty, full"
+    mutex_check: "both in the buffer code"
+    shared: {items: 2, N: 2}
+    semaphores: {mutex: 1, empty: 0, full: 2}
+    semaphore_notes: {mutex: "guards the buffer", empty: "free slots", full: "items"}
+    # A full buffer is what makes the swapped waits deadlock, but it also hides a release that comes
+    # too early (signal(&mutex) above insert_item passes from full). A fix is proved only from all three.
+    starts:
+      - {label: "full",      shared: {items: 2}, semaphores: {mutex: 1, empty: 0, full: 2}}
+      - {label: "half full", shared: {items: 1}, semaphores: {mutex: 1, empty: 1, full: 1}}
+      - {label: "empty",     shared: {items: 0}, semaphores: {mutex: 1, empty: 2, full: 0}}
+    tiles:
+      pwm: {text: "wait(&mutex)",         op: wait,   sem: mutex}
+      pwe: {text: "wait(&empty)",         op: wait,   sem: empty}
+      ins: {text: "insert_item(item)",    op: nop, effect: insert, cs: true, mark: cs}
+      psm: {text: "signal(&mutex)",       op: signal, sem: mutex}
+      psf: {text: "signal(&full)",        op: signal, sem: full}
+      cwf: {text: "wait(&full)",          op: wait,   sem: full}
+      cwm: {text: "wait(&mutex)",         op: wait,   sem: mutex}
+      rem: {text: "item = remove_item()", op: nop, effect: remove, cs: true, mark: cs}
+      csm: {text: "signal(&mutex)",       op: signal, sem: mutex}
+      cse: {text: "signal(&empty)",       op: signal, sem: empty}
+    versions:
+      - {id: swapped, label: "Lock, then wait", code: [[pwm, pwe, ins, psm, psf], [cwf, cwm, rem, csm, cse]]}
+    default: swapped
+    fix: {from: swapped, pinned: [],
+          proves: "Proved: no schedule deadlocks, nobody shares the buffer code, and the buffer never overflows. From every starting buffer."}
+    state: "{sem:mutex}, {sem:empty}, {sem:full}"
+    outcome: "both finish, buffer holds {items}"
+    goals:
+      - {id: dl,  version: swapped, chip: "Deadlock",         text: "Find a schedule that deadlocks", reach: deadlock}
+      - {id: fix, version: fix,     chip: "Fix: never stuck", text: "Move the tiles so that no schedule deadlocks", prove: true}

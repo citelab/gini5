@@ -1,0 +1,8134 @@
+{
+ "cases": [
+  {
+   "level": "lost",
+   "code_name": "line",
+   "code": [
+    [
+     "pinc"
+    ],
+    [
+     "cdec"
+    ]
+   ],
+   "start": 0,
+   "explore": {
+    "total": 2,
+    "dlPaths": 0,
+    "certified": true,
+    "deadlock": null,
+    "violation": null,
+    "outcomes": [
+     {
+      "label": "ends at 5",
+      "correct": true,
+      "paths": 2,
+      "moves": [
+       0,
+       1
+      ]
+     }
+    ],
+    "points": [
+     [
+      0,
+      0
+     ],
+     [
+      0,
+      1
+     ],
+     [
+      1,
+      0
+     ],
+     [
+      1,
+      1
+     ]
+    ],
+    "dlPoints": []
+   },
+   "replays": {
+    "outcome0": {
+     "rows": [
+      [
+       0,
+       "counter++",
+       "plain",
+       "6 / r1 = –",
+       "",
+       false
+      ],
+      [
+       1,
+       "counter--",
+       "plain",
+       "5 / r2 = –",
+       "",
+       false
+      ]
+     ],
+     "path": [
+      [
+       0,
+       0
+      ],
+      [
+       1,
+       0
+      ],
+      [
+       1,
+       1
+      ]
+     ],
+     "done": true,
+     "deadlock": false
+    }
+   }
+  },
+  {
+   "level": "lost",
+   "code_name": "instr",
+   "code": [
+    [
+     "p1",
+     "p2",
+     "p3"
+    ],
+    [
+     "c1",
+     "c2",
+     "c3"
+    ]
+   ],
+   "start": 0,
+   "explore": {
+    "total": 20,
+    "dlPaths": 0,
+    "certified": false,
+    "deadlock": null,
+    "violation": null,
+    "outcomes": [
+     {
+      "label": "ends at 5",
+      "correct": true,
+      "paths": 2,
+      "moves": [
+       0,
+       0,
+       0,
+       1,
+       1,
+       1
+      ]
+     },
+     {
+      "label": "ends at 4",
+      "correct": false,
+      "paths": 9,
+      "moves": [
+       0,
+       0,
+       1,
+       0,
+       1,
+       1
+      ]
+     },
+     {
+      "label": "ends at 6",
+      "correct": false,
+      "paths": 9,
+      "moves": [
+       0,
+       0,
+       1,
+       1,
+       1,
+       0
+      ]
+     }
+    ],
+    "points": [
+     [
+      0,
+      0
+     ],
+     [
+      0,
+      1
+     ],
+     [
+      0,
+      2
+     ],
+     [
+      0,
+      3
+     ],
+     [
+      1,
+      0
+     ],
+     [
+      1,
+      1
+     ],
+     [
+      1,
+      2
+     ],
+     [
+      1,
+      3
+     ],
+     [
+      2,
+      0
+     ],
+     [
+      2,
+      1
+     ],
+     [
+      2,
+      2
+     ],
+     [
+      2,
+      3
+     ],
+     [
+      3,
+      0
+     ],
+     [
+      3,
+      1
+     ],
+     [
+      3,
+      2
+     ],
+     [
+      3,
+      3
+     ]
+    ],
+    "dlPoints": []
+   },
+   "replays": {
+    "outcome0": {
+     "rows": [
+      [
+       0,
+       "register1 = counter",
+       "plain",
+       "5 / r1 = 5",
+       "",
+       false
+      ],
+      [
+       0,
+       "register1 = register1 + 1",
+       "plain",
+       "5 / r1 = 6",
+       "",
+       false
+      ],
+      [
+       0,
+       "counter = register1",
+       "plain",
+       "6 / r1 = 6",
+       "",
+       false
+      ],
+      [
+       1,
+       "register2 = counter",
+       "plain",
+       "6 / r2 = 6",
+       "",
+       false
+      ],
+      [
+       1,
+       "register2 = register2 - 1",
+       "plain",
+       "6 / r2 = 5",
+       "",
+       false
+      ],
+      [
+       1,
+       "counter = register2",
+       "plain",
+       "5 / r2 = 5",
+       "",
+       false
+      ]
+     ],
+     "path": [
+      [
+       0,
+       0
+      ],
+      [
+       1,
+       0
+      ],
+      [
+       2,
+       0
+      ],
+      [
+       3,
+       0
+      ],
+      [
+       3,
+       1
+      ],
+      [
+       3,
+       2
+      ],
+      [
+       3,
+       3
+      ]
+     ],
+     "done": true,
+     "deadlock": false
+    },
+    "outcome1": {
+     "rows": [
+      [
+       0,
+       "register1 = counter",
+       "plain",
+       "5 / r1 = 5",
+       "",
+       false
+      ],
+      [
+       0,
+       "register1 = register1 + 1",
+       "plain",
+       "5 / r1 = 6",
+       "",
+       false
+      ],
+      [
+       1,
+       "register2 = counter",
+       "plain",
+       "5 / r2 = 5",
+       "",
+       false
+      ],
+      [
+       0,
+       "counter = register1",
+       "plain",
+       "6 / r1 = 6",
+       "",
+       false
+      ],
+      [
+       1,
+       "register2 = register2 - 1",
+       "plain",
+       "6 / r2 = 4",
+       "",
+       false
+      ],
+      [
+       1,
+       "counter = register2",
+       "plain",
+       "4: the ++ is lost",
+       "",
+       true
+      ]
+     ],
+     "path": [
+      [
+       0,
+       0
+      ],
+      [
+       1,
+       0
+      ],
+      [
+       2,
+       0
+      ],
+      [
+       2,
+       1
+      ],
+      [
+       3,
+       1
+      ],
+      [
+       3,
+       2
+      ],
+      [
+       3,
+       3
+      ]
+     ],
+     "done": true,
+     "deadlock": false
+    },
+    "outcome2": {
+     "rows": [
+      [
+       0,
+       "register1 = counter",
+       "plain",
+       "5 / r1 = 5",
+       "",
+       false
+      ],
+      [
+       0,
+       "register1 = register1 + 1",
+       "plain",
+       "5 / r1 = 6",
+       "",
+       false
+      ],
+      [
+       1,
+       "register2 = counter",
+       "plain",
+       "5 / r2 = 5",
+       "",
+       false
+      ],
+      [
+       1,
+       "register2 = register2 - 1",
+       "plain",
+       "5 / r2 = 4",
+       "",
+       false
+      ],
+      [
+       1,
+       "counter = register2",
+       "plain",
+       "4 / r2 = 4",
+       "",
+       false
+      ],
+      [
+       0,
+       "counter = register1",
+       "plain",
+       "6: the -- is lost",
+       "",
+       true
+      ]
+     ],
+     "path": [
+      [
+       0,
+       0
+      ],
+      [
+       1,
+       0
+      ],
+      [
+       2,
+       0
+      ],
+      [
+       2,
+       1
+      ],
+      [
+       2,
+       2
+      ],
+      [
+       2,
+       3
+      ],
+      [
+       3,
+       3
+      ]
+     ],
+     "done": true,
+     "deadlock": false
+    },
+    "played 001101": {
+     "rows": [
+      [
+       0,
+       "register1 = counter",
+       "plain",
+       "5 / r1 = 5",
+       "",
+       false
+      ],
+      [
+       0,
+       "register1 = register1 + 1",
+       "plain",
+       "5 / r1 = 6",
+       "",
+       false
+      ],
+      [
+       1,
+       "register2 = counter",
+       "plain",
+       "5 / r2 = 5",
+       "",
+       false
+      ],
+      [
+       1,
+       "register2 = register2 - 1",
+       "plain",
+       "5 / r2 = 4",
+       "",
+       false
+      ],
+      [
+       0,
+       "counter = register1",
+       "plain",
+       "6 / r1 = 6",
+       "",
+       false
+      ],
+      [
+       1,
+       "counter = register2",
+       "plain",
+       "4: the ++ is lost",
+       "",
+       true
+      ]
+     ],
+     "path": [
+      [
+       0,
+       0
+      ],
+      [
+       1,
+       0
+      ],
+      [
+       2,
+       0
+      ],
+      [
+       2,
+       1
+      ],
+      [
+       2,
+       2
+      ],
+      [
+       3,
+       2
+      ],
+      [
+       3,
+       3
+      ]
+     ],
+     "done": true,
+     "deadlock": false
+    }
+   }
+  },
+  {
+   "level": "lost",
+   "code_name": "locked",
+   "code": [
+    [
+     "acq",
+     "p1",
+     "p2",
+     "p3",
+     "rel"
+    ],
+    [
+     "acq",
+     "c1",
+     "c2",
+     "c3",
+     "rel"
+    ]
+   ],
+   "start": 0,
+   "explore": {
+    "total": 10,
+    "dlPaths": 0,
+    "certified": true,
+    "deadlock": null,
+    "violation": null,
+    "outcomes": [
+     {
+      "label": "ends at 5",
+      "correct": true,
+      "paths": 10,
+      "moves": [
+       0,
+       0,
+       0,
+       0,
+       0,
+       1,
+       1,
+       1,
+       1,
+       1
+      ]
+     }
+    ],
+    "points": [
+     [
+      0,
+      0
+     ],
+     [
+      0,
+      1
+     ],
+     [
+      0,
+      2
+     ],
+     [
+      0,
+      3
+     ],
+     [
+      0,
+      4
+     ],
+     [
+      0,
+      5
+     ],
+     [
+      1,
+      0
+     ],
+     [
+      1,
+      5
+     ],
+     [
+      2,
+      0
+     ],
+     [
+      2,
+      5
+     ],
+     [
+      3,
+      0
+     ],
+     [
+      3,
+      5
+     ],
+     [
+      4,
+      0
+     ],
+     [
+      4,
+      5
+     ],
+     [
+      5,
+      0
+     ],
+     [
+      5,
+      1
+     ],
+     [
+      5,
+      2
+     ],
+     [
+      5,
+      3
+     ],
+     [
+      5,
+      4
+     ],
+     [
+      5,
+      5
+     ]
+    ],
+    "dlPoints": []
+   },
+   "replays": {
+    "outcome0": {
+     "rows": [
+      [
+       0,
+       "wait(&lock)",
+       "ok",
+       "5 / r1 = – · lock 0",
+       "",
+       false
+      ],
+      [
+       0,
+       "register1 = counter",
+       "plain",
+       "5 / r1 = 5 · lock 0",
+       "",
+       false
+      ],
+      [
+       0,
+       "register1 = register1 + 1",
+       "plain",
+       "5 / r1 = 6 · lock 0",
+       "",
+       false
+      ],
+      [
+       0,
+       "counter = register1",
+       "plain",
+       "6 / r1 = 6 · lock 0",
+       "",
+       false
+      ],
+      [
+       0,
+       "signal(&lock)",
+       "plain",
+       "6 / r1 = 6 · lock 1",
+       "",
+       false
+      ],
+      [
+       1,
+       "wait(&lock)",
+       "ok",
+       "6 / r2 = – · lock 0",
+       "",
+       false
+      ],
+      [
+       1,
+       "register2 = counter",
+       "plain",
+       "6 / r2 = 6 · lock 0",
+       "",
+       false
+      ],
+      [
+       1,
+       "register2 = register2 - 1",
+       "plain",
+       "6 / r2 = 5 · lock 0",
+       "",
+       false
+      ],
+      [
+       1,
+       "counter = register2",
+       "plain",
+       "5 / r2 = 5 · lock 0",
+       "",
+       false
+      ],
+      [
+       1,
+       "signal(&lock)",
+       "plain",
+       "5 / r2 = 5 · lock 1",
+       "",
+       false
+      ]
+     ],
+     "path": [
+      [
+       0,
+       0
+      ],
+      [
+       1,
+       0
+      ],
+      [
+       2,
+       0
+      ],
+      [
+       3,
+       0
+      ],
+      [
+       4,
+       0
+      ],
+      [
+       5,
+       0
+      ],
+      [
+       5,
+       1
+      ],
+      [
+       5,
+       2
+      ],
+      [
+       5,
+       3
+      ],
+      [
+       5,
+       4
+      ],
+      [
+       5,
+       5
+      ]
+     ],
+     "done": true,
+     "deadlock": false
+    },
+    "played 01": {
+     "rows": [
+      [
+       0,
+       "wait(&lock)",
+       "ok",
+       "5 / r1 = – · lock 0",
+       "",
+       false
+      ],
+      [
+       1,
+       "wait(&lock)",
+       "blocked",
+       "5 / r2 = – · lock −1",
+       "consumer blocks",
+       false
+      ]
+     ],
+     "path": [
+      [
+       0,
+       0
+      ],
+      [
+       1,
+       0
+      ],
+      [
+       1,
+       0
+      ]
+     ],
+     "done": false,
+     "deadlock": false
+    },
+    "played 0100001": {
+     "rows": [
+      [
+       0,
+       "wait(&lock)",
+       "ok",
+       "5 / r1 = – · lock 0",
+       "",
+       false
+      ],
+      [
+       1,
+       "wait(&lock)",
+       "blocked",
+       "5 / r2 = – · lock −1",
+       "consumer blocks",
+       false
+      ],
+      [
+       0,
+       "register1 = counter",
+       "plain",
+       "5 / r1 = 5 · lock −1",
+       "",
+       false
+      ],
+      [
+       0,
+       "register1 = register1 + 1",
+       "plain",
+       "5 / r1 = 6 · lock −1",
+       "",
+       false
+      ],
+      [
+       0,
+       "counter = register1",
+       "plain",
+       "6 / r1 = 6 · lock −1",
+       "",
+       false
+      ],
+      [
+       0,
+       "signal(&lock)",
+       "plain",
+       "6 / r1 = 6 · lock 0",
+       "wakes consumer",
+       false
+      ],
+      [
+       1,
+       "wait(&lock), woken",
+       "ok",
+       "6 / r2 = – · lock 0",
+       "consumer goes on",
+       false
+      ]
+     ],
+     "path": [
+      [
+       0,
+       0
+      ],
+      [
+       1,
+       0
+      ],
+      [
+       1,
+       0
+      ],
+      [
+       2,
+       0
+      ],
+      [
+       3,
+       0
+      ],
+      [
+       4,
+       0
+      ],
+      [
+       5,
+       0
+      ],
+      [
+       5,
+       1
+      ]
+     ],
+     "done": false,
+     "deadlock": false
+    }
+   }
+  },
+  {
+   "level": "lost",
+   "code_name": "lock-one-side",
+   "code": [
+    [
+     "acq",
+     "p1",
+     "p2",
+     "p3",
+     "rel"
+    ],
+    [
+     "c1",
+     "c2",
+     "c3"
+    ]
+   ],
+   "start": 0,
+   "explore": {
+    "total": 56,
+    "dlPaths": 0,
+    "certified": false,
+    "deadlock": null,
+    "violation": null,
+    "outcomes": [
+     {
+      "label": "ends at 5",
+      "correct": true,
+      "paths": 8,
+      "moves": [
+       0,
+       0,
+       0,
+       0,
+       0,
+       1,
+       1,
+       1
+      ]
+     },
+     {
+      "label": "ends at 4",
+      "correct": false,
+      "paths": 32,
+      "moves": [
+       0,
+       0,
+       0,
+       1,
+       0,
+       0,
+       1,
+       1
+      ]
+     },
+     {
+      "label": "ends at 6",
+      "correct": false,
+      "paths": 16,
+      "moves": [
+       0,
+       0,
+       0,
+       1,
+       1,
+       1,
+       0,
+       0
+      ]
+     }
+    ],
+    "points": [
+     [
+      0,
+      0
+     ],
+     [
+      0,
+      1
+     ],
+     [
+      0,
+      2
+     ],
+     [
+      0,
+      3
+     ],
+     [
+      1,
+      0
+     ],
+     [
+      1,
+      1
+     ],
+     [
+      1,
+      2
+     ],
+     [
+      1,
+      3
+     ],
+     [
+      2,
+      0
+     ],
+     [
+      2,
+      1
+     ],
+     [
+      2,
+      2
+     ],
+     [
+      2,
+      3
+     ],
+     [
+      3,
+      0
+     ],
+     [
+      3,
+      1
+     ],
+     [
+      3,
+      2
+     ],
+     [
+      3,
+      3
+     ],
+     [
+      4,
+      0
+     ],
+     [
+      4,
+      1
+     ],
+     [
+      4,
+      2
+     ],
+     [
+      4,
+      3
+     ],
+     [
+      5,
+      0
+     ],
+     [
+      5,
+      1
+     ],
+     [
+      5,
+      2
+     ],
+     [
+      5,
+      3
+     ]
+    ],
+    "dlPoints": []
+   },
+   "replays": {
+    "outcome0": {
+     "rows": [
+      [
+       0,
+       "wait(&lock)",
+       "ok",
+       "5 / r1 = – · lock 0",
+       "",
+       false
+      ],
+      [
+       0,
+       "register1 = counter",
+       "plain",
+       "5 / r1 = 5 · lock 0",
+       "",
+       false
+      ],
+      [
+       0,
+       "register1 = register1 + 1",
+       "plain",
+       "5 / r1 = 6 · lock 0",
+       "",
+       false
+      ],
+      [
+       0,
+       "counter = register1",
+       "plain",
+       "6 / r1 = 6 · lock 0",
+       "",
+       false
+      ],
+      [
+       0,
+       "signal(&lock)",
+       "plain",
+       "6 / r1 = 6 · lock 1",
+       "",
+       false
+      ],
+      [
+       1,
+       "register2 = counter",
+       "plain",
+       "6 / r2 = 6 · lock 1",
+       "",
+       false
+      ],
+      [
+       1,
+       "register2 = register2 - 1",
+       "plain",
+       "6 / r2 = 5 · lock 1",
+       "",
+       false
+      ],
+      [
+       1,
+       "counter = register2",
+       "plain",
+       "5 / r2 = 5 · lock 1",
+       "",
+       false
+      ]
+     ],
+     "path": [
+      [
+       0,
+       0
+      ],
+      [
+       1,
+       0
+      ],
+      [
+       2,
+       0
+      ],
+      [
+       3,
+       0
+      ],
+      [
+       4,
+       0
+      ],
+      [
+       5,
+       0
+      ],
+      [
+       5,
+       1
+      ],
+      [
+       5,
+       2
+      ],
+      [
+       5,
+       3
+      ]
+     ],
+     "done": true,
+     "deadlock": false
+    },
+    "outcome1": {
+     "rows": [
+      [
+       0,
+       "wait(&lock)",
+       "ok",
+       "5 / r1 = – · lock 0",
+       "",
+       false
+      ],
+      [
+       0,
+       "register1 = counter",
+       "plain",
+       "5 / r1 = 5 · lock 0",
+       "",
+       false
+      ],
+      [
+       0,
+       "register1 = register1 + 1",
+       "plain",
+       "5 / r1 = 6 · lock 0",
+       "",
+       false
+      ],
+      [
+       1,
+       "register2 = counter",
+       "plain",
+       "5 / r2 = 5 · lock 0",
+       "",
+       false
+      ],
+      [
+       0,
+       "counter = register1",
+       "plain",
+       "6 / r1 = 6 · lock 0",
+       "",
+       false
+      ],
+      [
+       0,
+       "signal(&lock)",
+       "plain",
+       "6 / r1 = 6 · lock 1",
+       "",
+       false
+      ],
+      [
+       1,
+       "register2 = register2 - 1",
+       "plain",
+       "6 / r2 = 4 · lock 1",
+       "",
+       false
+      ],
+      [
+       1,
+       "counter = register2",
+       "plain",
+       "4: the ++ is lost",
+       "",
+       true
+      ]
+     ],
+     "path": [
+      [
+       0,
+       0
+      ],
+      [
+       1,
+       0
+      ],
+      [
+       2,
+       0
+      ],
+      [
+       3,
+       0
+      ],
+      [
+       3,
+       1
+      ],
+      [
+       4,
+       1
+      ],
+      [
+       5,
+       1
+      ],
+      [
+       5,
+       2
+      ],
+      [
+       5,
+       3
+      ]
+     ],
+     "done": true,
+     "deadlock": false
+    },
+    "outcome2": {
+     "rows": [
+      [
+       0,
+       "wait(&lock)",
+       "ok",
+       "5 / r1 = – · lock 0",
+       "",
+       false
+      ],
+      [
+       0,
+       "register1 = counter",
+       "plain",
+       "5 / r1 = 5 · lock 0",
+       "",
+       false
+      ],
+      [
+       0,
+       "register1 = register1 + 1",
+       "plain",
+       "5 / r1 = 6 · lock 0",
+       "",
+       false
+      ],
+      [
+       1,
+       "register2 = counter",
+       "plain",
+       "5 / r2 = 5 · lock 0",
+       "",
+       false
+      ],
+      [
+       1,
+       "register2 = register2 - 1",
+       "plain",
+       "5 / r2 = 4 · lock 0",
+       "",
+       false
+      ],
+      [
+       1,
+       "counter = register2",
+       "plain",
+       "4 / r2 = 4 · lock 0",
+       "",
+       false
+      ],
+      [
+       0,
+       "counter = register1",
+       "plain",
+       "6 / r1 = 6 · lock 0",
+       "",
+       false
+      ],
+      [
+       0,
+       "signal(&lock)",
+       "plain",
+       "6: the -- is lost",
+       "",
+       true
+      ]
+     ],
+     "path": [
+      [
+       0,
+       0
+      ],
+      [
+       1,
+       0
+      ],
+      [
+       2,
+       0
+      ],
+      [
+       3,
+       0
+      ],
+      [
+       3,
+       1
+      ],
+      [
+       3,
+       2
+      ],
+      [
+       3,
+       3
+      ],
+      [
+       4,
+       3
+      ],
+      [
+       5,
+       3
+      ]
+     ],
+     "done": true,
+     "deadlock": false
+    }
+   }
+  },
+  {
+   "level": "lost",
+   "code_name": "no-release",
+   "code": [
+    [
+     "acq",
+     "p1",
+     "p2",
+     "p3"
+    ],
+    [
+     "acq",
+     "c1",
+     "c2",
+     "c3",
+     "rel"
+    ]
+   ],
+   "start": 0,
+   "explore": {
+    "total": 9,
+    "dlPaths": 4,
+    "certified": false,
+    "deadlock": [
+     0,
+     0,
+     0,
+     0,
+     1
+    ],
+    "violation": null,
+    "outcomes": [
+     {
+      "label": "ends at 5",
+      "correct": true,
+      "paths": 5,
+      "moves": [
+       1,
+       1,
+       1,
+       1,
+       1,
+       0,
+       0,
+       0,
+       0
+      ]
+     }
+    ],
+    "points": [
+     [
+      0,
+      0
+     ],
+     [
+      0,
+      1
+     ],
+     [
+      0,
+      2
+     ],
+     [
+      0,
+      3
+     ],
+     [
+      0,
+      4
+     ],
+     [
+      0,
+      5
+     ],
+     [
+      1,
+      0
+     ],
+     [
+      1,
+      5
+     ],
+     [
+      2,
+      0
+     ],
+     [
+      2,
+      5
+     ],
+     [
+      3,
+      0
+     ],
+     [
+      3,
+      5
+     ],
+     [
+      4,
+      0
+     ],
+     [
+      4,
+      5
+     ]
+    ],
+    "dlPoints": [
+     [
+      4,
+      0
+     ]
+    ]
+   },
+   "replays": {
+    "deadlock": {
+     "rows": [
+      [
+       0,
+       "wait(&lock)",
+       "ok",
+       "5 / r1 = – · lock 0",
+       "",
+       false
+      ],
+      [
+       0,
+       "register1 = counter",
+       "plain",
+       "5 / r1 = 5 · lock 0",
+       "",
+       false
+      ],
+      [
+       0,
+       "register1 = register1 + 1",
+       "plain",
+       "5 / r1 = 6 · lock 0",
+       "",
+       false
+      ],
+      [
+       0,
+       "counter = register1",
+       "plain",
+       "6 / r1 = 6 · lock 0",
+       "",
+       false
+      ],
+      [
+       1,
+       "wait(&lock)",
+       "blocked",
+       "6 / r2 = – · lock −1: deadlock",
+       "consumer blocks",
+       true
+      ]
+     ],
+     "path": [
+      [
+       0,
+       0
+      ],
+      [
+       1,
+       0
+      ],
+      [
+       2,
+       0
+      ],
+      [
+       3,
+       0
+      ],
+      [
+       4,
+       0
+      ],
+      [
+       4,
+       0
+      ]
+     ],
+     "done": false,
+     "deadlock": true
+    },
+    "outcome0": {
+     "rows": [
+      [
+       1,
+       "wait(&lock)",
+       "ok",
+       "5 / r2 = – · lock 0",
+       "",
+       false
+      ],
+      [
+       1,
+       "register2 = counter",
+       "plain",
+       "5 / r2 = 5 · lock 0",
+       "",
+       false
+      ],
+      [
+       1,
+       "register2 = register2 - 1",
+       "plain",
+       "5 / r2 = 4 · lock 0",
+       "",
+       false
+      ],
+      [
+       1,
+       "counter = register2",
+       "plain",
+       "4 / r2 = 4 · lock 0",
+       "",
+       false
+      ],
+      [
+       1,
+       "signal(&lock)",
+       "plain",
+       "4 / r2 = 4 · lock 1",
+       "",
+       false
+      ],
+      [
+       0,
+       "wait(&lock)",
+       "ok",
+       "4 / r1 = – · lock 0",
+       "",
+       false
+      ],
+      [
+       0,
+       "register1 = counter",
+       "plain",
+       "4 / r1 = 4 · lock 0",
+       "",
+       false
+      ],
+      [
+       0,
+       "register1 = register1 + 1",
+       "plain",
+       "4 / r1 = 5 · lock 0",
+       "",
+       false
+      ],
+      [
+       0,
+       "counter = register1",
+       "plain",
+       "5 / r1 = 5 · lock 0",
+       "",
+       false
+      ]
+     ],
+     "path": [
+      [
+       0,
+       0
+      ],
+      [
+       0,
+       1
+      ],
+      [
+       0,
+       2
+      ],
+      [
+       0,
+       3
+      ],
+      [
+       0,
+       4
+      ],
+      [
+       0,
+       5
+      ],
+      [
+       1,
+       5
+      ],
+      [
+       2,
+       5
+      ],
+      [
+       3,
+       5
+      ],
+      [
+       4,
+       5
+      ]
+     ],
+     "done": true,
+     "deadlock": false
+    }
+   }
+  },
+  {
+   "level": "lockvar",
+   "code_name": "plain",
+   "code": [
+    [
+     "w",
+     "s1",
+     "cs",
+     "z"
+    ],
+    [
+     "w",
+     "s1",
+     "cs",
+     "z"
+    ]
+   ],
+   "start": 0,
+   "explore": {
+    "total": null,
+    "dlPaths": 0,
+    "certified": false,
+    "deadlock": null,
+    "violation": [
+     0,
+     1,
+     0,
+     1
+    ],
+    "outcomes": [
+     {
+      "label": "both finish",
+      "correct": true,
+      "paths": 0,
+      "moves": [
+       0,
+       0,
+       0,
+       0,
+       1,
+       1,
+       1,
+       1
+      ]
+     }
+    ],
+    "points": [
+     [
+      0,
+      0
+     ],
+     [
+      0,
+      1
+     ],
+     [
+      0,
+      2
+     ],
+     [
+      0,
+      3
+     ],
+     [
+      0,
+      4
+     ],
+     [
+      1,
+      0
+     ],
+     [
+      1,
+      1
+     ],
+     [
+      1,
+      2
+     ],
+     [
+      1,
+      3
+     ],
+     [
+      1,
+      4
+     ],
+     [
+      2,
+      0
+     ],
+     [
+      2,
+      1
+     ],
+     [
+      2,
+      2
+     ],
+     [
+      2,
+      3
+     ],
+     [
+      2,
+      4
+     ],
+     [
+      3,
+      0
+     ],
+     [
+      3,
+      1
+     ],
+     [
+      3,
+      2
+     ],
+     [
+      3,
+      3
+     ],
+     [
+      3,
+      4
+     ],
+     [
+      4,
+      0
+     ],
+     [
+      4,
+      1
+     ],
+     [
+      4,
+      2
+     ],
+     [
+      4,
+      3
+     ],
+     [
+      4,
+      4
+     ]
+    ],
+    "dlPoints": []
+   },
+   "replays": {
+    "violation": {
+     "rows": [
+      [
+       0,
+       "while (lock == 1) ;",
+       "plain",
+       "lock = 0",
+       "P0 sees free",
+       false
+      ],
+      [
+       1,
+       "while (lock == 1) ;",
+       "plain",
+       "lock = 0",
+       "P1 sees free",
+       false
+      ],
+      [
+       0,
+       "lock = 1",
+       "plain",
+       "lock = 1",
+       "",
+       false
+      ],
+      [
+       1,
+       "lock = 1",
+       "plain",
+       "lock = 1: both inside",
+       "",
+       true
+      ]
+     ],
+     "path": [
+      [
+       0,
+       0
+      ],
+      [
+       1,
+       0
+      ],
+      [
+       1,
+       1
+      ],
+      [
+       2,
+       1
+      ],
+      [
+       2,
+       2
+      ]
+     ],
+     "done": false,
+     "deadlock": false
+    },
+    "outcome0": {
+     "rows": [
+      [
+       0,
+       "while (lock == 1) ;",
+       "plain",
+       "lock = 0",
+       "P0 sees free",
+       false
+      ],
+      [
+       0,
+       "lock = 1",
+       "plain",
+       "lock = 1",
+       "",
+       false
+      ],
+      [
+       0,
+       "critical section",
+       "cs",
+       "lock = 1",
+       "",
+       false
+      ],
+      [
+       0,
+       "lock = 0",
+       "plain",
+       "lock = 0",
+       "",
+       false
+      ],
+      [
+       1,
+       "while (lock == 1) ;",
+       "plain",
+       "lock = 0",
+       "P1 sees free",
+       false
+      ],
+      [
+       1,
+       "lock = 1",
+       "plain",
+       "lock = 1",
+       "",
+       false
+      ],
+      [
+       1,
+       "critical section",
+       "cs",
+       "lock = 1",
+       "",
+       false
+      ],
+      [
+       1,
+       "lock = 0",
+       "plain",
+       "lock = 0",
+       "",
+       false
+      ]
+     ],
+     "path": [
+      [
+       0,
+       0
+      ],
+      [
+       1,
+       0
+      ],
+      [
+       2,
+       0
+      ],
+      [
+       3,
+       0
+      ],
+      [
+       4,
+       0
+      ],
+      [
+       4,
+       1
+      ],
+      [
+       4,
+       2
+      ],
+      [
+       4,
+       3
+      ],
+      [
+       4,
+       4
+      ]
+     ],
+     "done": true,
+     "deadlock": false
+    },
+    "played 0101": {
+     "rows": [
+      [
+       0,
+       "while (lock == 1) ;",
+       "plain",
+       "lock = 0",
+       "P0 sees free",
+       false
+      ],
+      [
+       1,
+       "while (lock == 1) ;",
+       "plain",
+       "lock = 0",
+       "P1 sees free",
+       false
+      ],
+      [
+       0,
+       "lock = 1",
+       "plain",
+       "lock = 1",
+       "",
+       false
+      ],
+      [
+       1,
+       "lock = 1",
+       "plain",
+       "lock = 1: both inside",
+       "",
+       true
+      ]
+     ],
+     "path": [
+      [
+       0,
+       0
+      ],
+      [
+       1,
+       0
+      ],
+      [
+       1,
+       1
+      ],
+      [
+       2,
+       1
+      ],
+      [
+       2,
+       2
+      ]
+     ],
+     "done": false,
+     "deadlock": false
+    },
+    "played 001": {
+     "rows": [
+      [
+       0,
+       "while (lock == 1) ;",
+       "plain",
+       "lock = 0",
+       "P0 sees free",
+       false
+      ],
+      [
+       0,
+       "lock = 1",
+       "plain",
+       "lock = 1",
+       "",
+       false
+      ],
+      [
+       1,
+       "while (lock == 1) ;",
+       "spin",
+       "lock = 1",
+       "P1 spins",
+       false
+      ]
+     ],
+     "path": [
+      [
+       0,
+       0
+      ],
+      [
+       1,
+       0
+      ],
+      [
+       2,
+       0
+      ],
+      [
+       2,
+       0
+      ]
+     ],
+     "done": false,
+     "deadlock": false
+    }
+   }
+  },
+  {
+   "level": "lockvar",
+   "code_name": "tas",
+   "code": [
+    [
+     "tas",
+     "cs",
+     "z"
+    ],
+    [
+     "tas",
+     "cs",
+     "z"
+    ]
+   ],
+   "start": 0,
+   "explore": {
+    "total": null,
+    "dlPaths": 0,
+    "certified": true,
+    "deadlock": null,
+    "violation": null,
+    "outcomes": [
+     {
+      "label": "both finish",
+      "correct": true,
+      "paths": 0,
+      "moves": [
+       0,
+       0,
+       0,
+       1,
+       1,
+       1
+      ]
+     }
+    ],
+    "points": [
+     [
+      0,
+      0
+     ],
+     [
+      0,
+      1
+     ],
+     [
+      0,
+      2
+     ],
+     [
+      0,
+      3
+     ],
+     [
+      1,
+      0
+     ],
+     [
+      1,
+      3
+     ],
+     [
+      2,
+      0
+     ],
+     [
+      2,
+      3
+     ],
+     [
+      3,
+      0
+     ],
+     [
+      3,
+      1
+     ],
+     [
+      3,
+      2
+     ],
+     [
+      3,
+      3
+     ]
+    ],
+    "dlPoints": []
+   },
+   "replays": {
+    "outcome0": {
+     "rows": [
+      [
+       0,
+       "while (test_and_set(&lock)) ;",
+       "ok",
+       "lock = 1",
+       "returned 0, P0 in",
+       false
+      ],
+      [
+       0,
+       "critical section",
+       "cs",
+       "lock = 1",
+       "",
+       false
+      ],
+      [
+       0,
+       "lock = 0",
+       "plain",
+       "lock = 0",
+       "",
+       false
+      ],
+      [
+       1,
+       "while (test_and_set(&lock)) ;",
+       "ok",
+       "lock = 1",
+       "returned 0, P1 in",
+       false
+      ],
+      [
+       1,
+       "critical section",
+       "cs",
+       "lock = 1",
+       "",
+       false
+      ],
+      [
+       1,
+       "lock = 0",
+       "plain",
+       "lock = 0",
+       "",
+       false
+      ]
+     ],
+     "path": [
+      [
+       0,
+       0
+      ],
+      [
+       1,
+       0
+      ],
+      [
+       2,
+       0
+      ],
+      [
+       3,
+       0
+      ],
+      [
+       3,
+       1
+      ],
+      [
+       3,
+       2
+      ],
+      [
+       3,
+       3
+      ]
+     ],
+     "done": true,
+     "deadlock": false
+    }
+   }
+  },
+  {
+   "level": "lockvar",
+   "code_name": "tas-no-release",
+   "code": [
+    [
+     "tas",
+     "cs"
+    ],
+    [
+     "tas",
+     "cs",
+     "z"
+    ]
+   ],
+   "start": 0,
+   "explore": {
+    "total": null,
+    "dlPaths": 0,
+    "certified": false,
+    "deadlock": [
+     0,
+     0
+    ],
+    "violation": null,
+    "outcomes": [
+     {
+      "label": "both finish",
+      "correct": true,
+      "paths": 0,
+      "moves": [
+       1,
+       1,
+       1,
+       0,
+       0
+      ]
+     }
+    ],
+    "points": [
+     [
+      0,
+      0
+     ],
+     [
+      0,
+      1
+     ],
+     [
+      0,
+      2
+     ],
+     [
+      0,
+      3
+     ],
+     [
+      1,
+      0
+     ],
+     [
+      1,
+      3
+     ],
+     [
+      2,
+      0
+     ],
+     [
+      2,
+      3
+     ]
+    ],
+    "dlPoints": [
+     [
+      2,
+      0
+     ]
+    ]
+   },
+   "replays": {
+    "deadlock": {
+     "rows": [
+      [
+       0,
+       "while (test_and_set(&lock)) ;",
+       "ok",
+       "lock = 1",
+       "returned 0, P0 in",
+       false
+      ],
+      [
+       0,
+       "critical section",
+       "cs",
+       "lock = 1: deadlock",
+       "",
+       true
+      ]
+     ],
+     "path": [
+      [
+       0,
+       0
+      ],
+      [
+       1,
+       0
+      ],
+      [
+       2,
+       0
+      ]
+     ],
+     "done": false,
+     "deadlock": true
+    },
+    "outcome0": {
+     "rows": [
+      [
+       1,
+       "while (test_and_set(&lock)) ;",
+       "ok",
+       "lock = 1",
+       "returned 0, P1 in",
+       false
+      ],
+      [
+       1,
+       "critical section",
+       "cs",
+       "lock = 1",
+       "",
+       false
+      ],
+      [
+       1,
+       "lock = 0",
+       "plain",
+       "lock = 0",
+       "",
+       false
+      ],
+      [
+       0,
+       "while (test_and_set(&lock)) ;",
+       "ok",
+       "lock = 1",
+       "returned 0, P0 in",
+       false
+      ],
+      [
+       0,
+       "critical section",
+       "cs",
+       "lock = 1",
+       "",
+       false
+      ]
+     ],
+     "path": [
+      [
+       0,
+       0
+      ],
+      [
+       0,
+       1
+      ],
+      [
+       0,
+       2
+      ],
+      [
+       0,
+       3
+      ],
+      [
+       1,
+       3
+      ],
+      [
+       2,
+       3
+      ]
+     ],
+     "done": true,
+     "deadlock": false
+    }
+   }
+  },
+  {
+   "level": "rdv",
+   "code_name": "bad",
+   "code": [
+    [
+     "a1",
+     "wb",
+     "sa",
+     "a2"
+    ],
+    [
+     "b1",
+     "wa",
+     "sb",
+     "b2"
+    ]
+   ],
+   "start": 0,
+   "explore": {
+    "total": null,
+    "dlPaths": 0,
+    "certified": false,
+    "deadlock": [
+     0,
+     0,
+     1,
+     1
+    ],
+    "violation": null,
+    "outcomes": [],
+    "points": [
+     [
+      0,
+      0
+     ],
+     [
+      0,
+      1
+     ],
+     [
+      1,
+      0
+     ],
+     [
+      1,
+      1
+     ]
+    ],
+    "dlPoints": [
+     [
+      1,
+      1
+     ]
+    ]
+   },
+   "replays": {
+    "deadlock": {
+     "rows": [
+      [
+       0,
+       "statement a1",
+       "plain",
+       "0 · 0",
+       "",
+       false
+      ],
+      [
+       0,
+       "bArrived.wait()",
+       "blocked",
+       "0 · −1",
+       "Thread A blocks",
+       false
+      ],
+      [
+       1,
+       "statement b1",
+       "plain",
+       "0 · −1",
+       "",
+       false
+      ],
+      [
+       1,
+       "aArrived.wait()",
+       "blocked",
+       "−1 · −1: deadlock",
+       "Thread B blocks",
+       true
+      ]
+     ],
+     "path": [
+      [
+       0,
+       0
+      ],
+      [
+       1,
+       0
+      ],
+      [
+       1,
+       0
+      ],
+      [
+       1,
+       1
+      ],
+      [
+       1,
+       1
+      ]
+     ],
+     "done": false,
+     "deadlock": true
+    },
+    "played 0011": {
+     "rows": [
+      [
+       0,
+       "statement a1",
+       "plain",
+       "0 · 0",
+       "",
+       false
+      ],
+      [
+       0,
+       "bArrived.wait()",
+       "blocked",
+       "0 · −1",
+       "Thread A blocks",
+       false
+      ],
+      [
+       1,
+       "statement b1",
+       "plain",
+       "0 · −1",
+       "",
+       false
+      ],
+      [
+       1,
+       "aArrived.wait()",
+       "blocked",
+       "−1 · −1: deadlock",
+       "Thread B blocks",
+       true
+      ]
+     ],
+     "path": [
+      [
+       0,
+       0
+      ],
+      [
+       1,
+       0
+      ],
+      [
+       1,
+       0
+      ],
+      [
+       1,
+       1
+      ],
+      [
+       1,
+       1
+      ]
+     ],
+     "done": false,
+     "deadlock": true
+    }
+   }
+  },
+  {
+   "level": "rdv",
+   "code_name": "signal-then-wait",
+   "code": [
+    [
+     "a1",
+     "sa",
+     "wb",
+     "a2"
+    ],
+    [
+     "b1",
+     "sb",
+     "wa",
+     "b2"
+    ]
+   ],
+   "start": 0,
+   "explore": {
+    "total": null,
+    "dlPaths": 0,
+    "certified": true,
+    "deadlock": null,
+    "violation": null,
+    "outcomes": [
+     {
+      "label": "both get past the meeting point",
+      "correct": true,
+      "paths": 0,
+      "moves": [
+       0,
+       0,
+       1,
+       1,
+       0,
+       0,
+       1,
+       1
+      ]
+     }
+    ],
+    "points": [
+     [
+      0,
+      0
+     ],
+     [
+      0,
+      1
+     ],
+     [
+      0,
+      2
+     ],
+     [
+      1,
+      0
+     ],
+     [
+      1,
+      1
+     ],
+     [
+      1,
+      2
+     ],
+     [
+      2,
+      0
+     ],
+     [
+      2,
+      1
+     ],
+     [
+      2,
+      2
+     ],
+     [
+      2,
+      3
+     ],
+     [
+      2,
+      4
+     ],
+     [
+      3,
+      2
+     ],
+     [
+      3,
+      3
+     ],
+     [
+      3,
+      4
+     ],
+     [
+      4,
+      2
+     ],
+     [
+      4,
+      3
+     ],
+     [
+      4,
+      4
+     ]
+    ],
+    "dlPoints": []
+   },
+   "replays": {
+    "outcome0": {
+     "rows": [
+      [
+       0,
+       "statement a1",
+       "plain",
+       "0 · 0",
+       "",
+       false
+      ],
+      [
+       0,
+       "aArrived.signal()",
+       "plain",
+       "1 · 0",
+       "",
+       false
+      ],
+      [
+       1,
+       "statement b1",
+       "plain",
+       "1 · 0",
+       "",
+       false
+      ],
+      [
+       1,
+       "bArrived.signal()",
+       "plain",
+       "1 · 1",
+       "",
+       false
+      ],
+      [
+       0,
+       "bArrived.wait()",
+       "ok",
+       "1 · 0",
+       "",
+       false
+      ],
+      [
+       0,
+       "statement a2",
+       "plain",
+       "1 · 0",
+       "",
+       false
+      ],
+      [
+       1,
+       "aArrived.wait()",
+       "ok",
+       "0 · 0",
+       "",
+       false
+      ],
+      [
+       1,
+       "statement b2",
+       "plain",
+       "0 · 0",
+       "",
+       false
+      ]
+     ],
+     "path": [
+      [
+       0,
+       0
+      ],
+      [
+       1,
+       0
+      ],
+      [
+       2,
+       0
+      ],
+      [
+       2,
+       1
+      ],
+      [
+       2,
+       2
+      ],
+      [
+       3,
+       2
+      ],
+      [
+       4,
+       2
+      ],
+      [
+       4,
+       3
+      ],
+      [
+       4,
+       4
+      ]
+     ],
+     "done": true,
+     "deadlock": false
+    }
+   }
+  },
+  {
+   "level": "rdv",
+   "code_name": "asymmetric",
+   "code": [
+    [
+     "a1",
+     "sa",
+     "wb",
+     "a2"
+    ],
+    [
+     "b1",
+     "wa",
+     "sb",
+     "b2"
+    ]
+   ],
+   "start": 0,
+   "explore": {
+    "total": null,
+    "dlPaths": 0,
+    "certified": true,
+    "deadlock": null,
+    "violation": null,
+    "outcomes": [
+     {
+      "label": "both get past the meeting point",
+      "correct": true,
+      "paths": 0,
+      "moves": [
+       0,
+       0,
+       1,
+       1,
+       1,
+       0,
+       0,
+       1
+      ]
+     }
+    ],
+    "points": [
+     [
+      0,
+      0
+     ],
+     [
+      0,
+      1
+     ],
+     [
+      1,
+      0
+     ],
+     [
+      1,
+      1
+     ],
+     [
+      2,
+      0
+     ],
+     [
+      2,
+      1
+     ],
+     [
+      2,
+      2
+     ],
+     [
+      2,
+      3
+     ],
+     [
+      2,
+      4
+     ],
+     [
+      3,
+      3
+     ],
+     [
+      3,
+      4
+     ],
+     [
+      4,
+      3
+     ],
+     [
+      4,
+      4
+     ]
+    ],
+    "dlPoints": []
+   },
+   "replays": {
+    "outcome0": {
+     "rows": [
+      [
+       0,
+       "statement a1",
+       "plain",
+       "0 · 0",
+       "",
+       false
+      ],
+      [
+       0,
+       "aArrived.signal()",
+       "plain",
+       "1 · 0",
+       "",
+       false
+      ],
+      [
+       1,
+       "statement b1",
+       "plain",
+       "1 · 0",
+       "",
+       false
+      ],
+      [
+       1,
+       "aArrived.wait()",
+       "ok",
+       "0 · 0",
+       "",
+       false
+      ],
+      [
+       1,
+       "bArrived.signal()",
+       "plain",
+       "0 · 1",
+       "",
+       false
+      ],
+      [
+       0,
+       "bArrived.wait()",
+       "ok",
+       "0 · 0",
+       "",
+       false
+      ],
+      [
+       0,
+       "statement a2",
+       "plain",
+       "0 · 0",
+       "",
+       false
+      ],
+      [
+       1,
+       "statement b2",
+       "plain",
+       "0 · 0",
+       "",
+       false
+      ]
+     ],
+     "path": [
+      [
+       0,
+       0
+      ],
+      [
+       1,
+       0
+      ],
+      [
+       2,
+       0
+      ],
+      [
+       2,
+       1
+      ],
+      [
+       2,
+       2
+      ],
+      [
+       2,
+       3
+      ],
+      [
+       3,
+       3
+      ],
+      [
+       4,
+       3
+      ],
+      [
+       4,
+       4
+      ]
+     ],
+     "done": true,
+     "deadlock": false
+    }
+   }
+  },
+  {
+   "level": "rdv",
+   "code_name": "a2-above-wait",
+   "code": [
+    [
+     "a1",
+     "a2",
+     "wb",
+     "sa"
+    ],
+    [
+     "b1",
+     "sb",
+     "wa",
+     "b2"
+    ]
+   ],
+   "start": 0,
+   "explore": {
+    "total": null,
+    "dlPaths": 0,
+    "certified": false,
+    "deadlock": null,
+    "violation": null,
+    "outcomes": [
+     {
+      "label": "both get past the meeting point",
+      "correct": true,
+      "paths": 0,
+      "moves": [
+       0,
+       1,
+       0,
+       1,
+       0,
+       0,
+       1,
+       1
+      ]
+     },
+     {
+      "label": "finishes, but a2 ran before b1",
+      "correct": false,
+      "paths": 0,
+      "moves": [
+       0,
+       0,
+       1,
+       1,
+       0,
+       0,
+       1,
+       1
+      ]
+     }
+    ],
+    "points": [
+     [
+      0,
+      0
+     ],
+     [
+      0,
+      1
+     ],
+     [
+      0,
+      2
+     ],
+     [
+      1,
+      0
+     ],
+     [
+      1,
+      1
+     ],
+     [
+      1,
+      2
+     ],
+     [
+      2,
+      0
+     ],
+     [
+      2,
+      1
+     ],
+     [
+      2,
+      2
+     ],
+     [
+      3,
+      2
+     ],
+     [
+      4,
+      2
+     ],
+     [
+      4,
+      3
+     ],
+     [
+      4,
+      4
+     ]
+    ],
+    "dlPoints": []
+   },
+   "replays": {
+    "outcome0": {
+     "rows": [
+      [
+       0,
+       "statement a1",
+       "plain",
+       "0 · 0",
+       "",
+       false
+      ],
+      [
+       1,
+       "statement b1",
+       "plain",
+       "0 · 0",
+       "",
+       false
+      ],
+      [
+       0,
+       "statement a2",
+       "plain",
+       "0 · 0",
+       "",
+       false
+      ],
+      [
+       1,
+       "bArrived.signal()",
+       "plain",
+       "0 · 1",
+       "",
+       false
+      ],
+      [
+       0,
+       "bArrived.wait()",
+       "ok",
+       "0 · 0",
+       "",
+       false
+      ],
+      [
+       0,
+       "aArrived.signal()",
+       "plain",
+       "1 · 0",
+       "",
+       false
+      ],
+      [
+       1,
+       "aArrived.wait()",
+       "ok",
+       "0 · 0",
+       "",
+       false
+      ],
+      [
+       1,
+       "statement b2",
+       "plain",
+       "0 · 0",
+       "",
+       false
+      ]
+     ],
+     "path": [
+      [
+       0,
+       0
+      ],
+      [
+       1,
+       0
+      ],
+      [
+       1,
+       1
+      ],
+      [
+       2,
+       1
+      ],
+      [
+       2,
+       2
+      ],
+      [
+       3,
+       2
+      ],
+      [
+       4,
+       2
+      ],
+      [
+       4,
+       3
+      ],
+      [
+       4,
+       4
+      ]
+     ],
+     "done": true,
+     "deadlock": false
+    },
+    "outcome1": {
+     "rows": [
+      [
+       0,
+       "statement a1",
+       "plain",
+       "0 · 0",
+       "",
+       false
+      ],
+      [
+       0,
+       "statement a2",
+       "plain",
+       "a2 ran before b1",
+       "",
+       true
+      ],
+      [
+       1,
+       "statement b1",
+       "plain",
+       "0 · 0",
+       "",
+       false
+      ],
+      [
+       1,
+       "bArrived.signal()",
+       "plain",
+       "0 · 1",
+       "",
+       false
+      ],
+      [
+       0,
+       "bArrived.wait()",
+       "ok",
+       "0 · 0",
+       "",
+       false
+      ],
+      [
+       0,
+       "aArrived.signal()",
+       "plain",
+       "1 · 0",
+       "",
+       false
+      ],
+      [
+       1,
+       "aArrived.wait()",
+       "ok",
+       "0 · 0",
+       "",
+       false
+      ],
+      [
+       1,
+       "statement b2",
+       "plain",
+       "0 · 0",
+       "",
+       false
+      ]
+     ],
+     "path": [
+      [
+       0,
+       0
+      ],
+      [
+       1,
+       0
+      ],
+      [
+       2,
+       0
+      ],
+      [
+       2,
+       1
+      ],
+      [
+       2,
+       2
+      ],
+      [
+       3,
+       2
+      ],
+      [
+       4,
+       2
+      ],
+      [
+       4,
+       3
+      ],
+      [
+       4,
+       4
+      ]
+     ],
+     "done": true,
+     "deadlock": false
+    }
+   }
+  },
+  {
+   "level": "buffer",
+   "code_name": "swapped",
+   "code": [
+    [
+     "pwm",
+     "pwe",
+     "ins",
+     "psm",
+     "psf"
+    ],
+    [
+     "cwf",
+     "cwm",
+     "rem",
+     "csm",
+     "cse"
+    ]
+   ],
+   "start": 0,
+   "explore": {
+    "total": null,
+    "dlPaths": 0,
+    "certified": false,
+    "deadlock": [
+     0,
+     0,
+     1,
+     1
+    ],
+    "violation": null,
+    "outcomes": [
+     {
+      "label": "both finish, buffer holds 2",
+      "correct": true,
+      "paths": 0,
+      "moves": [
+       1,
+       1,
+       1,
+       1,
+       0,
+       1,
+       0,
+       0,
+       0,
+       0
+      ]
+     }
+    ],
+    "points": [
+     [
+      0,
+      0
+     ],
+     [
+      0,
+      1
+     ],
+     [
+      0,
+      2
+     ],
+     [
+      0,
+      3
+     ],
+     [
+      0,
+      4
+     ],
+     [
+      0,
+      5
+     ],
+     [
+      1,
+      0
+     ],
+     [
+      1,
+      1
+     ],
+     [
+      1,
+      4
+     ],
+     [
+      1,
+      5
+     ],
+     [
+      2,
+      5
+     ],
+     [
+      3,
+      5
+     ],
+     [
+      4,
+      5
+     ],
+     [
+      5,
+      5
+     ]
+    ],
+    "dlPoints": [
+     [
+      1,
+      1
+     ]
+    ]
+   },
+   "replays": {
+    "deadlock": {
+     "rows": [
+      [
+       0,
+       "wait(&mutex)",
+       "ok",
+       "0, 0, 2",
+       "",
+       false
+      ],
+      [
+       0,
+       "wait(&empty)",
+       "blocked",
+       "0, −1, 2",
+       "producer blocks",
+       false
+      ],
+      [
+       1,
+       "wait(&full)",
+       "ok",
+       "0, −1, 1",
+       "",
+       false
+      ],
+      [
+       1,
+       "wait(&mutex)",
+       "blocked",
+       "−1, −1, 1: deadlock",
+       "consumer blocks",
+       true
+      ]
+     ],
+     "path": [
+      [
+       0,
+       0
+      ],
+      [
+       1,
+       0
+      ],
+      [
+       1,
+       0
+      ],
+      [
+       1,
+       1
+      ],
+      [
+       1,
+       1
+      ]
+     ],
+     "done": false,
+     "deadlock": true
+    },
+    "outcome0": {
+     "rows": [
+      [
+       1,
+       "wait(&full)",
+       "ok",
+       "1, 0, 1",
+       "",
+       false
+      ],
+      [
+       1,
+       "wait(&mutex)",
+       "ok",
+       "0, 0, 1",
+       "",
+       false
+      ],
+      [
+       1,
+       "item = remove_item()",
+       "cs",
+       "0, 0, 1",
+       "",
+       false
+      ],
+      [
+       1,
+       "signal(&mutex)",
+       "plain",
+       "1, 0, 1",
+       "",
+       false
+      ],
+      [
+       0,
+       "wait(&mutex)",
+       "ok",
+       "0, 0, 1",
+       "",
+       false
+      ],
+      [
+       1,
+       "signal(&empty)",
+       "plain",
+       "0, 1, 1",
+       "",
+       false
+      ],
+      [
+       0,
+       "wait(&empty)",
+       "ok",
+       "0, 0, 1",
+       "",
+       false
+      ],
+      [
+       0,
+       "insert_item(item)",
+       "cs",
+       "0, 0, 1",
+       "",
+       false
+      ],
+      [
+       0,
+       "signal(&mutex)",
+       "plain",
+       "1, 0, 1",
+       "",
+       false
+      ],
+      [
+       0,
+       "signal(&full)",
+       "plain",
+       "1, 0, 2",
+       "",
+       false
+      ]
+     ],
+     "path": [
+      [
+       0,
+       0
+      ],
+      [
+       0,
+       1
+      ],
+      [
+       0,
+       2
+      ],
+      [
+       0,
+       3
+      ],
+      [
+       0,
+       4
+      ],
+      [
+       1,
+       4
+      ],
+      [
+       1,
+       5
+      ],
+      [
+       2,
+       5
+      ],
+      [
+       3,
+       5
+      ],
+      [
+       4,
+       5
+      ],
+      [
+       5,
+       5
+      ]
+     ],
+     "done": true,
+     "deadlock": false
+    },
+    "played 0011": {
+     "rows": [
+      [
+       0,
+       "wait(&mutex)",
+       "ok",
+       "0, 0, 2",
+       "",
+       false
+      ],
+      [
+       0,
+       "wait(&empty)",
+       "blocked",
+       "0, −1, 2",
+       "producer blocks",
+       false
+      ],
+      [
+       1,
+       "wait(&full)",
+       "ok",
+       "0, −1, 1",
+       "",
+       false
+      ],
+      [
+       1,
+       "wait(&mutex)",
+       "blocked",
+       "−1, −1, 1: deadlock",
+       "consumer blocks",
+       true
+      ]
+     ],
+     "path": [
+      [
+       0,
+       0
+      ],
+      [
+       1,
+       0
+      ],
+      [
+       1,
+       0
+      ],
+      [
+       1,
+       1
+      ],
+      [
+       1,
+       1
+      ]
+     ],
+     "done": false,
+     "deadlock": true
+    }
+   }
+  },
+  {
+   "level": "buffer",
+   "code_name": "swapped",
+   "code": [
+    [
+     "pwm",
+     "pwe",
+     "ins",
+     "psm",
+     "psf"
+    ],
+    [
+     "cwf",
+     "cwm",
+     "rem",
+     "csm",
+     "cse"
+    ]
+   ],
+   "start": 1,
+   "explore": {
+    "total": null,
+    "dlPaths": 0,
+    "certified": true,
+    "deadlock": null,
+    "violation": null,
+    "outcomes": [
+     {
+      "label": "both finish, buffer holds 1",
+      "correct": true,
+      "paths": 0,
+      "moves": [
+       0,
+       0,
+       0,
+       0,
+       0,
+       1,
+       1,
+       1,
+       1,
+       1
+      ]
+     }
+    ],
+    "points": [
+     [
+      0,
+      0
+     ],
+     [
+      0,
+      1
+     ],
+     [
+      0,
+      2
+     ],
+     [
+      0,
+      3
+     ],
+     [
+      0,
+      4
+     ],
+     [
+      0,
+      5
+     ],
+     [
+      1,
+      0
+     ],
+     [
+      1,
+      1
+     ],
+     [
+      1,
+      4
+     ],
+     [
+      1,
+      5
+     ],
+     [
+      2,
+      0
+     ],
+     [
+      2,
+      1
+     ],
+     [
+      2,
+      4
+     ],
+     [
+      2,
+      5
+     ],
+     [
+      3,
+      0
+     ],
+     [
+      3,
+      1
+     ],
+     [
+      3,
+      4
+     ],
+     [
+      3,
+      5
+     ],
+     [
+      4,
+      0
+     ],
+     [
+      4,
+      1
+     ],
+     [
+      4,
+      2
+     ],
+     [
+      4,
+      3
+     ],
+     [
+      4,
+      4
+     ],
+     [
+      4,
+      5
+     ],
+     [
+      5,
+      0
+     ],
+     [
+      5,
+      1
+     ],
+     [
+      5,
+      2
+     ],
+     [
+      5,
+      3
+     ],
+     [
+      5,
+      4
+     ],
+     [
+      5,
+      5
+     ]
+    ],
+    "dlPoints": []
+   },
+   "replays": {
+    "outcome0": {
+     "rows": [
+      [
+       0,
+       "wait(&mutex)",
+       "ok",
+       "0, 1, 1",
+       "",
+       false
+      ],
+      [
+       0,
+       "wait(&empty)",
+       "ok",
+       "0, 0, 1",
+       "",
+       false
+      ],
+      [
+       0,
+       "insert_item(item)",
+       "cs",
+       "0, 0, 1",
+       "",
+       false
+      ],
+      [
+       0,
+       "signal(&mutex)",
+       "plain",
+       "1, 0, 1",
+       "",
+       false
+      ],
+      [
+       0,
+       "signal(&full)",
+       "plain",
+       "1, 0, 2",
+       "",
+       false
+      ],
+      [
+       1,
+       "wait(&full)",
+       "ok",
+       "1, 0, 1",
+       "",
+       false
+      ],
+      [
+       1,
+       "wait(&mutex)",
+       "ok",
+       "0, 0, 1",
+       "",
+       false
+      ],
+      [
+       1,
+       "item = remove_item()",
+       "cs",
+       "0, 0, 1",
+       "",
+       false
+      ],
+      [
+       1,
+       "signal(&mutex)",
+       "plain",
+       "1, 0, 1",
+       "",
+       false
+      ],
+      [
+       1,
+       "signal(&empty)",
+       "plain",
+       "1, 1, 1",
+       "",
+       false
+      ]
+     ],
+     "path": [
+      [
+       0,
+       0
+      ],
+      [
+       1,
+       0
+      ],
+      [
+       2,
+       0
+      ],
+      [
+       3,
+       0
+      ],
+      [
+       4,
+       0
+      ],
+      [
+       5,
+       0
+      ],
+      [
+       5,
+       1
+      ],
+      [
+       5,
+       2
+      ],
+      [
+       5,
+       3
+      ],
+      [
+       5,
+       4
+      ],
+      [
+       5,
+       5
+      ]
+     ],
+     "done": true,
+     "deadlock": false
+    },
+    "played 0011": {
+     "rows": [
+      [
+       0,
+       "wait(&mutex)",
+       "ok",
+       "0, 1, 1",
+       "",
+       false
+      ],
+      [
+       0,
+       "wait(&empty)",
+       "ok",
+       "0, 0, 1",
+       "",
+       false
+      ],
+      [
+       1,
+       "wait(&full)",
+       "ok",
+       "0, 0, 0",
+       "",
+       false
+      ],
+      [
+       1,
+       "wait(&mutex)",
+       "blocked",
+       "−1, 0, 0",
+       "consumer blocks",
+       false
+      ]
+     ],
+     "path": [
+      [
+       0,
+       0
+      ],
+      [
+       1,
+       0
+      ],
+      [
+       2,
+       0
+      ],
+      [
+       2,
+       1
+      ],
+      [
+       2,
+       1
+      ]
+     ],
+     "done": false,
+     "deadlock": false
+    }
+   }
+  },
+  {
+   "level": "buffer",
+   "code_name": "swapped",
+   "code": [
+    [
+     "pwm",
+     "pwe",
+     "ins",
+     "psm",
+     "psf"
+    ],
+    [
+     "cwf",
+     "cwm",
+     "rem",
+     "csm",
+     "cse"
+    ]
+   ],
+   "start": 2,
+   "explore": {
+    "total": null,
+    "dlPaths": 0,
+    "certified": true,
+    "deadlock": null,
+    "violation": null,
+    "outcomes": [
+     {
+      "label": "both finish, buffer holds 0",
+      "correct": true,
+      "paths": 0,
+      "moves": [
+       0,
+       0,
+       0,
+       0,
+       0,
+       1,
+       1,
+       1,
+       1,
+       1
+      ]
+     }
+    ],
+    "points": [
+     [
+      0,
+      0
+     ],
+     [
+      1,
+      0
+     ],
+     [
+      2,
+      0
+     ],
+     [
+      3,
+      0
+     ],
+     [
+      4,
+      0
+     ],
+     [
+      5,
+      0
+     ],
+     [
+      5,
+      1
+     ],
+     [
+      5,
+      2
+     ],
+     [
+      5,
+      3
+     ],
+     [
+      5,
+      4
+     ],
+     [
+      5,
+      5
+     ]
+    ],
+    "dlPoints": []
+   },
+   "replays": {
+    "outcome0": {
+     "rows": [
+      [
+       0,
+       "wait(&mutex)",
+       "ok",
+       "0, 2, 0",
+       "",
+       false
+      ],
+      [
+       0,
+       "wait(&empty)",
+       "ok",
+       "0, 1, 0",
+       "",
+       false
+      ],
+      [
+       0,
+       "insert_item(item)",
+       "cs",
+       "0, 1, 0",
+       "",
+       false
+      ],
+      [
+       0,
+       "signal(&mutex)",
+       "plain",
+       "1, 1, 0",
+       "",
+       false
+      ],
+      [
+       0,
+       "signal(&full)",
+       "plain",
+       "1, 1, 1",
+       "",
+       false
+      ],
+      [
+       1,
+       "wait(&full)",
+       "ok",
+       "1, 1, 0",
+       "",
+       false
+      ],
+      [
+       1,
+       "wait(&mutex)",
+       "ok",
+       "0, 1, 0",
+       "",
+       false
+      ],
+      [
+       1,
+       "item = remove_item()",
+       "cs",
+       "0, 1, 0",
+       "",
+       false
+      ],
+      [
+       1,
+       "signal(&mutex)",
+       "plain",
+       "1, 1, 0",
+       "",
+       false
+      ],
+      [
+       1,
+       "signal(&empty)",
+       "plain",
+       "1, 2, 0",
+       "",
+       false
+      ]
+     ],
+     "path": [
+      [
+       0,
+       0
+      ],
+      [
+       1,
+       0
+      ],
+      [
+       2,
+       0
+      ],
+      [
+       3,
+       0
+      ],
+      [
+       4,
+       0
+      ],
+      [
+       5,
+       0
+      ],
+      [
+       5,
+       1
+      ],
+      [
+       5,
+       2
+      ],
+      [
+       5,
+       3
+      ],
+      [
+       5,
+       4
+      ],
+      [
+       5,
+       5
+      ]
+     ],
+     "done": true,
+     "deadlock": false
+    },
+    "played 0011": {
+     "rows": [
+      [
+       0,
+       "wait(&mutex)",
+       "ok",
+       "0, 2, 0",
+       "",
+       false
+      ],
+      [
+       0,
+       "wait(&empty)",
+       "ok",
+       "0, 1, 0",
+       "",
+       false
+      ],
+      [
+       1,
+       "wait(&full)",
+       "blocked",
+       "0, 1, −1",
+       "consumer blocks",
+       false
+      ],
+      [
+       1,
+       "wait(&full)",
+       "blocked",
+       "0, 1, −2",
+       "consumer blocks",
+       false
+      ]
+     ],
+     "path": [
+      [
+       0,
+       0
+      ],
+      [
+       1,
+       0
+      ],
+      [
+       2,
+       0
+      ],
+      [
+       2,
+       0
+      ],
+      [
+       2,
+       0
+      ]
+     ],
+     "done": false,
+     "deadlock": false
+    }
+   }
+  },
+  {
+   "level": "buffer",
+   "code_name": "fixed",
+   "code": [
+    [
+     "pwe",
+     "pwm",
+     "ins",
+     "psm",
+     "psf"
+    ],
+    [
+     "cwf",
+     "cwm",
+     "rem",
+     "csm",
+     "cse"
+    ]
+   ],
+   "start": 0,
+   "explore": {
+    "total": null,
+    "dlPaths": 0,
+    "certified": true,
+    "deadlock": null,
+    "violation": null,
+    "outcomes": [
+     {
+      "label": "both finish, buffer holds 2",
+      "correct": true,
+      "paths": 0,
+      "moves": [
+       1,
+       1,
+       1,
+       1,
+       1,
+       0,
+       0,
+       0,
+       0,
+       0
+      ]
+     }
+    ],
+    "points": [
+     [
+      0,
+      0
+     ],
+     [
+      0,
+      1
+     ],
+     [
+      0,
+      2
+     ],
+     [
+      0,
+      3
+     ],
+     [
+      0,
+      4
+     ],
+     [
+      0,
+      5
+     ],
+     [
+      1,
+      5
+     ],
+     [
+      2,
+      5
+     ],
+     [
+      3,
+      5
+     ],
+     [
+      4,
+      5
+     ],
+     [
+      5,
+      5
+     ]
+    ],
+    "dlPoints": []
+   },
+   "replays": {
+    "outcome0": {
+     "rows": [
+      [
+       1,
+       "wait(&full)",
+       "ok",
+       "1, 0, 1",
+       "",
+       false
+      ],
+      [
+       1,
+       "wait(&mutex)",
+       "ok",
+       "0, 0, 1",
+       "",
+       false
+      ],
+      [
+       1,
+       "item = remove_item()",
+       "cs",
+       "0, 0, 1",
+       "",
+       false
+      ],
+      [
+       1,
+       "signal(&mutex)",
+       "plain",
+       "1, 0, 1",
+       "",
+       false
+      ],
+      [
+       1,
+       "signal(&empty)",
+       "plain",
+       "1, 1, 1",
+       "",
+       false
+      ],
+      [
+       0,
+       "wait(&empty)",
+       "ok",
+       "1, 0, 1",
+       "",
+       false
+      ],
+      [
+       0,
+       "wait(&mutex)",
+       "ok",
+       "0, 0, 1",
+       "",
+       false
+      ],
+      [
+       0,
+       "insert_item(item)",
+       "cs",
+       "0, 0, 1",
+       "",
+       false
+      ],
+      [
+       0,
+       "signal(&mutex)",
+       "plain",
+       "1, 0, 1",
+       "",
+       false
+      ],
+      [
+       0,
+       "signal(&full)",
+       "plain",
+       "1, 0, 2",
+       "",
+       false
+      ]
+     ],
+     "path": [
+      [
+       0,
+       0
+      ],
+      [
+       0,
+       1
+      ],
+      [
+       0,
+       2
+      ],
+      [
+       0,
+       3
+      ],
+      [
+       0,
+       4
+      ],
+      [
+       0,
+       5
+      ],
+      [
+       1,
+       5
+      ],
+      [
+       2,
+       5
+      ],
+      [
+       3,
+       5
+      ],
+      [
+       4,
+       5
+      ],
+      [
+       5,
+       5
+      ]
+     ],
+     "done": true,
+     "deadlock": false
+    }
+   }
+  },
+  {
+   "level": "buffer",
+   "code_name": "fixed",
+   "code": [
+    [
+     "pwe",
+     "pwm",
+     "ins",
+     "psm",
+     "psf"
+    ],
+    [
+     "cwf",
+     "cwm",
+     "rem",
+     "csm",
+     "cse"
+    ]
+   ],
+   "start": 1,
+   "explore": {
+    "total": null,
+    "dlPaths": 0,
+    "certified": true,
+    "deadlock": null,
+    "violation": null,
+    "outcomes": [
+     {
+      "label": "both finish, buffer holds 1",
+      "correct": true,
+      "paths": 0,
+      "moves": [
+       0,
+       0,
+       0,
+       0,
+       0,
+       1,
+       1,
+       1,
+       1,
+       1
+      ]
+     }
+    ],
+    "points": [
+     [
+      0,
+      0
+     ],
+     [
+      0,
+      1
+     ],
+     [
+      0,
+      2
+     ],
+     [
+      0,
+      3
+     ],
+     [
+      0,
+      4
+     ],
+     [
+      0,
+      5
+     ],
+     [
+      1,
+      0
+     ],
+     [
+      1,
+      1
+     ],
+     [
+      1,
+      2
+     ],
+     [
+      1,
+      3
+     ],
+     [
+      1,
+      4
+     ],
+     [
+      1,
+      5
+     ],
+     [
+      2,
+      0
+     ],
+     [
+      2,
+      1
+     ],
+     [
+      2,
+      4
+     ],
+     [
+      2,
+      5
+     ],
+     [
+      3,
+      0
+     ],
+     [
+      3,
+      1
+     ],
+     [
+      3,
+      4
+     ],
+     [
+      3,
+      5
+     ],
+     [
+      4,
+      0
+     ],
+     [
+      4,
+      1
+     ],
+     [
+      4,
+      2
+     ],
+     [
+      4,
+      3
+     ],
+     [
+      4,
+      4
+     ],
+     [
+      4,
+      5
+     ],
+     [
+      5,
+      0
+     ],
+     [
+      5,
+      1
+     ],
+     [
+      5,
+      2
+     ],
+     [
+      5,
+      3
+     ],
+     [
+      5,
+      4
+     ],
+     [
+      5,
+      5
+     ]
+    ],
+    "dlPoints": []
+   },
+   "replays": {
+    "outcome0": {
+     "rows": [
+      [
+       0,
+       "wait(&empty)",
+       "ok",
+       "1, 0, 1",
+       "",
+       false
+      ],
+      [
+       0,
+       "wait(&mutex)",
+       "ok",
+       "0, 0, 1",
+       "",
+       false
+      ],
+      [
+       0,
+       "insert_item(item)",
+       "cs",
+       "0, 0, 1",
+       "",
+       false
+      ],
+      [
+       0,
+       "signal(&mutex)",
+       "plain",
+       "1, 0, 1",
+       "",
+       false
+      ],
+      [
+       0,
+       "signal(&full)",
+       "plain",
+       "1, 0, 2",
+       "",
+       false
+      ],
+      [
+       1,
+       "wait(&full)",
+       "ok",
+       "1, 0, 1",
+       "",
+       false
+      ],
+      [
+       1,
+       "wait(&mutex)",
+       "ok",
+       "0, 0, 1",
+       "",
+       false
+      ],
+      [
+       1,
+       "item = remove_item()",
+       "cs",
+       "0, 0, 1",
+       "",
+       false
+      ],
+      [
+       1,
+       "signal(&mutex)",
+       "plain",
+       "1, 0, 1",
+       "",
+       false
+      ],
+      [
+       1,
+       "signal(&empty)",
+       "plain",
+       "1, 1, 1",
+       "",
+       false
+      ]
+     ],
+     "path": [
+      [
+       0,
+       0
+      ],
+      [
+       1,
+       0
+      ],
+      [
+       2,
+       0
+      ],
+      [
+       3,
+       0
+      ],
+      [
+       4,
+       0
+      ],
+      [
+       5,
+       0
+      ],
+      [
+       5,
+       1
+      ],
+      [
+       5,
+       2
+      ],
+      [
+       5,
+       3
+      ],
+      [
+       5,
+       4
+      ],
+      [
+       5,
+       5
+      ]
+     ],
+     "done": true,
+     "deadlock": false
+    }
+   }
+  },
+  {
+   "level": "buffer",
+   "code_name": "fixed",
+   "code": [
+    [
+     "pwe",
+     "pwm",
+     "ins",
+     "psm",
+     "psf"
+    ],
+    [
+     "cwf",
+     "cwm",
+     "rem",
+     "csm",
+     "cse"
+    ]
+   ],
+   "start": 2,
+   "explore": {
+    "total": null,
+    "dlPaths": 0,
+    "certified": true,
+    "deadlock": null,
+    "violation": null,
+    "outcomes": [
+     {
+      "label": "both finish, buffer holds 0",
+      "correct": true,
+      "paths": 0,
+      "moves": [
+       0,
+       0,
+       0,
+       0,
+       0,
+       1,
+       1,
+       1,
+       1,
+       1
+      ]
+     }
+    ],
+    "points": [
+     [
+      0,
+      0
+     ],
+     [
+      1,
+      0
+     ],
+     [
+      2,
+      0
+     ],
+     [
+      3,
+      0
+     ],
+     [
+      4,
+      0
+     ],
+     [
+      5,
+      0
+     ],
+     [
+      5,
+      1
+     ],
+     [
+      5,
+      2
+     ],
+     [
+      5,
+      3
+     ],
+     [
+      5,
+      4
+     ],
+     [
+      5,
+      5
+     ]
+    ],
+    "dlPoints": []
+   },
+   "replays": {
+    "outcome0": {
+     "rows": [
+      [
+       0,
+       "wait(&empty)",
+       "ok",
+       "1, 1, 0",
+       "",
+       false
+      ],
+      [
+       0,
+       "wait(&mutex)",
+       "ok",
+       "0, 1, 0",
+       "",
+       false
+      ],
+      [
+       0,
+       "insert_item(item)",
+       "cs",
+       "0, 1, 0",
+       "",
+       false
+      ],
+      [
+       0,
+       "signal(&mutex)",
+       "plain",
+       "1, 1, 0",
+       "",
+       false
+      ],
+      [
+       0,
+       "signal(&full)",
+       "plain",
+       "1, 1, 1",
+       "",
+       false
+      ],
+      [
+       1,
+       "wait(&full)",
+       "ok",
+       "1, 1, 0",
+       "",
+       false
+      ],
+      [
+       1,
+       "wait(&mutex)",
+       "ok",
+       "0, 1, 0",
+       "",
+       false
+      ],
+      [
+       1,
+       "item = remove_item()",
+       "cs",
+       "0, 1, 0",
+       "",
+       false
+      ],
+      [
+       1,
+       "signal(&mutex)",
+       "plain",
+       "1, 1, 0",
+       "",
+       false
+      ],
+      [
+       1,
+       "signal(&empty)",
+       "plain",
+       "1, 2, 0",
+       "",
+       false
+      ]
+     ],
+     "path": [
+      [
+       0,
+       0
+      ],
+      [
+       1,
+       0
+      ],
+      [
+       2,
+       0
+      ],
+      [
+       3,
+       0
+      ],
+      [
+       4,
+       0
+      ],
+      [
+       5,
+       0
+      ],
+      [
+       5,
+       1
+      ],
+      [
+       5,
+       2
+      ],
+      [
+       5,
+       3
+      ],
+      [
+       5,
+       4
+      ],
+      [
+       5,
+       5
+      ]
+     ],
+     "done": true,
+     "deadlock": false
+    }
+   }
+  },
+  {
+   "level": "buffer",
+   "code_name": "early-release",
+   "code": [
+    [
+     "pwe",
+     "pwm",
+     "psm",
+     "ins",
+     "psf"
+    ],
+    [
+     "cwf",
+     "cwm",
+     "rem",
+     "csm",
+     "cse"
+    ]
+   ],
+   "start": 0,
+   "explore": {
+    "total": null,
+    "dlPaths": 0,
+    "certified": true,
+    "deadlock": null,
+    "violation": null,
+    "outcomes": [
+     {
+      "label": "both finish, buffer holds 2",
+      "correct": true,
+      "paths": 0,
+      "moves": [
+       1,
+       1,
+       1,
+       1,
+       1,
+       0,
+       0,
+       0,
+       0,
+       0
+      ]
+     }
+    ],
+    "points": [
+     [
+      0,
+      0
+     ],
+     [
+      0,
+      1
+     ],
+     [
+      0,
+      2
+     ],
+     [
+      0,
+      3
+     ],
+     [
+      0,
+      4
+     ],
+     [
+      0,
+      5
+     ],
+     [
+      1,
+      5
+     ],
+     [
+      2,
+      5
+     ],
+     [
+      3,
+      5
+     ],
+     [
+      4,
+      5
+     ],
+     [
+      5,
+      5
+     ]
+    ],
+    "dlPoints": []
+   },
+   "replays": {
+    "outcome0": {
+     "rows": [
+      [
+       1,
+       "wait(&full)",
+       "ok",
+       "1, 0, 1",
+       "",
+       false
+      ],
+      [
+       1,
+       "wait(&mutex)",
+       "ok",
+       "0, 0, 1",
+       "",
+       false
+      ],
+      [
+       1,
+       "item = remove_item()",
+       "cs",
+       "0, 0, 1",
+       "",
+       false
+      ],
+      [
+       1,
+       "signal(&mutex)",
+       "plain",
+       "1, 0, 1",
+       "",
+       false
+      ],
+      [
+       1,
+       "signal(&empty)",
+       "plain",
+       "1, 1, 1",
+       "",
+       false
+      ],
+      [
+       0,
+       "wait(&empty)",
+       "ok",
+       "1, 0, 1",
+       "",
+       false
+      ],
+      [
+       0,
+       "wait(&mutex)",
+       "ok",
+       "0, 0, 1",
+       "",
+       false
+      ],
+      [
+       0,
+       "signal(&mutex)",
+       "plain",
+       "1, 0, 1",
+       "",
+       false
+      ],
+      [
+       0,
+       "insert_item(item)",
+       "cs",
+       "1, 0, 1",
+       "",
+       false
+      ],
+      [
+       0,
+       "signal(&full)",
+       "plain",
+       "1, 0, 2",
+       "",
+       false
+      ]
+     ],
+     "path": [
+      [
+       0,
+       0
+      ],
+      [
+       0,
+       1
+      ],
+      [
+       0,
+       2
+      ],
+      [
+       0,
+       3
+      ],
+      [
+       0,
+       4
+      ],
+      [
+       0,
+       5
+      ],
+      [
+       1,
+       5
+      ],
+      [
+       2,
+       5
+      ],
+      [
+       3,
+       5
+      ],
+      [
+       4,
+       5
+      ],
+      [
+       5,
+       5
+      ]
+     ],
+     "done": true,
+     "deadlock": false
+    }
+   }
+  },
+  {
+   "level": "buffer",
+   "code_name": "early-release",
+   "code": [
+    [
+     "pwe",
+     "pwm",
+     "psm",
+     "ins",
+     "psf"
+    ],
+    [
+     "cwf",
+     "cwm",
+     "rem",
+     "csm",
+     "cse"
+    ]
+   ],
+   "start": 1,
+   "explore": {
+    "total": null,
+    "dlPaths": 0,
+    "certified": false,
+    "deadlock": null,
+    "violation": [
+     0,
+     0,
+     0,
+     1,
+     1
+    ],
+    "outcomes": [
+     {
+      "label": "both finish, buffer holds 1",
+      "correct": true,
+      "paths": 0,
+      "moves": [
+       0,
+       0,
+       0,
+       0,
+       0,
+       1,
+       1,
+       1,
+       1,
+       1
+      ]
+     }
+    ],
+    "points": [
+     [
+      0,
+      0
+     ],
+     [
+      0,
+      1
+     ],
+     [
+      0,
+      2
+     ],
+     [
+      0,
+      3
+     ],
+     [
+      0,
+      4
+     ],
+     [
+      0,
+      5
+     ],
+     [
+      1,
+      0
+     ],
+     [
+      1,
+      1
+     ],
+     [
+      1,
+      2
+     ],
+     [
+      1,
+      3
+     ],
+     [
+      1,
+      4
+     ],
+     [
+      1,
+      5
+     ],
+     [
+      2,
+      0
+     ],
+     [
+      2,
+      1
+     ],
+     [
+      2,
+      4
+     ],
+     [
+      2,
+      5
+     ],
+     [
+      3,
+      0
+     ],
+     [
+      3,
+      1
+     ],
+     [
+      3,
+      2
+     ],
+     [
+      3,
+      3
+     ],
+     [
+      3,
+      4
+     ],
+     [
+      3,
+      5
+     ],
+     [
+      4,
+      0
+     ],
+     [
+      4,
+      1
+     ],
+     [
+      4,
+      2
+     ],
+     [
+      4,
+      3
+     ],
+     [
+      4,
+      4
+     ],
+     [
+      4,
+      5
+     ],
+     [
+      5,
+      0
+     ],
+     [
+      5,
+      1
+     ],
+     [
+      5,
+      2
+     ],
+     [
+      5,
+      3
+     ],
+     [
+      5,
+      4
+     ],
+     [
+      5,
+      5
+     ]
+    ],
+    "dlPoints": []
+   },
+   "replays": {
+    "violation": {
+     "rows": [
+      [
+       0,
+       "wait(&empty)",
+       "ok",
+       "1, 0, 1",
+       "",
+       false
+      ],
+      [
+       0,
+       "wait(&mutex)",
+       "ok",
+       "0, 0, 1",
+       "",
+       false
+      ],
+      [
+       0,
+       "signal(&mutex)",
+       "plain",
+       "1, 0, 1",
+       "",
+       false
+      ],
+      [
+       1,
+       "wait(&full)",
+       "ok",
+       "1, 0, 0",
+       "",
+       false
+      ],
+      [
+       1,
+       "wait(&mutex)",
+       "ok",
+       "0, 0, 0: both inside",
+       "",
+       true
+      ]
+     ],
+     "path": [
+      [
+       0,
+       0
+      ],
+      [
+       1,
+       0
+      ],
+      [
+       2,
+       0
+      ],
+      [
+       3,
+       0
+      ],
+      [
+       3,
+       1
+      ],
+      [
+       3,
+       2
+      ]
+     ],
+     "done": false,
+     "deadlock": false
+    },
+    "outcome0": {
+     "rows": [
+      [
+       0,
+       "wait(&empty)",
+       "ok",
+       "1, 0, 1",
+       "",
+       false
+      ],
+      [
+       0,
+       "wait(&mutex)",
+       "ok",
+       "0, 0, 1",
+       "",
+       false
+      ],
+      [
+       0,
+       "signal(&mutex)",
+       "plain",
+       "1, 0, 1",
+       "",
+       false
+      ],
+      [
+       0,
+       "insert_item(item)",
+       "cs",
+       "1, 0, 1",
+       "",
+       false
+      ],
+      [
+       0,
+       "signal(&full)",
+       "plain",
+       "1, 0, 2",
+       "",
+       false
+      ],
+      [
+       1,
+       "wait(&full)",
+       "ok",
+       "1, 0, 1",
+       "",
+       false
+      ],
+      [
+       1,
+       "wait(&mutex)",
+       "ok",
+       "0, 0, 1",
+       "",
+       false
+      ],
+      [
+       1,
+       "item = remove_item()",
+       "cs",
+       "0, 0, 1",
+       "",
+       false
+      ],
+      [
+       1,
+       "signal(&mutex)",
+       "plain",
+       "1, 0, 1",
+       "",
+       false
+      ],
+      [
+       1,
+       "signal(&empty)",
+       "plain",
+       "1, 1, 1",
+       "",
+       false
+      ]
+     ],
+     "path": [
+      [
+       0,
+       0
+      ],
+      [
+       1,
+       0
+      ],
+      [
+       2,
+       0
+      ],
+      [
+       3,
+       0
+      ],
+      [
+       4,
+       0
+      ],
+      [
+       5,
+       0
+      ],
+      [
+       5,
+       1
+      ],
+      [
+       5,
+       2
+      ],
+      [
+       5,
+       3
+      ],
+      [
+       5,
+       4
+      ],
+      [
+       5,
+       5
+      ]
+     ],
+     "done": true,
+     "deadlock": false
+    }
+   }
+  },
+  {
+   "level": "buffer",
+   "code_name": "early-release",
+   "code": [
+    [
+     "pwe",
+     "pwm",
+     "psm",
+     "ins",
+     "psf"
+    ],
+    [
+     "cwf",
+     "cwm",
+     "rem",
+     "csm",
+     "cse"
+    ]
+   ],
+   "start": 2,
+   "explore": {
+    "total": null,
+    "dlPaths": 0,
+    "certified": true,
+    "deadlock": null,
+    "violation": null,
+    "outcomes": [
+     {
+      "label": "both finish, buffer holds 0",
+      "correct": true,
+      "paths": 0,
+      "moves": [
+       0,
+       0,
+       0,
+       0,
+       0,
+       1,
+       1,
+       1,
+       1,
+       1
+      ]
+     }
+    ],
+    "points": [
+     [
+      0,
+      0
+     ],
+     [
+      1,
+      0
+     ],
+     [
+      2,
+      0
+     ],
+     [
+      3,
+      0
+     ],
+     [
+      4,
+      0
+     ],
+     [
+      5,
+      0
+     ],
+     [
+      5,
+      1
+     ],
+     [
+      5,
+      2
+     ],
+     [
+      5,
+      3
+     ],
+     [
+      5,
+      4
+     ],
+     [
+      5,
+      5
+     ]
+    ],
+    "dlPoints": []
+   },
+   "replays": {
+    "outcome0": {
+     "rows": [
+      [
+       0,
+       "wait(&empty)",
+       "ok",
+       "1, 1, 0",
+       "",
+       false
+      ],
+      [
+       0,
+       "wait(&mutex)",
+       "ok",
+       "0, 1, 0",
+       "",
+       false
+      ],
+      [
+       0,
+       "signal(&mutex)",
+       "plain",
+       "1, 1, 0",
+       "",
+       false
+      ],
+      [
+       0,
+       "insert_item(item)",
+       "cs",
+       "1, 1, 0",
+       "",
+       false
+      ],
+      [
+       0,
+       "signal(&full)",
+       "plain",
+       "1, 1, 1",
+       "",
+       false
+      ],
+      [
+       1,
+       "wait(&full)",
+       "ok",
+       "1, 1, 0",
+       "",
+       false
+      ],
+      [
+       1,
+       "wait(&mutex)",
+       "ok",
+       "0, 1, 0",
+       "",
+       false
+      ],
+      [
+       1,
+       "item = remove_item()",
+       "cs",
+       "0, 1, 0",
+       "",
+       false
+      ],
+      [
+       1,
+       "signal(&mutex)",
+       "plain",
+       "1, 1, 0",
+       "",
+       false
+      ],
+      [
+       1,
+       "signal(&empty)",
+       "plain",
+       "1, 2, 0",
+       "",
+       false
+      ]
+     ],
+     "path": [
+      [
+       0,
+       0
+      ],
+      [
+       1,
+       0
+      ],
+      [
+       2,
+       0
+      ],
+      [
+       3,
+       0
+      ],
+      [
+       4,
+       0
+      ],
+      [
+       5,
+       0
+      ],
+      [
+       5,
+       1
+      ],
+      [
+       5,
+       2
+      ],
+      [
+       5,
+       3
+      ],
+      [
+       5,
+       4
+      ],
+      [
+       5,
+       5
+      ]
+     ],
+     "done": true,
+     "deadlock": false
+    }
+   }
+  },
+  {
+   "level": "buffer",
+   "code_name": "insert-first",
+   "code": [
+    [
+     "ins",
+     "pwe",
+     "pwm",
+     "psm",
+     "psf"
+    ],
+    [
+     "cwf",
+     "cwm",
+     "rem",
+     "csm",
+     "cse"
+    ]
+   ],
+   "start": 0,
+   "explore": {
+    "total": null,
+    "dlPaths": 0,
+    "certified": false,
+    "deadlock": null,
+    "violation": [
+     1,
+     1
+    ],
+    "outcomes": [
+     {
+      "label": "both finish, buffer holds 2",
+      "correct": true,
+      "paths": 0,
+      "moves": [
+       1,
+       1,
+       1,
+       0,
+       1,
+       1,
+       0,
+       0,
+       0,
+       0
+      ]
+     },
+     {
+      "label": "finishes, but it inserted into a full buffer",
+      "correct": false,
+      "paths": 0,
+      "moves": [
+       0,
+       1,
+       1,
+       1,
+       1,
+       1,
+       0,
+       0,
+       0,
+       0
+      ]
+     }
+    ],
+    "points": [
+     [
+      0,
+      0
+     ],
+     [
+      0,
+      1
+     ],
+     [
+      0,
+      2
+     ],
+     [
+      0,
+      3
+     ],
+     [
+      0,
+      4
+     ],
+     [
+      0,
+      5
+     ],
+     [
+      1,
+      0
+     ],
+     [
+      1,
+      1
+     ],
+     [
+      1,
+      2
+     ],
+     [
+      1,
+      3
+     ],
+     [
+      1,
+      4
+     ],
+     [
+      1,
+      5
+     ],
+     [
+      2,
+      5
+     ],
+     [
+      3,
+      5
+     ],
+     [
+      4,
+      5
+     ],
+     [
+      5,
+      5
+     ]
+    ],
+    "dlPoints": []
+   },
+   "replays": {
+    "violation": {
+     "rows": [
+      [
+       1,
+       "wait(&full)",
+       "ok",
+       "1, 0, 1",
+       "",
+       false
+      ],
+      [
+       1,
+       "wait(&mutex)",
+       "ok",
+       "0, 0, 1: both inside",
+       "",
+       true
+      ]
+     ],
+     "path": [
+      [
+       0,
+       0
+      ],
+      [
+       0,
+       1
+      ],
+      [
+       0,
+       2
+      ]
+     ],
+     "done": false,
+     "deadlock": false
+    },
+    "outcome0": {
+     "rows": [
+      [
+       1,
+       "wait(&full)",
+       "ok",
+       "1, 0, 1",
+       "",
+       false
+      ],
+      [
+       1,
+       "wait(&mutex)",
+       "ok",
+       "0, 0, 1: both inside",
+       "",
+       true
+      ],
+      [
+       1,
+       "item = remove_item()",
+       "cs",
+       "0, 0, 1",
+       "",
+       false
+      ],
+      [
+       0,
+       "insert_item(item)",
+       "cs",
+       "0, 0, 1",
+       "",
+       false
+      ],
+      [
+       1,
+       "signal(&mutex)",
+       "plain",
+       "1, 0, 1",
+       "",
+       false
+      ],
+      [
+       1,
+       "signal(&empty)",
+       "plain",
+       "1, 1, 1",
+       "",
+       false
+      ],
+      [
+       0,
+       "wait(&empty)",
+       "ok",
+       "1, 0, 1",
+       "",
+       false
+      ],
+      [
+       0,
+       "wait(&mutex)",
+       "ok",
+       "0, 0, 1",
+       "",
+       false
+      ],
+      [
+       0,
+       "signal(&mutex)",
+       "plain",
+       "1, 0, 1",
+       "",
+       false
+      ],
+      [
+       0,
+       "signal(&full)",
+       "plain",
+       "1, 0, 2",
+       "",
+       false
+      ]
+     ],
+     "path": [
+      [
+       0,
+       0
+      ],
+      [
+       0,
+       1
+      ],
+      [
+       0,
+       2
+      ],
+      [
+       0,
+       3
+      ],
+      [
+       1,
+       3
+      ],
+      [
+       1,
+       4
+      ],
+      [
+       1,
+       5
+      ],
+      [
+       2,
+       5
+      ],
+      [
+       3,
+       5
+      ],
+      [
+       4,
+       5
+      ],
+      [
+       5,
+       5
+      ]
+     ],
+     "done": true,
+     "deadlock": false
+    },
+    "outcome1": {
+     "rows": [
+      [
+       0,
+       "insert_item(item)",
+       "cs",
+       "it inserted into a full buffer",
+       "",
+       true
+      ],
+      [
+       1,
+       "wait(&full)",
+       "ok",
+       "1, 0, 1",
+       "",
+       false
+      ],
+      [
+       1,
+       "wait(&mutex)",
+       "ok",
+       "0, 0, 1",
+       "",
+       false
+      ],
+      [
+       1,
+       "item = remove_item()",
+       "cs",
+       "0, 0, 1",
+       "",
+       false
+      ],
+      [
+       1,
+       "signal(&mutex)",
+       "plain",
+       "1, 0, 1",
+       "",
+       false
+      ],
+      [
+       1,
+       "signal(&empty)",
+       "plain",
+       "1, 1, 1",
+       "",
+       false
+      ],
+      [
+       0,
+       "wait(&empty)",
+       "ok",
+       "1, 0, 1",
+       "",
+       false
+      ],
+      [
+       0,
+       "wait(&mutex)",
+       "ok",
+       "0, 0, 1",
+       "",
+       false
+      ],
+      [
+       0,
+       "signal(&mutex)",
+       "plain",
+       "1, 0, 1",
+       "",
+       false
+      ],
+      [
+       0,
+       "signal(&full)",
+       "plain",
+       "1, 0, 2",
+       "",
+       false
+      ]
+     ],
+     "path": [
+      [
+       0,
+       0
+      ],
+      [
+       1,
+       0
+      ],
+      [
+       1,
+       1
+      ],
+      [
+       1,
+       2
+      ],
+      [
+       1,
+       3
+      ],
+      [
+       1,
+       4
+      ],
+      [
+       1,
+       5
+      ],
+      [
+       2,
+       5
+      ],
+      [
+       3,
+       5
+      ],
+      [
+       4,
+       5
+      ],
+      [
+       5,
+       5
+      ]
+     ],
+     "done": true,
+     "deadlock": false
+    }
+   }
+  },
+  {
+   "level": "buffer",
+   "code_name": "insert-first",
+   "code": [
+    [
+     "ins",
+     "pwe",
+     "pwm",
+     "psm",
+     "psf"
+    ],
+    [
+     "cwf",
+     "cwm",
+     "rem",
+     "csm",
+     "cse"
+    ]
+   ],
+   "start": 1,
+   "explore": {
+    "total": null,
+    "dlPaths": 0,
+    "certified": false,
+    "deadlock": null,
+    "violation": [
+     1,
+     1
+    ],
+    "outcomes": [
+     {
+      "label": "both finish, buffer holds 1",
+      "correct": true,
+      "paths": 0,
+      "moves": [
+       0,
+       0,
+       0,
+       0,
+       0,
+       1,
+       1,
+       1,
+       1,
+       1
+      ]
+     }
+    ],
+    "points": [
+     [
+      0,
+      0
+     ],
+     [
+      0,
+      1
+     ],
+     [
+      0,
+      2
+     ],
+     [
+      0,
+      3
+     ],
+     [
+      0,
+      4
+     ],
+     [
+      0,
+      5
+     ],
+     [
+      1,
+      0
+     ],
+     [
+      1,
+      1
+     ],
+     [
+      1,
+      2
+     ],
+     [
+      1,
+      3
+     ],
+     [
+      1,
+      4
+     ],
+     [
+      1,
+      5
+     ],
+     [
+      2,
+      0
+     ],
+     [
+      2,
+      1
+     ],
+     [
+      2,
+      2
+     ],
+     [
+      2,
+      3
+     ],
+     [
+      2,
+      4
+     ],
+     [
+      2,
+      5
+     ],
+     [
+      3,
+      0
+     ],
+     [
+      3,
+      1
+     ],
+     [
+      3,
+      4
+     ],
+     [
+      3,
+      5
+     ],
+     [
+      4,
+      0
+     ],
+     [
+      4,
+      1
+     ],
+     [
+      4,
+      2
+     ],
+     [
+      4,
+      3
+     ],
+     [
+      4,
+      4
+     ],
+     [
+      4,
+      5
+     ],
+     [
+      5,
+      0
+     ],
+     [
+      5,
+      1
+     ],
+     [
+      5,
+      2
+     ],
+     [
+      5,
+      3
+     ],
+     [
+      5,
+      4
+     ],
+     [
+      5,
+      5
+     ]
+    ],
+    "dlPoints": []
+   },
+   "replays": {
+    "violation": {
+     "rows": [
+      [
+       1,
+       "wait(&full)",
+       "ok",
+       "1, 1, 0",
+       "",
+       false
+      ],
+      [
+       1,
+       "wait(&mutex)",
+       "ok",
+       "0, 1, 0: both inside",
+       "",
+       true
+      ]
+     ],
+     "path": [
+      [
+       0,
+       0
+      ],
+      [
+       0,
+       1
+      ],
+      [
+       0,
+       2
+      ]
+     ],
+     "done": false,
+     "deadlock": false
+    },
+    "outcome0": {
+     "rows": [
+      [
+       0,
+       "insert_item(item)",
+       "cs",
+       "1, 1, 1",
+       "",
+       false
+      ],
+      [
+       0,
+       "wait(&empty)",
+       "ok",
+       "1, 0, 1",
+       "",
+       false
+      ],
+      [
+       0,
+       "wait(&mutex)",
+       "ok",
+       "0, 0, 1",
+       "",
+       false
+      ],
+      [
+       0,
+       "signal(&mutex)",
+       "plain",
+       "1, 0, 1",
+       "",
+       false
+      ],
+      [
+       0,
+       "signal(&full)",
+       "plain",
+       "1, 0, 2",
+       "",
+       false
+      ],
+      [
+       1,
+       "wait(&full)",
+       "ok",
+       "1, 0, 1",
+       "",
+       false
+      ],
+      [
+       1,
+       "wait(&mutex)",
+       "ok",
+       "0, 0, 1",
+       "",
+       false
+      ],
+      [
+       1,
+       "item = remove_item()",
+       "cs",
+       "0, 0, 1",
+       "",
+       false
+      ],
+      [
+       1,
+       "signal(&mutex)",
+       "plain",
+       "1, 0, 1",
+       "",
+       false
+      ],
+      [
+       1,
+       "signal(&empty)",
+       "plain",
+       "1, 1, 1",
+       "",
+       false
+      ]
+     ],
+     "path": [
+      [
+       0,
+       0
+      ],
+      [
+       1,
+       0
+      ],
+      [
+       2,
+       0
+      ],
+      [
+       3,
+       0
+      ],
+      [
+       4,
+       0
+      ],
+      [
+       5,
+       0
+      ],
+      [
+       5,
+       1
+      ],
+      [
+       5,
+       2
+      ],
+      [
+       5,
+       3
+      ],
+      [
+       5,
+       4
+      ],
+      [
+       5,
+       5
+      ]
+     ],
+     "done": true,
+     "deadlock": false
+    }
+   }
+  },
+  {
+   "level": "buffer",
+   "code_name": "insert-first",
+   "code": [
+    [
+     "ins",
+     "pwe",
+     "pwm",
+     "psm",
+     "psf"
+    ],
+    [
+     "cwf",
+     "cwm",
+     "rem",
+     "csm",
+     "cse"
+    ]
+   ],
+   "start": 2,
+   "explore": {
+    "total": null,
+    "dlPaths": 0,
+    "certified": true,
+    "deadlock": null,
+    "violation": null,
+    "outcomes": [
+     {
+      "label": "both finish, buffer holds 0",
+      "correct": true,
+      "paths": 0,
+      "moves": [
+       0,
+       0,
+       0,
+       0,
+       0,
+       1,
+       1,
+       1,
+       1,
+       1
+      ]
+     }
+    ],
+    "points": [
+     [
+      0,
+      0
+     ],
+     [
+      1,
+      0
+     ],
+     [
+      2,
+      0
+     ],
+     [
+      3,
+      0
+     ],
+     [
+      4,
+      0
+     ],
+     [
+      5,
+      0
+     ],
+     [
+      5,
+      1
+     ],
+     [
+      5,
+      2
+     ],
+     [
+      5,
+      3
+     ],
+     [
+      5,
+      4
+     ],
+     [
+      5,
+      5
+     ]
+    ],
+    "dlPoints": []
+   },
+   "replays": {
+    "outcome0": {
+     "rows": [
+      [
+       0,
+       "insert_item(item)",
+       "cs",
+       "1, 2, 0",
+       "",
+       false
+      ],
+      [
+       0,
+       "wait(&empty)",
+       "ok",
+       "1, 1, 0",
+       "",
+       false
+      ],
+      [
+       0,
+       "wait(&mutex)",
+       "ok",
+       "0, 1, 0",
+       "",
+       false
+      ],
+      [
+       0,
+       "signal(&mutex)",
+       "plain",
+       "1, 1, 0",
+       "",
+       false
+      ],
+      [
+       0,
+       "signal(&full)",
+       "plain",
+       "1, 1, 1",
+       "",
+       false
+      ],
+      [
+       1,
+       "wait(&full)",
+       "ok",
+       "1, 1, 0",
+       "",
+       false
+      ],
+      [
+       1,
+       "wait(&mutex)",
+       "ok",
+       "0, 1, 0",
+       "",
+       false
+      ],
+      [
+       1,
+       "item = remove_item()",
+       "cs",
+       "0, 1, 0",
+       "",
+       false
+      ],
+      [
+       1,
+       "signal(&mutex)",
+       "plain",
+       "1, 1, 0",
+       "",
+       false
+      ],
+      [
+       1,
+       "signal(&empty)",
+       "plain",
+       "1, 2, 0",
+       "",
+       false
+      ]
+     ],
+     "path": [
+      [
+       0,
+       0
+      ],
+      [
+       1,
+       0
+      ],
+      [
+       2,
+       0
+      ],
+      [
+       3,
+       0
+      ],
+      [
+       4,
+       0
+      ],
+      [
+       5,
+       0
+      ],
+      [
+       5,
+       1
+      ],
+      [
+       5,
+       2
+      ],
+      [
+       5,
+       3
+      ],
+      [
+       5,
+       4
+      ],
+      [
+       5,
+       5
+      ]
+     ],
+     "done": true,
+     "deadlock": false
+    }
+   }
+  },
+  {
+   "level": "buffer",
+   "code_name": "no-waits",
+   "code": [
+    [
+     "pwm",
+     "ins",
+     "psm",
+     "psf"
+    ],
+    [
+     "cwm",
+     "rem",
+     "csm",
+     "cse"
+    ]
+   ],
+   "start": 0,
+   "explore": {
+    "total": null,
+    "dlPaths": 0,
+    "certified": false,
+    "deadlock": null,
+    "violation": null,
+    "outcomes": [
+     {
+      "label": "both finish, buffer holds 2",
+      "correct": true,
+      "paths": 0,
+      "moves": [
+       1,
+       1,
+       1,
+       0,
+       0,
+       0,
+       0,
+       1
+      ]
+     },
+     {
+      "label": "finishes, but it inserted into a full buffer",
+      "correct": false,
+      "paths": 0,
+      "moves": [
+       0,
+       0,
+       0,
+       0,
+       1,
+       1,
+       1,
+       1
+      ]
+     }
+    ],
+    "points": [
+     [
+      0,
+      0
+     ],
+     [
+      0,
+      1
+     ],
+     [
+      0,
+      2
+     ],
+     [
+      0,
+      3
+     ],
+     [
+      0,
+      4
+     ],
+     [
+      1,
+      0
+     ],
+     [
+      1,
+      3
+     ],
+     [
+      1,
+      4
+     ],
+     [
+      2,
+      0
+     ],
+     [
+      2,
+      3
+     ],
+     [
+      2,
+      4
+     ],
+     [
+      3,
+      0
+     ],
+     [
+      3,
+      1
+     ],
+     [
+      3,
+      2
+     ],
+     [
+      3,
+      3
+     ],
+     [
+      3,
+      4
+     ],
+     [
+      4,
+      0
+     ],
+     [
+      4,
+      1
+     ],
+     [
+      4,
+      2
+     ],
+     [
+      4,
+      3
+     ],
+     [
+      4,
+      4
+     ]
+    ],
+    "dlPoints": []
+   },
+   "replays": {
+    "outcome0": {
+     "rows": [
+      [
+       1,
+       "wait(&mutex)",
+       "ok",
+       "0, 0, 2",
+       "",
+       false
+      ],
+      [
+       1,
+       "item = remove_item()",
+       "cs",
+       "0, 0, 2",
+       "",
+       false
+      ],
+      [
+       1,
+       "signal(&mutex)",
+       "plain",
+       "1, 0, 2",
+       "",
+       false
+      ],
+      [
+       0,
+       "wait(&mutex)",
+       "ok",
+       "0, 0, 2",
+       "",
+       false
+      ],
+      [
+       0,
+       "insert_item(item)",
+       "cs",
+       "0, 0, 2",
+       "",
+       false
+      ],
+      [
+       0,
+       "signal(&mutex)",
+       "plain",
+       "1, 0, 2",
+       "",
+       false
+      ],
+      [
+       0,
+       "signal(&full)",
+       "plain",
+       "1, 0, 3",
+       "",
+       false
+      ],
+      [
+       1,
+       "signal(&empty)",
+       "plain",
+       "1, 1, 3",
+       "",
+       false
+      ]
+     ],
+     "path": [
+      [
+       0,
+       0
+      ],
+      [
+       0,
+       1
+      ],
+      [
+       0,
+       2
+      ],
+      [
+       0,
+       3
+      ],
+      [
+       1,
+       3
+      ],
+      [
+       2,
+       3
+      ],
+      [
+       3,
+       3
+      ],
+      [
+       4,
+       3
+      ],
+      [
+       4,
+       4
+      ]
+     ],
+     "done": true,
+     "deadlock": false
+    },
+    "outcome1": {
+     "rows": [
+      [
+       0,
+       "wait(&mutex)",
+       "ok",
+       "0, 0, 2",
+       "",
+       false
+      ],
+      [
+       0,
+       "insert_item(item)",
+       "cs",
+       "it inserted into a full buffer",
+       "",
+       true
+      ],
+      [
+       0,
+       "signal(&mutex)",
+       "plain",
+       "1, 0, 2",
+       "",
+       false
+      ],
+      [
+       0,
+       "signal(&full)",
+       "plain",
+       "1, 0, 3",
+       "",
+       false
+      ],
+      [
+       1,
+       "wait(&mutex)",
+       "ok",
+       "0, 0, 3",
+       "",
+       false
+      ],
+      [
+       1,
+       "item = remove_item()",
+       "cs",
+       "0, 0, 3",
+       "",
+       false
+      ],
+      [
+       1,
+       "signal(&mutex)",
+       "plain",
+       "1, 0, 3",
+       "",
+       false
+      ],
+      [
+       1,
+       "signal(&empty)",
+       "plain",
+       "1, 1, 3",
+       "",
+       false
+      ]
+     ],
+     "path": [
+      [
+       0,
+       0
+      ],
+      [
+       1,
+       0
+      ],
+      [
+       2,
+       0
+      ],
+      [
+       3,
+       0
+      ],
+      [
+       4,
+       0
+      ],
+      [
+       4,
+       1
+      ],
+      [
+       4,
+       2
+      ],
+      [
+       4,
+       3
+      ],
+      [
+       4,
+       4
+      ]
+     ],
+     "done": true,
+     "deadlock": false
+    }
+   }
+  },
+  {
+   "level": "buffer",
+   "code_name": "no-waits",
+   "code": [
+    [
+     "pwm",
+     "ins",
+     "psm",
+     "psf"
+    ],
+    [
+     "cwm",
+     "rem",
+     "csm",
+     "cse"
+    ]
+   ],
+   "start": 1,
+   "explore": {
+    "total": null,
+    "dlPaths": 0,
+    "certified": true,
+    "deadlock": null,
+    "violation": null,
+    "outcomes": [
+     {
+      "label": "both finish, buffer holds 1",
+      "correct": true,
+      "paths": 0,
+      "moves": [
+       0,
+       0,
+       0,
+       0,
+       1,
+       1,
+       1,
+       1
+      ]
+     }
+    ],
+    "points": [
+     [
+      0,
+      0
+     ],
+     [
+      0,
+      1
+     ],
+     [
+      0,
+      2
+     ],
+     [
+      0,
+      3
+     ],
+     [
+      0,
+      4
+     ],
+     [
+      1,
+      0
+     ],
+     [
+      1,
+      3
+     ],
+     [
+      1,
+      4
+     ],
+     [
+      2,
+      0
+     ],
+     [
+      2,
+      3
+     ],
+     [
+      2,
+      4
+     ],
+     [
+      3,
+      0
+     ],
+     [
+      3,
+      1
+     ],
+     [
+      3,
+      2
+     ],
+     [
+      3,
+      3
+     ],
+     [
+      3,
+      4
+     ],
+     [
+      4,
+      0
+     ],
+     [
+      4,
+      1
+     ],
+     [
+      4,
+      2
+     ],
+     [
+      4,
+      3
+     ],
+     [
+      4,
+      4
+     ]
+    ],
+    "dlPoints": []
+   },
+   "replays": {
+    "outcome0": {
+     "rows": [
+      [
+       0,
+       "wait(&mutex)",
+       "ok",
+       "0, 1, 1",
+       "",
+       false
+      ],
+      [
+       0,
+       "insert_item(item)",
+       "cs",
+       "0, 1, 1",
+       "",
+       false
+      ],
+      [
+       0,
+       "signal(&mutex)",
+       "plain",
+       "1, 1, 1",
+       "",
+       false
+      ],
+      [
+       0,
+       "signal(&full)",
+       "plain",
+       "1, 1, 2",
+       "",
+       false
+      ],
+      [
+       1,
+       "wait(&mutex)",
+       "ok",
+       "0, 1, 2",
+       "",
+       false
+      ],
+      [
+       1,
+       "item = remove_item()",
+       "cs",
+       "0, 1, 2",
+       "",
+       false
+      ],
+      [
+       1,
+       "signal(&mutex)",
+       "plain",
+       "1, 1, 2",
+       "",
+       false
+      ],
+      [
+       1,
+       "signal(&empty)",
+       "plain",
+       "1, 2, 2",
+       "",
+       false
+      ]
+     ],
+     "path": [
+      [
+       0,
+       0
+      ],
+      [
+       1,
+       0
+      ],
+      [
+       2,
+       0
+      ],
+      [
+       3,
+       0
+      ],
+      [
+       4,
+       0
+      ],
+      [
+       4,
+       1
+      ],
+      [
+       4,
+       2
+      ],
+      [
+       4,
+       3
+      ],
+      [
+       4,
+       4
+      ]
+     ],
+     "done": true,
+     "deadlock": false
+    }
+   }
+  },
+  {
+   "level": "buffer",
+   "code_name": "no-waits",
+   "code": [
+    [
+     "pwm",
+     "ins",
+     "psm",
+     "psf"
+    ],
+    [
+     "cwm",
+     "rem",
+     "csm",
+     "cse"
+    ]
+   ],
+   "start": 2,
+   "explore": {
+    "total": null,
+    "dlPaths": 0,
+    "certified": false,
+    "deadlock": null,
+    "violation": null,
+    "outcomes": [
+     {
+      "label": "both finish, buffer holds 0",
+      "correct": true,
+      "paths": 0,
+      "moves": [
+       0,
+       0,
+       0,
+       0,
+       1,
+       1,
+       1,
+       1
+      ]
+     },
+     {
+      "label": "finishes, but it removed from an empty buffer",
+      "correct": false,
+      "paths": 0,
+      "moves": [
+       1,
+       1,
+       1,
+       0,
+       0,
+       0,
+       0,
+       1
+      ]
+     }
+    ],
+    "points": [
+     [
+      0,
+      0
+     ],
+     [
+      0,
+      1
+     ],
+     [
+      0,
+      2
+     ],
+     [
+      0,
+      3
+     ],
+     [
+      0,
+      4
+     ],
+     [
+      1,
+      0
+     ],
+     [
+      1,
+      3
+     ],
+     [
+      1,
+      4
+     ],
+     [
+      2,
+      0
+     ],
+     [
+      2,
+      3
+     ],
+     [
+      2,
+      4
+     ],
+     [
+      3,
+      0
+     ],
+     [
+      3,
+      1
+     ],
+     [
+      3,
+      2
+     ],
+     [
+      3,
+      3
+     ],
+     [
+      3,
+      4
+     ],
+     [
+      4,
+      0
+     ],
+     [
+      4,
+      1
+     ],
+     [
+      4,
+      2
+     ],
+     [
+      4,
+      3
+     ],
+     [
+      4,
+      4
+     ]
+    ],
+    "dlPoints": []
+   },
+   "replays": {
+    "outcome0": {
+     "rows": [
+      [
+       0,
+       "wait(&mutex)",
+       "ok",
+       "0, 2, 0",
+       "",
+       false
+      ],
+      [
+       0,
+       "insert_item(item)",
+       "cs",
+       "0, 2, 0",
+       "",
+       false
+      ],
+      [
+       0,
+       "signal(&mutex)",
+       "plain",
+       "1, 2, 0",
+       "",
+       false
+      ],
+      [
+       0,
+       "signal(&full)",
+       "plain",
+       "1, 2, 1",
+       "",
+       false
+      ],
+      [
+       1,
+       "wait(&mutex)",
+       "ok",
+       "0, 2, 1",
+       "",
+       false
+      ],
+      [
+       1,
+       "item = remove_item()",
+       "cs",
+       "0, 2, 1",
+       "",
+       false
+      ],
+      [
+       1,
+       "signal(&mutex)",
+       "plain",
+       "1, 2, 1",
+       "",
+       false
+      ],
+      [
+       1,
+       "signal(&empty)",
+       "plain",
+       "1, 3, 1",
+       "",
+       false
+      ]
+     ],
+     "path": [
+      [
+       0,
+       0
+      ],
+      [
+       1,
+       0
+      ],
+      [
+       2,
+       0
+      ],
+      [
+       3,
+       0
+      ],
+      [
+       4,
+       0
+      ],
+      [
+       4,
+       1
+      ],
+      [
+       4,
+       2
+      ],
+      [
+       4,
+       3
+      ],
+      [
+       4,
+       4
+      ]
+     ],
+     "done": true,
+     "deadlock": false
+    },
+    "outcome1": {
+     "rows": [
+      [
+       1,
+       "wait(&mutex)",
+       "ok",
+       "0, 2, 0",
+       "",
+       false
+      ],
+      [
+       1,
+       "item = remove_item()",
+       "cs",
+       "it removed from an empty buffer",
+       "",
+       true
+      ],
+      [
+       1,
+       "signal(&mutex)",
+       "plain",
+       "1, 2, 0",
+       "",
+       false
+      ],
+      [
+       0,
+       "wait(&mutex)",
+       "ok",
+       "0, 2, 0",
+       "",
+       false
+      ],
+      [
+       0,
+       "insert_item(item)",
+       "cs",
+       "0, 2, 0",
+       "",
+       false
+      ],
+      [
+       0,
+       "signal(&mutex)",
+       "plain",
+       "1, 2, 0",
+       "",
+       false
+      ],
+      [
+       0,
+       "signal(&full)",
+       "plain",
+       "1, 2, 1",
+       "",
+       false
+      ],
+      [
+       1,
+       "signal(&empty)",
+       "plain",
+       "1, 3, 1",
+       "",
+       false
+      ]
+     ],
+     "path": [
+      [
+       0,
+       0
+      ],
+      [
+       0,
+       1
+      ],
+      [
+       0,
+       2
+      ],
+      [
+       0,
+       3
+      ],
+      [
+       1,
+       3
+      ],
+      [
+       2,
+       3
+      ],
+      [
+       3,
+       3
+      ],
+      [
+       4,
+       3
+      ],
+      [
+       4,
+       4
+      ]
+     ],
+     "done": true,
+     "deadlock": false
+    }
+   }
+  }
+ ]
+}
