@@ -242,6 +242,10 @@ class Handler(BaseHTTPRequestHandler):
                              "brief": act.get("brief", ""),
                              "session_minutes": act["session_minutes"],
                              "grace_minutes": act.get("grace_minutes") or 0,
+                             # Whether gBuilder shows a Pause button for this lab. An older
+                             # gBuilder ignores it; an older server never sends it, and
+                             # gBuilder reads absent as pausable.
+                             "pausable": _act.pausable(act),
                              # PROMPTS ONLY. `answer` is the marker's key and never leaves
                              # this server — stripped HERE rather than trusted not to be read,
                              # because this is the one reply a student's machine receives.
@@ -274,7 +278,8 @@ class Handler(BaseHTTPRequestHandler):
                          "draft": bool(issued.get("draft")),
                          "code": Ticket(issued["code"]).pretty,
                          "vend_until": act["vend_until"], "valid_until": issued["valid_until"],
-                         "session_minutes": act["session_minutes"]})
+                         "session_minutes": act["session_minutes"],
+                         "pausable": _act.pausable(act)})
 
     def _submit(self) -> None:
         b = self._body()
@@ -699,6 +704,10 @@ class Handler(BaseHTTPRequestHandler):
             return {"ok": False,
                     "error": f"You asked to show {show_n} questions but wrote "
                              f"{len(questions)}."}
+        # A checkbox: absent means "leave it alone", like the blank fields above. Pausable is the
+        # default, so a lab saved by an older console is pausable, as every lab was before.
+        sent = b.get("one_sitting")
+        one_sitting = int(prev.get("one_sitting") or 0) if sent is None else int(bool(sent))
         _STORE.activity_put({
             "id": aid, "course": course, "lab": lab, "show_n": show_n,
             # Minted on first save and kept. An edit must NOT rotate it: the link is already in a
@@ -709,6 +718,7 @@ class Handler(BaseHTTPRequestHandler):
             "brief": b.get("brief", prev.get("brief", "")),
             "status": prev.get("status", "draft"),
             "vend_until": vend, "session_minutes": mins, "grace_minutes": grace,
+            "one_sitting": one_sitting,
             "created": prev.get("created") or time.time(),
             "released": prev.get("released", 0)})
         _STORE.questions_put(aid, questions)

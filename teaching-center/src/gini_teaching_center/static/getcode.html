@@ -168,6 +168,11 @@ fetch(`/api/activity?course=${encodeURIComponent(course)}&lab=${encodeURICompone
           ? `<dt>You then have</dt><dd>${d.session_minutes} minutes to finish</dd>`
           : `<dt>You have</dt><dd><b>until ${when(d.valid_until)}</b> to finish — this lab has a
                fixed hand-in time, so starting earlier does not give you longer</dd>`}
+        ${d.pausable === false
+          ? `<dt>Pausing</dt><dd><b>not allowed</b> — this lab is done in one sitting, so start
+               when you have time to finish</dd>`
+          : `<dt>Pausing</dt><dd>allowed — press Pause in gBuilder to stop for now, and Resume
+               the same code later; only the time you spend recording counts</dd>`}
         <dt>Code vending stops</dt><dd>${when(d.vend_until)}</dd>
         <dt>This code expires</dt><dd>${when(d.valid_until)}</dd>
       </dl>

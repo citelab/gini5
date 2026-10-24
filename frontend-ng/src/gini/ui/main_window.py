@@ -1941,7 +1941,7 @@ class MainWindow(QMainWindow):
         # a student whose wifi died mid-submission is simply reopening gBuilder on campus.
         _QTimer.singleShot(2000, self.proof_strip.flush_outbox)
         # The strip re-emits the recorder's own change callback, so this one connection covers
-        # arming, answering, resuming, cancelling and handing in — every transition the panel
+        # arming, answering, resuming, pausing and handing in — every transition the panel
         # renders. It is made here rather than beside the dock because the strip is built later.
         self.proof_strip.changed.connect(self._refresh_questions)
         self.proof_strip.questionsArrived.connect(self._on_questions_arrived)

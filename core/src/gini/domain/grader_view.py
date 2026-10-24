@@ -70,6 +70,15 @@ def sittings(entries) -> int:
     return n
 
 
+def paused_seconds(entries) -> float:
+    """How long recording was paused, in total: the `away` each resume recorded.
+
+    Measured from the chain's own marks, so it is the same number on the server as in gBuilder.
+    A chain with no resumes was never paused and reads 0.
+    """
+    return sum(float(_d(e).get("away") or 0.0) for e in entries if _k(e) == ev.RESUMED)
+
+
 def _wiring(log: list) -> dict | None:
     """The wiring progress a Load recorded as the first line of its log. Newer gBuilders add the
     per-part counts (`wiring 12/16 · A 6/6 · B 6/6 · C 0/4`); older ones only the total."""
@@ -125,10 +134,15 @@ def cook(entries, title: str = "", answers: list | None = None,
     genesis = next((_d(e) for e in es if _k(e) == GENESIS), {})
     submitted = next((_t(e) for e in reversed(es) if _k(e) == SUBMIT), 0.0)
     first, last = (_t(es[0]), _t(es[-1])) if es else (0.0, 0.0)
+    paused = paused_seconds(es)
     out: dict = {
         "title": title or str(genesis.get("assignment", "")),
         "first_t": first, "last_t": last, "submitted_t": submitted,
-        "minutes": round(max(0.0, last - first) / 60.0, 1),
+        # Time spent RECORDING. A student who paused overnight did not work for fourteen hours,
+        # and a grader comparing minutes across a class needs the number that means the same
+        # thing for everyone. The pauses are beside it, not hidden.
+        "minutes": round(max(0.0, last - first - paused) / 60.0, 1),
+        "paused_minutes": round(paused / 60.0, 1),
         "sittings": sittings(es),
         "events": len(es),
         "look_at": [],

@@ -476,43 +476,68 @@ def test_a_failing_ui_callback_does_not_stop_recording(rec):
     assert sum(1 for k in _kinds(rec) if k == ev.PLACE) == 2
 
 
-# ---- cancelling, and coming back --------------------------------------------- #
-def test_cancelling_leaves_the_mode_and_keeps_the_chain(rec):
+# ---- pausing, and coming back ------------------------------------------------ #
+def test_pausing_leaves_the_mode_and_keeps_the_chain(rec):
     """Recording used to be a one-way door: nothing disarmed — not even generating a proof — so a
-    student who armed the wrong code had to restart gBuilder to get out. Then it was a *pause*,
-    which held the code and offered it back on a button: the mode was left but not exited. Cancel
-    is the whole departure, and it is only safe to offer because nothing is lost."""
+    student who armed the wrong code had to restart gBuilder to get out. It was then *Cancel*,
+    chosen over a pause so the strip would stop naming the code. Students read Cancel as "throw
+    it away" and asked for Pause by name; underneath, the chain was always kept."""
     rec.arm(CODE)
     _build_a_lan(rec)
     before = rec.count
     assert before > 0
 
-    rec.cancel()
+    rec.pause()
     assert rec.armed is False
-    ok, message = rec.arm(CODE)                     # the way back is the code, same as the way in
+    ok, message = rec.arm(CODE)                     # resuming IS arming the same code again
     assert ok and rec.armed is True
     assert "Resumed" in message
     kinds = rec._chain.kinds()
     assert kinds.get(ev.PLACE, 0) == 2              # the SAME chain, not a second one
 
 
-def test_cancelling_shows_nothing_about_the_code_afterwards(rec):
-    """The point of the change. A strip that answers 'stop recording me' by printing the code back
-    has not stopped; the status the widget paints from must carry no trace of it."""
+def test_pausing_keeps_the_code_as_a_bookmark(rec):
+    """The strip offers Resume for the paused code, so the status has to carry it — and only
+    while nothing else is armed. The bookmark is on disk: a pause is for coming back tomorrow."""
     rec.arm(CODE)
-    rec.cancel()
+    rec.pause()
     st = rec.status()
     assert st["armed"] is False
     assert st["ticket"] == "" and st["short"] == ""
-    flat = " ".join(str(v) for v in st.values())
-    assert CODE.replace("-", "") not in flat.replace("-", "")
+    assert st["paused"] == CODE and st["paused_short"] == CODE[:4]
+    assert rec.paused_code() == CODE
+    assert rec.store.paused() == _ticket.parse(CODE).code      # survives a restart
 
 
-def test_nothing_is_recorded_after_cancelling(rec):
-    """A stop that still recorded would be a lie told in the one place that must not lie."""
+def test_arming_anything_spends_the_bookmark(rec):
+    """One bookmark. Resuming clears it because the code is armed again; arming a DIFFERENT code
+    clears it because that is how a student says they are not coming back to the first one — it
+    is still on disk, and typing it later still resumes it."""
+    other = mint(lambda n: bytes((i * 7 + 3) % 256 for i in range(n))).pretty
+    rec.arm(CODE)
+    rec.pause()
+    rec.arm(other)
+    assert rec.status()["paused"] == ""
+    rec.pause()
+    assert rec.status()["paused"] == other
+    rec.arm(other)
+    assert rec.status()["paused"] == "" and rec.store.paused() == ""
+
+
+def test_a_bookmark_into_a_finished_code_is_not_a_pause(rec, tmp_path):
+    rec.arm(CODE)
+    rec.pause()
+    rec.arm(CODE)
+    assert rec.generate_proof()["ok"]
+    rec.store.mark_paused(_ticket.parse(CODE).code)   # a stale file, however it got there
+    assert rec.status()["paused"] == ""
+
+
+def test_nothing_is_recorded_after_pausing(rec):
+    """A pause that still recorded would be a lie told in the one place that must not lie."""
     rec.arm(CODE)
     _build_a_lan(rec)
-    rec.cancel()
+    rec.pause()
     rec.ctx.add_device("router")                    # work done off the record
     rec.arm(CODE)
     assert rec._chain.kinds().get(ev.PLACE, 0) == 2   # the two from _build_a_lan, not three
@@ -523,14 +548,14 @@ def test_the_chain_says_where_recording_stopped(rec):
     it is inside the hashed chain rather than a note beside it."""
     rec.arm(CODE)
     _build_a_lan(rec)
-    rec.cancel()
+    rec.pause()
     chain = rec.store.load(_ticket.parse(CODE).code)
     assert chain.entries[-1].kind == ev.STOPPED
 
 
 def test_the_chain_says_where_recording_came_back(rec):
     rec.arm(CODE)
-    rec.cancel()
+    rec.pause()
     rec.arm(CODE)
     kinds = [e.kind for e in rec._chain.entries]
     assert kinds[-1] == ev.RESUMED
@@ -540,7 +565,7 @@ def test_the_chain_says_where_recording_came_back(rec):
 def test_the_gap_is_recorded_as_a_length_of_time(rec):
     """An instructor reading 'resumed after 3h' can weigh it; 'resumed' alone cannot be weighed."""
     rec.arm(CODE)
-    rec.cancel()
+    rec.pause()
     rec._now = lambda: time.time() + 7200
     rec.arm(CODE)
     assert rec._chain.entries[-1].data["away"] >= 7100
@@ -552,7 +577,7 @@ def test_work_done_while_recording_was_off_stays_unaccounted_for(rec):
     there' — laundering an import through a pause. It must stay unknown."""
     from gini.domain import proof as P
     rec.arm(CODE)
-    rec.cancel()
+    rec.pause()
     smuggled = rec.ctx.add_device("router")
     rec.arm(CODE)
     entries = rec._chain.entries
@@ -570,7 +595,7 @@ def test_arming_a_different_code_starts_that_codes_own_chain(rec):
     other = mint(lambda n: bytes((i * 7 + 3) % 256 for i in range(n))).pretty
     rec.arm(CODE)
     _build_a_lan(rec)
-    rec.cancel()
+    rec.pause()
     assert rec.arm(other)[0] is True
     assert rec._chain.ticket == _ticket.parse(other).code
     assert rec._chain.kinds().get(ev.PLACE, 0) == 0
@@ -580,22 +605,57 @@ def test_coming_back_to_a_chain_that_is_gone_starts_a_fresh_one(rec, tmp_path):
     """A chain deleted underneath us must not make re-arming fail — a student who lost their file
     should be recording again, not stuck."""
     rec.arm(CODE)
-    rec.cancel()
+    rec.pause()
     for f in tmp_path.rglob("*.jsonl"):
         f.unlink()
     ok, message = rec.arm(CODE)
     assert ok and "Recording under" in message
 
 
-def test_generating_a_proof_leaves_the_recording_state_visible(rec):
-    """The strip reads `submitted` to say so. It never did, which is why 'recording' stayed on
-    screen with no way out after a hand-in."""
+def test_generating_a_proof_finishes_the_code(rec):
+    """Handing in is the end of a recording. The strip used to stay armed, saying 'proof
+    generated', and a second Generate produced a second receipt the server would never accept."""
     rec.arm(CODE)
     _build_a_lan(rec)
-    assert rec.status()["submitted"] is False
-    assert rec.generate_proof()["ok"] is True
-    assert rec.status()["submitted"] is True
-    assert rec.armed is True                        # still armed — pausing is how you leave
+    result = rec.generate_proof()
+    assert result["ok"] is True
+    assert rec.armed is False
+    assert rec.status()["paused"] == ""             # finished is not paused
+    assert result["receipt"] and result["proof"]["entries"][-1]["kind"] == P.SUBMIT
+
+
+def test_a_handed_in_code_cannot_be_armed_again(rec):
+    """The rule students were given: a completed recording cannot be restarted — get a new code.
+    Refused HERE, before any work is done, so it costs a minute rather than an evening."""
+    rec.arm(CODE)
+    _build_a_lan(rec)
+    receipt = rec.generate_proof()["receipt"]
+    ok, message = rec.arm(CODE)
+    assert ok is False
+    assert "already been handed in" in message and receipt in message
+    assert "new code" in message
+    assert rec.armed is False
+
+
+def test_a_handed_in_chain_is_refused_even_without_its_proof_file(rec):
+    """The chain's own `submit` entry is the fact; the proof file is only where it was written."""
+    rec.arm(CODE)
+    assert rec.generate_proof()["ok"]
+    rec.store.proof_path(_ticket.parse(CODE).code).unlink()
+    assert rec.arm(CODE)[0] is False
+
+
+def test_a_lab_is_pausable_until_the_course_says_otherwise(rec):
+    """The arm reply carries `pausable`; offline there is no reply, and a student who lost the
+    wifi must not also lose the ability to stop for the night."""
+    rec.arm(CODE)
+    assert rec.status()["pausable"] is True
+    rec.note_pausable(False)
+    assert rec.status()["pausable"] is False
+    rec.pause()                                     # the recorder never refuses — the strip hides
+    assert rec.armed is False
+    rec.arm(CODE)                                   # ...and a re-arm starts pausable again
+    assert rec.status()["pausable"] is True
 
 
 # ---- what they ran on the live lab -------------------------------------------- #

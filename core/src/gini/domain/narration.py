@@ -56,13 +56,15 @@ def describe(entry: Entry) -> str:
         return (f"The canvas already held {_count(n, 'element')} and {_count(l, 'link')} when "
                 f"recording started — that work is not in this chain.")
     if k == ev.STOPPED:
-        return "Stopped recording here."
+        # "Paused", because that is the button's name now. The kind stays `stopped` on the wire:
+        # a chain recorded by an older gBuilder narrates the same way.
+        return "Paused recording here."
     if k == ev.RESUMED:
         away = f" after {fmt_span(d.get('away', 0))}" if d.get("away") else ""
         n = d.get("devices", 0)
         held = (f", with {_count(n, 'element')} on the canvas" if n else ", on an empty canvas")
-        return (f"Resumed recording{away}{held}. Anything that appeared while recording was off "
-                f"is not accounted for by this chain.")
+        return (f"Resumed recording{away}{held}. Anything that appeared while recording was "
+                f"paused is not accounted for by this chain.")
     if k == ev.LOAD:
         where = d.get("source") or "a file"
         if not d.get("devices"):

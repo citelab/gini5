@@ -135,3 +135,97 @@ def test_a_lab_with_no_deadline_says_nothing_rather_than_inventing_one():
     assert _due(valid_until=0, session_minutes=0) == ""
     assert _due(session_minutes=60) == ""             # field absent entirely
     assert _due(valid_until="not a number") == ""     # unreadable is not a deadline
+
+
+# -- pausing, resuming, finishing ------------------------------------------------ #
+#
+# Students asked for Pause and Resume by name. The strip had a Cancel that did the same thing
+# underneath (the chain was always kept) and read to a student as "throw my work away". These pin
+# the three states the strip now paints — recording, paused, finished — and the teacher's
+# one-sitting switch, which hides Pause.
+
+def _state(strip):
+    return re.sub("<[^>]+>", "", strip.state.text())
+
+
+def test_a_pausable_lab_shows_pause_while_recording():
+    strip = _strip()
+    strip._on_arm_checked(CODE, {**ANSWER, "pausable": True})
+    assert strip.recorder.armed
+    assert not strip.pause.isHidden()
+    assert strip.button.text() == "Generate proof"
+    assert "one sitting" not in _hint(strip)
+
+
+def test_an_older_server_that_says_nothing_about_pausing_means_pausable():
+    """Every lab was pausable before the switch existed; an absent key must not hide the button."""
+    strip = _strip()
+    strip._on_arm_checked(CODE, ANSWER)
+    assert not strip.pause.isHidden()
+
+
+def test_a_one_sitting_lab_has_no_pause_and_says_so_at_arm_time():
+    """Said when the code is armed, because by the time a student looks for Pause and cannot find
+    it they have already decided to stop — the hint is the only place that explains why."""
+    strip = _strip()
+    strip._on_arm_checked(CODE, {**ANSWER, "pausable": False})
+    assert strip.recorder.armed
+    assert strip.pause.isHidden()
+    assert "one sitting" in _hint(strip)
+
+
+def test_pausing_shows_the_paused_code_and_offers_resume():
+    strip = _strip()
+    strip._on_arm_checked(CODE, ANSWER)
+    strip.pause.click()
+    assert not strip.recorder.armed
+    assert "PAUSED" in _state(strip) and CODE[:4] in _state(strip)
+    assert strip.button.text() == "Resume"
+    assert not strip.code.isHidden(), "a different code can still be typed over a paused one"
+    assert CODE in _hint(strip) and "Resume" in _hint(strip)
+
+
+def test_resume_arms_the_paused_code_unless_something_was_typed():
+    strip = _strip()
+    strip._on_arm_checked(CODE, ANSWER)
+    strip.pause.click()
+    assert strip._code_to_arm() == CODE               # nothing typed: Resume means this one
+    strip.code.setText("ABCD-EFGH-1234")
+    assert strip._code_to_arm() == "ABCD-EFGH-1234"   # typed wins
+
+
+def test_resuming_carries_on_in_the_same_chain():
+    strip = _strip()
+    strip._on_arm_checked(CODE, ANSWER)
+    strip.pause.click()
+    strip._on_arm_checked(strip._code_to_arm(), ANSWER)
+    assert strip.recorder.armed
+    kinds = [e.kind for e in strip.recorder._chain.entries]
+    assert kinds[-1] == "resumed" and "stopped" in kinds
+    assert strip.button.text() == "Generate proof" and "PAUSED" not in _state(strip)
+
+
+def test_the_paused_state_survives_a_new_strip():
+    """A restart. The bookmark is a file beside the chains, so a fresh strip over the same store
+    paints Paused with Resume — the case a pause exists for."""
+    strip = _strip()
+    strip._on_arm_checked(CODE, ANSWER)
+    strip.pause.click()
+    again = ProofStrip(ThemeManager(_app()), ProofRecorder(strip.recorder.ctx,
+                                                           store=strip.recorder.store))
+    assert again.button.text() == "Resume"
+    assert CODE[:4] in _state(again)
+
+
+def test_handing_in_finishes_the_code_and_the_strip_goes_back_to_a_code_box():
+    strip = _strip()
+    strip._on_arm_checked(CODE, ANSWER)
+    receipt = strip.recorder.generate_proof()["receipt"]
+    strip.refresh(keep_hint=True)
+    assert not strip.recorder.armed
+    assert strip.button.text() == "Record" and strip.state.isHidden()
+    assert strip.pause.isHidden()
+    # ...and the same code is refused, with the receipt, rather than quietly reopened.
+    strip._on_arm_checked(CODE, ANSWER)
+    assert not strip.recorder.armed
+    assert "already been handed in" in _hint(strip) and receipt in _hint(strip)

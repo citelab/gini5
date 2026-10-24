@@ -297,3 +297,22 @@ def test_the_table_scores_nothing():
     t = G.cook(_alab_chain()["entries"])["table"]
     flat = json.dumps(t)
     assert "score" not in flat and "mark" not in flat and "grade" not in flat
+
+
+def test_minutes_count_recording_time_and_show_the_pauses_beside_it():
+    """A student who paused overnight did not work for fourteen hours. The explicit marks a
+    Pause/Resume writes carry the gap, and the grader sees both numbers."""
+    proof = _chain(ev.tune("M1", "assignment", "", "x"),
+                   ev.stopped({}), 14 * 3600.0, ev.resumed({}, away=14 * 3600.0),
+                   ev.spawn("M1", "sysinfotest", out=["ok"], test=True))
+    c = G.cook(proof["entries"])
+    assert c["sittings"] == 2
+    assert c["paused_minutes"] == 840.0
+    assert c["minutes"] == 5.0, "six entries a minute apart, less the fourteen hours away"
+    assert G.paused_seconds(proof["entries"]) == 14 * 3600.0
+
+
+def test_a_chain_that_was_never_paused_reads_as_it_always_did():
+    proof = _chain(ev.tune("M1", "assignment", "", "x"))
+    c = G.cook(proof["entries"])
+    assert c["paused_minutes"] == 0.0 and c["minutes"] == 2.0 and c["sittings"] == 1

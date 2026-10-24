@@ -2,8 +2,11 @@
 
 States:
 
-  * **unarmed** — a code box, and nothing else: no trace of whatever code was last recorded.
-  * **armed** — a large ``● REC`` block, the code, the event counter, *Generate proof*, *Cancel*.
+  * **unarmed** — a code box and *Record*: no trace of whatever code was last recorded.
+  * **paused** — the code box, a ``⏸ PAUSED`` block naming the paused code, and *Resume*. Typing
+    a different code and pressing it records that one instead.
+  * **armed** — a large ``● REC`` block, the code, the event counter, *Generate proof*, *Pause*.
+    For a lab the course declared *one sitting* there is no Pause button.
   * **sending** — the same, plus a progress bar while the package goes to the course server.
 
 The recording indicator is the whole reason this lives on the always-visible strip rather than
@@ -11,15 +14,18 @@ behind a menu. A student must never do three hours of work and only then discove
 recorded, so the state is on screen the entire time and the event counter moves as they work. It is
 deliberately loud: recording is a mode, and a mode you cannot see is a mode you forget you are in.
 
-Recording used to be a one-way door. Nothing disarmed — not even generating a proof, which left the
-strip saying "recording" for ever — so arming the wrong code meant restarting gBuilder. *Pause* was
-the first fix and only half a departure: it kept the code on screen and offered it back on a
-button, so the mode was left but not really exited. *Cancel* is the whole departure — the strip
-goes back to a bare code box and says nothing about what was being recorded a moment ago.
+Two ways out of recording, and they are different. *Pause* keeps the code: the chain stays on
+disk, the strip remembers which code it was (across a restart — the bookmark is a file beside the
+chains), and *Resume* carries on in the same chain with the gap recorded. *Generate proof* hands
+the work in and finishes the code: the strip goes back to a bare code box, and typing that code
+again is refused, because a handed-in recording cannot be reopened. A student who wants another go
+at the lab takes a new code.
 
-Nothing is lost by cancelling. The chain lives on disk under its code, and typing that code again
-appends to it, so a student never trades their morning's work for the ability to stop recording.
-That is a property of `services.proof_recorder.arm`, not of this widget.
+This replaced a *Cancel* button, which did the same thing as Pause underneath (the chain was always
+kept) and was chosen over a pause so the strip would not keep naming the code after the student
+asked to stop being recorded. Students read "Cancel" as "throw my work away" and asked for Pause by
+name; the surveillance argument lost to the plainer reading. All the decisions still belong to
+`services.proof_recorder`; this widget only paints them.
 
 Work that has not reached the Teaching Center is shown here too, with how long it has been waiting
 and what went wrong. The outbox has always recorded that; none of it ever reached the screen, so a
@@ -115,13 +121,13 @@ class ProofStrip(QWidget):
         self.button.clicked.connect(self._clicked)
         row.addWidget(self.button)
 
-        self.cancel = QPushButton("Cancel")
-        self.cancel.setObjectName("ProofCancel")
-        self.cancel.setToolTip("Leave recording mode. Your work so far is kept — enter the same "
-                               "code again to carry on where you left off.")
-        self.cancel.clicked.connect(self._cancel)
-        self.cancel.hide()
-        row.addWidget(self.cancel)
+        self.pause = QPushButton("Pause")
+        self.pause.setObjectName("ProofPause")
+        self.pause.setToolTip("Stop recording for now. Your work so far is kept, and the strip "
+                              "will offer to resume this code — even after you close gBuilder.")
+        self.pause.clicked.connect(self._pause)
+        self.pause.hide()
+        row.addWidget(self.pause)
 
         # Shown only while something is actually in flight to the course server. Indeterminate:
         # an HTTP POST gives no usable percentage, and a fake one would be a lie about progress.
@@ -178,21 +184,27 @@ class ProofStrip(QWidget):
         else:
             self._arm()
 
-    def _cancel(self) -> None:
-        """Leave recording mode entirely.
+    def _pause(self) -> None:
+        """Stop recording for now, keeping the code to come back to.
 
-        The message deliberately does NOT name the code that was being recorded. Cancelling is a
-        student saying they are done being watched for now, and a strip that answers by printing
-        the code back at them has not really stopped. They can still carry on — the chain is on
-        disk — but the way back is typing the code, the same as the way in.
+        The code stays on screen, by design: a student pausing for the night should see tomorrow
+        morning exactly what they are resuming, and one who armed the wrong code can still type
+        the right one over it.
         """
         if self.recorder is None or not self.recorder.armed:
             return
-        self.recorder.cancel()
+        self.recorder.pause()
         self.code.clear()
-        self._say("Recording cancelled. Your work so far is kept — enter the same code again to "
-                  "carry on where you left off.")
-        self.refresh(keep_hint=True)
+        self.refresh()
+
+    def _code_to_arm(self) -> str:
+        """What Record/Resume arms: whatever was typed, else the paused code. Typing wins, so a
+        student with a paused lab can still start a different one without hunting for a way to
+        forget the first — it stays on disk and can be typed back in at any time."""
+        typed = self.code.text().strip()
+        if typed or self.recorder is None:
+            return typed
+        return self.recorder.paused_code()
 
     def _tc_url(self) -> str:
         """Where the Teaching Center is, or "" if this gBuilder is not attached to a course.
@@ -215,7 +227,7 @@ class ProofStrip(QWidget):
     def _arm(self) -> None:
         if self.recorder is None:
             return
-        typed = self.code.text()
+        typed = self._code_to_arm()
         url = self._tc_url()
         if not (url and typed.strip()):
             self._arm_locally(typed)
@@ -332,6 +344,11 @@ class ProofStrip(QWidget):
         # this somewhere" from "this is the lab you are being marked on".
         if self.recorder is not None and hasattr(self.recorder, "note_activity"):
             self.recorder.note_activity(activity, title, brief)
+        # Whether the teacher allows this lab to be paused. Absent from an older server's reply,
+        # and absent means pausable — that is what every lab was before the option existed.
+        pausable = bool(answer.get("pausable", True))
+        if self.recorder is not None and hasattr(self.recorder, "note_pausable"):
+            self.recorder.note_pausable(pausable)
         # The lab's questions ride in on the same reply — prompts only; the server strips the key.
         # Kept on the recorder rather than emitted onward, so the panel reads one source of truth
         # and a restart or a resumed code finds the same place to look.
@@ -344,13 +361,17 @@ class ProofStrip(QWidget):
         what = " · ".join([b for b in (f"<b>{activity}</b>" if activity else "",
                                        f"“{title}”" if title else "") if b]) or "this code"
         due = self._due_phrase(answer)
+        # Said at arm time, because by the time a student looks for the Pause button and does not
+        # find one they have already decided to stop — and the hint is the only place that says
+        # why. A pausable lab says nothing: that is the ordinary case.
+        sitting = "" if pausable else " This lab is done in <b>one sitting</b> — there is no Pause."
         course = activity.split("/")[0] if "/" in activity else ""
         mine = self._tc_course()
         if course and mine and course.lower() != mine.lower():
             self._say(f"Recording for {what} — note this code is for <b>{course}</b>, but your "
-                      f"course is set to <b>{mine}</b>.{due}", bad=True)
+                      f"course is set to <b>{mine}</b>.{due}{sitting}", bad=True)
         else:
-            self._say(f"Recording for {what}.{due}")
+            self._say(f"Recording for {what}.{due}{sitting}")
 
     @staticmethod
     def _due_phrase(answer: dict) -> str:
@@ -580,6 +601,8 @@ class ProofStrip(QWidget):
                 f"Receipt code: {receipt}\n\n"
                 f"Give this receipt to your instructor — it is how they find your work and record "
                 f"it as yours. Nothing else needs to be handed in.\n\n"
+                f"This code is now finished and cannot be recorded under again. If you want "
+                f"another go at the lab, take a new code from your course page.\n\n"
                 f"A copy is also on disk at:\n{path}{late}")
             return
 
@@ -662,31 +685,48 @@ class ProofStrip(QWidget):
         t = self.theme.theme
         s = self.recorder.status() if self.recorder is not None else {"armed": False}
         armed = bool(s.get("armed"))
-        self.setProperty("recording", "yes" if armed else "no")
+        paused = str(s.get("paused") or "") if not armed else ""
+        self.setProperty("recording", "yes" if armed else "paused" if paused else "no")
         # A dynamic property only repaints if the style is re-evaluated.
         self.style().unpolish(self); self.style().polish(self)
         if armed:
             self.code.hide()
             self.state.show()
-            self.cancel.show()
+            # No Pause for a lab the course declared one sitting. Hidden rather than disabled: a
+            # greyed button invites hovering for a reason, and the reason was given at arm time.
+            self.pause.setVisible(bool(s.get("pausable", True)))
             # Deliberately loud. Recording is a MODE, and a mode you cannot see is a mode you
             # forget you are in — a student who never notices it is on cannot tell you why their
             # afternoon is in a chain, and one who never notices it is off loses the afternoon.
-            done = s.get("submitted")
             self.state.setText(
                 f'<span style="color:{t.accent_for("red")};font-size:15px">●</span> '
                 f'<span style="color:{t.text};font-weight:800;letter-spacing:1px">REC</span> '
                 f'<span style="color:{t.faint}">· {s.get("short", "")} · '
-                f'{s.get("count", 0)} events{" · proof generated" if done else ""}</span>')
+                f'{s.get("count", 0)} events</span>')
             self.button.setText("Generate proof")
             if not keep_hint:
                 self._say("Your work is being recorded under this code.")
+        elif paused:
+            # Paused names the code on purpose — it is what the student is coming back to. The
+            # code box stays, so a different code can be typed over the top; Resume means the
+            # paused one unless something was typed (see _code_to_arm).
+            self.code.show()
+            self.state.show()
+            self.pause.hide()
+            self.state.setText(
+                f'<span style="color:{t.text};font-weight:800;letter-spacing:1px">⏸ PAUSED</span> '
+                f'<span style="color:{t.faint}">· {s.get("paused_short", "")}</span>')
+            self.state.setToolTip(f"Recording under {paused} is paused.")
+            self.button.setText("Resume")
+            if not keep_hint:
+                self._say(f"Recording under <b>{paused}</b> is paused. Press Resume to carry on "
+                          f"where you left off, or enter a different code.")
         else:
             # Unarmed is unarmed: one code box and the ordinary prompt, whether the student has
-            # never recorded anything or cancelled a session ten seconds ago. Nothing here may
-            # depend on what the last code was — that is the whole difference from pausing.
+            # never recorded anything or handed a lab in ten seconds ago.
             self.state.hide()
-            self.cancel.hide()
+            self.state.setToolTip("")
+            self.pause.hide()
             self.code.show()
             self.button.setText("Record")
             if not keep_hint:
@@ -740,14 +780,18 @@ class ProofStrip(QWidget):
             QWidget#ProofStrip[recording="yes"] {{ border-right: 1px solid {t.line2};
                                                    border-left: 3px solid {rec};
                                                    background: {t.bg3}; }}
+            /* Paused is a state too, quieter than recording: a bar in the ordinary line colour
+               says "something is held here" without the red that means "being watched". */
+            QWidget#ProofStrip[recording="paused"] {{ border-right: 1px solid {t.line2};
+                                                      border-left: 3px solid {t.line}; }}
             QLabel#ProofPending {{ font-size: {sp(9)}px; }}
             QProgressBar#ProofBar {{ background: {t.bg3}; border: none; border-radius: 2px;
                                      max-width: 120px; }}
             QProgressBar#ProofBar::chunk {{ background: {t.accent}; border-radius: 2px; }}
-            QPushButton#ProofCancel, QPushButton#ProofRetry {{
+            QPushButton#ProofPause, QPushButton#ProofRetry {{
                 background: {t.panel2}; color: {t.text}; border: 1px solid {t.line};
                 border-radius: 5px; padding: 3px 10px; font-size: {sp(11)}px; }}
-            QPushButton#ProofCancel:hover,
+            QPushButton#ProofPause:hover,
             QPushButton#ProofRetry:hover {{ border-color: {t.accent}; }}
             QLineEdit#ProofCode {{ background: {t.bg3}; color: {t.text};
                                    border: 1px solid {t.line}; border-radius: 5px;

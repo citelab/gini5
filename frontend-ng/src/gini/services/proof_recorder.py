@@ -13,6 +13,15 @@ Docker.
 and a student who loses their session because the *provenance* feature threw is worse off than one
 with no provenance at all. Every handler is guarded; a broken recorder degrades to a silent one
 and says so once in the console.
+
+**A recording is paused or finished, never cancelled.** Students asked to be able to stop in the
+middle of a lab and carry on another day, and the chain always allowed it — it lives on disk under
+its code, and arming the code again appends to it. What was missing was the word: the button said
+*Cancel*, which to a student means "throw it away". So the two ways out of recording are now
+`pause()`, which writes a `stopped` mark and keeps the code as a bookmark the strip offers back as
+*Resume*, and `generate_proof()`, which hands the work in and CLOSES the code: a finished recording
+cannot be reopened, and a student who wants to do the lab again needs a new code. A lab can be
+declared *one sitting* by the teacher, in which case the arm reply says so and there is no Pause.
 """
 from __future__ import annotations
 
@@ -84,6 +93,11 @@ class ProofRecorder:
         # the arm reply and it was dropped on arrival, so the panel could name the lab but never
         # say what it was for — the one thing a student most wants on screen while working.
         self._activity_brief = ""
+        # Whether THIS lab may be paused, from the arm reply. True until a course server says
+        # otherwise: a code armed offline is pausable, because the alternative is a student who
+        # lost the wifi also losing the ability to stop for the night. The server's report counts
+        # sittings either way, so a one-sitting lab done in three is visible to the teacher.
+        self._pausable = True
         # The lab's questions, as the arm reply carried them. In memory only — see note_questions.
         self._questions: list = []
         # (device, face) already recorded under this code — see note_lab_open.
@@ -132,13 +146,29 @@ class ProofRecorder:
         who has done nothing should see 0, not 1."""
         return max(0, len(self._chain) - 1) if self._chain else 0
 
+    @property
+    def pausable(self) -> bool:
+        return self._pausable
+
+    def paused_code(self) -> str:
+        """The code whose recording is paused, as the student would type it, or "" when none is.
+        Only meaningful while unarmed: arming anything clears the bookmark."""
+        code = self.store.paused() if not self.armed else ""
+        return _ticket.Ticket(code).pretty if code else ""
+
     def status(self) -> dict:
         """Everything the dashboard strip needs, in one plain dict (no Qt types)."""
+        paused = self.paused_code()
         return {"armed": self.armed,
                 "ticket": self._ticket.pretty if self._ticket else "",
                 "short": self._ticket.short if self._ticket else "",
                 "count": self.count,
                 "submitted": bool(self._chain and self._chain.has_submitted()),
+                "pausable": self._pausable,
+                # The bookmark: a code the student paused and has not come back to. The strip
+                # shows it and offers Resume, so coming back is one click rather than a printout.
+                "paused": paused,
+                "paused_short": paused[:_ticket.GROUP] if paused else "",
                 "activity": self._activity,
                 "activity_title": self._activity_title,
                 "activity_brief": self._activity_brief,
@@ -146,7 +176,13 @@ class ProofRecorder:
 
     # -- arming ------------------------------------------------------------- #
     def arm(self, code: str, assignment: str = "") -> tuple[bool, str]:
-        """Validate a code and start (or resume) its chain. Returns (ok, message to show)."""
+        """Validate a code and start (or resume) its chain. Returns (ok, message to show).
+
+        A code that has been handed in is refused. Its chain is closed by the `submit` entry — an
+        answer or a build appended after it would be in no proof anyone reads — and the course
+        server refuses a second submission under one code anyway. Saying so HERE, before any work
+        is done, is the difference between a student losing a minute and losing an evening.
+        """
         try:
             tk = _ticket.parse(code)
         except _ticket.TicketError as e:
@@ -159,6 +195,8 @@ class ProofRecorder:
             return False, (f"There is already work recorded under {tk.pretty}, and its chain "
                            f"cannot be read ({e}). Ask your instructor before recording again — "
                            f"do not delete it.")
+        if self.store.has_proof(tk.code) or (chain is not None and chain.has_submitted()):
+            return False, self._finished_message(tk)
         fresh = chain is None
         if fresh:
             chain = _proof.Chain.start(
@@ -166,9 +204,15 @@ class ProofRecorder:
                 gini_version=gini_version())
             self.store.write_chain(tk.code, chain)
         self._chain, self._ticket = chain, tk
+        # Arming anything — this code or another — spends the bookmark. Pausing is "I will be
+        # back for this one"; typing a different code is the answer to that.
+        self.store.clear_paused()
+        # Pausable until the course server says otherwise. Reset per arm so one lab's one-sitting
+        # rule does not follow the student into the next lab armed offline.
+        self._pausable = True
         # A new code is a new lab. Without this, a face opened under the PREVIOUS code would count
-        # as already recorded and the new chain would never mention it — and the commonest path
-        # here is submit-then-arm-the-next-lab, which never goes through cancel().
+        # as already recorded and the new chain would never mention it. (Handing in closes the
+        # code and clears it too; this covers a code armed over another without a pause.)
         self._faces_seen = set()
         self._snapshot()
         if fresh:
@@ -179,7 +223,7 @@ class ProofRecorder:
         else:
             # Picking a code back up joins one session to another with a hole between them, and
             # the hole belongs in the chain. `away` is measured from the last entry, which is the
-            # `stopped` one when the student cancelled from inside gBuilder.
+            # `stopped` one when the student paused from inside gBuilder.
             head = chain.head
             away = max(0.0, self._now() - float(head.t)) if head else 0.0
             self._record(ev.resumed(self._topology_dict(), away=away))
@@ -188,6 +232,27 @@ class ProofRecorder:
         n = self.count
         return True, (f"Recording under {tk.pretty}." if fresh else
                       f"Resumed recording under {tk.pretty} — {n} event(s) already in the chain.")
+
+    def _finished_message(self, tk: _ticket.Ticket) -> str:
+        receipt = self._receipt_for(tk.code)
+        held = f" (receipt {receipt})" if receipt else ""
+        return (f"{tk.pretty} has already been handed in{held}. A finished recording cannot be "
+                f"reopened — to do this lab again, get a new code from your course page.")
+
+    def _receipt_for(self, code: str) -> str:
+        """The receipt a finished code was handed in under, or "" — a courtesy in a refusal, so
+        a proof file that cannot be read costs the sentence its receipt and nothing else."""
+        try:
+            return _proof.receipt_code(_proof.load_proof(self.store.proof_path(code)))
+        except Exception:                               # noqa: BLE001
+            return ""
+
+    def note_pausable(self, pausable: bool) -> None:
+        """Whether the course allows this lab to be paused, from the arm reply — like
+        `note_activity`, set from outside because the recorder never talks to the network. The
+        strip hides Pause when it is False; nothing about the chain changes either way."""
+        self._pausable = bool(pausable)
+        self._changed()
 
     def note_activity(self, activity: str, title: str = "", brief: str = "") -> None:
         """Remember which lab the armed code belongs to, from the course server's arm reply.
@@ -238,31 +303,41 @@ class ProofRecorder:
         from gini.domain import lab_questions as _q
         return _q.answers_in(self._chain.entries if self._chain else [])
 
-    def cancel(self) -> None:
-        """Leave recording mode. The chain stays on disk; entering the same code resumes it.
+    def pause(self) -> None:
+        """Leave recording mode, keeping the code as a bookmark. Resume is arming it again.
 
-        Recording used to be a one-way door — nothing disarmed, not even generating a proof — so a
-        student who armed the wrong code had to restart gBuilder. It was then a *pause*, with the
-        code held and offered back on a button, which made leaving the mode only half a departure:
-        the strip still named the code, and gBuilder still behaved as though the session were
-        merely suspended.
+        This has been through three names. Recording was first a one-way door — nothing disarmed,
+        not even generating a proof — so a student who armed the wrong code restarted gBuilder.
+        Then it was *Cancel*, chosen over a pause on the principle that a strip which answers
+        "stop recording me" by printing the code back has not really stopped. That principle was
+        right about surveillance and wrong about students: to a student *Cancel* means "throw my
+        morning away", and several asked for a way to stop for the night that did not sound like
+        that. So it is *Pause*: the chain stays on disk, the paused code is written beside it
+        (`ChainStore.mark_paused`), and the strip shows it with a Resume button — across a restart
+        too, which is the case a pause exists for.
 
-        Cancel is the whole departure. Nothing is remembered in memory and nothing about the last
-        code is shown afterwards. Nothing is LOST either — the chain is on disk under its code, and
-        typing that code again appends to it — so a student is never trading their morning's work
-        for the ability to stop being recorded.
+        Nothing is lost, and nothing is hidden from the chain either. The last thing written is
+        that recording stopped, because a gap the chain does not mention is a gap nobody can
+        weigh; resuming writes how long the gap was. The teacher's report counts the sittings.
 
-        The last thing written is that recording stopped, because a gap the chain does not mention
-        is a gap nobody can weigh.
+        Pausing is allowed whether or not the course said the lab is pausable. The strip hides the
+        button for a one-sitting lab; the recorder does not second-guess a call it has no way to
+        verify offline, and the chain tells the teacher what happened.
         """
         if self._chain is not None:
             self._record(ev.stopped(self._topology_dict()))
+            if self._ticket is not None:
+                self.store.mark_paused(self._ticket.code)
+        self._close()
+
+    def _close(self) -> None:
+        """Forget the armed chain and everything that came with its code. The questions go too:
+        a student who pauses and arms a DIFFERENT code must not be shown the last lab's questions
+        with a fresh chain underneath them."""
         self._chain = None
         self._ticket = None
         self._activity = self._activity_title = self._activity_brief = ""
-        # Cancel is the whole departure, so the questions go with it. A student who cancels and
-        # arms a DIFFERENT code must not be shown the last lab's questions with a fresh chain
-        # underneath them.
+        self._pausable = True
         self._questions = []
         self._faces_seen = set()
         self._changed()
@@ -682,10 +757,17 @@ class ProofRecorder:
 
     # -- submission ---------------------------------------------------------- #
     def generate_proof(self, objectives=None) -> dict:
-        """Append the `submit` entry and write the proof file.
+        """Append the `submit` entry, write the proof file, and close the code.
 
         Returns a plain dict — `{ok, message, path, receipt, proof}` — rather than raising, so the
         dashboard button has one thing to render whatever happened.
+
+        CLOSES the recording on success. Handing in is the end of a code: the chain's `submit`
+        entry is what the proof commits to, so anything recorded after it is in no proof anyone
+        reads, and the course server refuses a second submission under the same code. Leaving the
+        strip armed used to invite exactly that — a student pressing Generate twice and holding
+        two receipts, one of which the server would never accept. The upload itself does not need
+        the recorder: the result carries everything, and the outbox retries from the file.
         """
         if self._chain is None or self._ticket is None:
             return {"ok": False, "message": "Enter your assignment code first — nothing is being "
@@ -703,15 +785,18 @@ class ProofRecorder:
         except Exception as e:                              # noqa: BLE001
             self._complain(e)
             return {"ok": False, "message": f"Could not write the proof: {e}"}
-        return {"ok": True, "path": str(path), "proof": proof, "topology": topology,
-                # An OS lab's deliverable. Scoped to the xv6 machines in THIS topology — the
-                # shadow directories are per-machine and outlive the topology that made them, so
-                # gathering everything under ~/.gini/xv6-shadows/ would put one lab's work into
-                # another lab's submission. Never fatal: a proof that could not be written is a
-                # failure, a proof whose sources could not be read is still a proof.
-                "shadows": self._collect_shadows(topology),
-                "receipt": _proof.receipt_code(proof),
-                "message": f"Proof written to {path}"}
+        result = {"ok": True, "path": str(path), "proof": proof, "topology": topology,
+                  # An OS lab's deliverable. Scoped to the xv6 machines in THIS topology — the
+                  # shadow directories are per-machine and outlive the topology that made them,
+                  # so gathering everything under ~/.gini/xv6-shadows/ would put one lab's work
+                  # into another lab's submission. Never fatal: a proof that could not be written
+                  # is a failure, a proof whose sources could not be read is still a proof.
+                  "shadows": self._collect_shadows(topology),
+                  "receipt": _proof.receipt_code(proof),
+                  "message": f"Proof written to {path}"}
+        self.store.clear_paused()
+        self._close()
+        return result
 
     def _collect_shadows(self, topology: dict) -> dict:
         """Every kernel file the student owns on the xv6 machines in THIS topology.

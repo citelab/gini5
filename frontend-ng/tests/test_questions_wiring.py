@@ -239,8 +239,12 @@ def test_the_tab_is_quiet_for_a_lab_that_asks_nothing(win):
 
 
 def test_the_panel_goes_dead_once_the_work_is_handed_in(win):
+    """Handing in finishes the code, so the panel is back to 'not recording': the answers went
+    with the proof, and there is no chain left to type into."""
     win.proof_strip.armChecked.emit(mint(questions=True).pretty, REPLY)
     win.proof_recorder.note_answer("q1", "?", "10.0.0.2")
     assert win.proof_recorder.generate_proof()["ok"]
     win._refresh_questions()
-    assert win.questions_panel._cards["q1"]._box.isReadOnly()
+    assert not win.questions_panel._cards
+    assert "Not recording" in win.questions_panel._sub.text()
+    assert win._questions_dock.windowTitle() == "GINI Labs"

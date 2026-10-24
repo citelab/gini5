@@ -66,6 +66,10 @@ CREATE TABLE IF NOT EXISTS activity (
   session_minutes INTEGER DEFAULT 60,
   grace_minutes   INTEGER DEFAULT 0,       -- after valid_until: still accepted, tagged LATE
   show_n          INTEGER DEFAULT 0,       -- how many of this lab's questions each student gets
+  -- Students may pause a recording and resume it later (a chain keeps its stopped/resumed
+  -- marks either way). 1 hides gBuilder's Pause button: the lab is to be done in one sitting.
+  -- Advisory on the client, reported on the server — see activities.within_session.
+  one_sitting     INTEGER DEFAULT 0,
   -- Four symbols the student link must carry. Without it /getcode?course=X&lab=lab3 is guessable:
   -- a student who has lab3's link can read lab4's brief before it is set. It also gates a DRAFT,
   -- so a lab can be handed to TAs to run end to end before anyone else can reach it.
@@ -125,6 +129,7 @@ CREATE TABLE IF NOT EXISTS activity_submission (
   verdict       TEXT DEFAULT '',        -- integrity of the proof, NOT quality of the work
   data          TEXT DEFAULT '',        -- proof + artifact + narration
   late          INTEGER DEFAULT 0,      -- after the deadline, inside the grace window
+  away          REAL DEFAULT 0,         -- seconds the recording was paused, from the chain
   student_id    TEXT DEFAULT '',        -- who CLAIMED it; empty until they do
   claimed_at    REAL DEFAULT 0,
   -- Carried from the code. A TA rehearsing an unreleased lab produces a real, verifiable
@@ -688,7 +693,7 @@ class Store:
     # -- activities ------------------------------------------------------- #
     def activity_put(self, rec: dict) -> None:
         cols = ("id", "course", "lab", "title", "brief", "status", "vend_until",
-                "session_minutes", "grace_minutes", "show_n", "release_code",
+                "session_minutes", "grace_minutes", "show_n", "one_sitting", "release_code",
                 "created", "released")
         self._run(f"INSERT OR REPLACE INTO activity({','.join(cols)}) "
                   f"VALUES({','.join('?' * len(cols))})", tuple(rec.get(c, "") for c in cols))
@@ -749,7 +754,7 @@ class Store:
         check-then-insert, and the loser must be rejected rather than silently overwriting.
         """
         cols = ("code", "receipt", "activity", "artifact_hash",
-                "ts", "started", "finished", "verdict", "data", "late", "draft")
+                "ts", "started", "finished", "verdict", "data", "late", "draft", "away")
         try:
             self._run(f"INSERT INTO activity_submission({','.join(cols)}) "
                       f"VALUES({','.join('?' * len(cols))})", tuple(rec.get(c, "") for c in cols))

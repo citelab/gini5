@@ -111,6 +111,7 @@ setTimeout(async () => {
   $('#a-brief').value = 'Build a network with multiple LANs connected by a router.';
   if (SAVE.blank) { $('#a-vend').value = ''; $('#a-mins').value = ''; }
   else { $('#a-vend').value = '2026-08-29T11:11'; $('#a-mins').value = '60'; }
+  if (SAVE.onesit) $('#a-onesit').checked = true;
 
   calls.length = 0;
   const click = t => {
@@ -231,6 +232,14 @@ def test_a_filled_deadline_is_sent_as_a_number():
     body = json.loads(_drive("ok")["save_body"])
     assert isinstance(body["vend_until"], (int, float)) and body["vend_until"] > 0
     assert body["session_minutes"] == 60
+
+
+@needs_jsdom
+def test_the_one_sitting_box_is_sent_as_a_real_boolean_either_way():
+    """Unticked is `false`, not absent: the server reads absent as "leave it alone", and a
+    teacher unticking the box must actually untick it."""
+    assert json.loads(_drive("ok")["save_body"])["one_sitting"] is False
+    assert json.loads(_drive("ok", onesit=True)["save_body"])["one_sitting"] is True
 
 
 # -- deleting a lab ------------------------------------------------------------ #

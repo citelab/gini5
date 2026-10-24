@@ -441,8 +441,45 @@ class ChainStore:
     def proof_path(self, ticket: str) -> Path:
         return self.dir_for(ticket) / "proof.json"
 
+    def paused_path(self) -> Path:
+        return self.root / "paused"
+
     def exists(self, ticket: str) -> bool:
         return self.chain_path(ticket).is_file()
+
+    def has_proof(self, ticket: str) -> bool:
+        """Was a proof generated under `ticket`? A code with a proof is finished — see
+        `services.proof_recorder.arm`, which refuses to reopen one."""
+        return self.proof_path(ticket).is_file()
+
+    # -- the paused code ------------------------------------------------------ #
+    #
+    # One code at a time, in a file beside the chains rather than in the app's settings, so it
+    # lives with the work it points at and survives a restart the same way the chain does. A
+    # student who pauses, closes the laptop and opens gBuilder the next day is shown the paused
+    # code and a Resume button instead of being asked to find the printout again.
+    def mark_paused(self, ticket: str) -> None:
+        self.root.mkdir(parents=True, exist_ok=True)
+        self.paused_path().write_text(str(ticket), encoding="utf-8")
+
+    def paused(self) -> str:
+        """The code whose recording is paused, or "". Gone once that chain is armed again, or
+        any other code is — pausing is a bookmark, and there is only one."""
+        p = self.paused_path()
+        if not p.is_file():
+            return ""
+        try:
+            code = p.read_text(encoding="utf-8").strip()
+        except OSError:
+            return ""
+        # A bookmark into a chain that no longer exists (or is finished) is not a pause.
+        return code if code and self.exists(code) and not self.has_proof(code) else ""
+
+    def clear_paused(self) -> None:
+        try:
+            self.paused_path().unlink()
+        except FileNotFoundError:
+            pass
 
     def load(self, ticket: str) -> Chain | None:
         """The chain recorded under `ticket`, or None if there is none yet. Raises ChainError on a

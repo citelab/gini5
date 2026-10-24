@@ -273,3 +273,27 @@ def test_the_envelope_is_anchor_ready():
 def test_proofs_live_under_the_gini_home(monkeypatch, tmp_path):
     monkeypatch.setenv("GINI_HOME_DIR", str(tmp_path))
     assert P.proofs_root() == tmp_path / "proofs"
+
+
+# ---- the paused bookmark ------------------------------------------------------ #
+def test_the_paused_code_is_remembered_beside_the_chains(tmp_path):
+    """A pause is for coming back tomorrow, so it has to outlive the process — and live with the
+    work it points at rather than in the app's settings."""
+    store = P.ChainStore(tmp_path)
+    store.write_chain(TICKET_A, _chain())
+    store.mark_paused(TICKET_A)
+    assert P.ChainStore(tmp_path).paused() == TICKET_A
+    store.clear_paused()
+    assert store.paused() == ""
+    store.clear_paused()                                   # twice is fine
+
+
+def test_a_bookmark_without_a_chain_or_into_a_finished_one_reads_as_nothing(tmp_path):
+    store = P.ChainStore(tmp_path)
+    store.mark_paused(TICKET_A)
+    assert store.paused() == "", "no chain to resume"
+    store.write_chain(TICKET_A, _chain())
+    assert store.paused() == TICKET_A
+    store.write_proof(TICKET_A, P.build_proof(_submitted(_chain())))
+    assert store.has_proof(TICKET_A)
+    assert store.paused() == "", "a handed-in code cannot be resumed"

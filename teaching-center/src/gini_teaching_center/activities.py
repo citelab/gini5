@@ -24,6 +24,13 @@ vending deadline exactly, so everyone is due at the same moment however early th
 Wednesday 20:00, vending stops Thursday 21:00, duration 0 — a student starting now has until
 Thursday 21:00. Zero is a real value here and is never defaulted away; see `session_minutes_for`.
 
+**A lab is pausable unless the teacher says one sitting.** gBuilder lets a student pause a
+recording and resume it later — the chain carries a `stopped` mark and a `resumed` one with the
+length of the gap — and the arm reply tells gBuilder whether this lab allows it (`pausable`). The
+server never refuses a resumed chain either way: a one-sitting lab done in three is REPORTED, with
+the sittings counted, and the teacher weighs it. The only thing the flag changes here is what the
+session window is measured against — recording time for a pausable lab, wall-clock for one sitting.
+
 **Two collision checks, catching two different cheats.** A receipt collision means the same proof
 *file* was handed in twice. An artifact collision means the same *topology* was built under two
 codes — the collusion case a receipt cannot see, because the chain binds the ticket and the
@@ -256,6 +263,12 @@ def check_code(code_row: dict | None, activity: dict | None,
     return True, ""
 
 
+def pausable(activity: dict | None) -> bool:
+    """May a student pause this lab and come back to it? Yes unless the teacher ticked one
+    sitting — and yes for a row that predates the column, which is every lab there was."""
+    return not int((activity or {}).get("one_sitting") or 0)
+
+
 def grace_seconds(activity: dict | None) -> float:
     """How long after the deadline a submission is still taken, tagged LATE.
 
@@ -317,6 +330,17 @@ def session_seconds(proof: dict) -> tuple[float, float]:
     if not entries:
         return 0.0, 0.0
     return float(entries[0].get("t") or 0), float(entries[-1].get("t") or 0)
+
+
+def paused_seconds(proof: dict) -> float:
+    """How long the recording was paused, from the chain's own `resumed` marks.
+
+    Inside the signed chain like `session_seconds`, so it cannot be claimed after the fact. The
+    same sum `gini.domain.grader_view.paused_seconds` takes; computed here too so an older
+    gini-core beside this server still measures the window correctly.
+    """
+    return sum(float((e.get("data") or {}).get("away") or 0.0)
+               for e in (proof.get("entries") or []) if e.get("kind") == _ev.RESUMED)
 
 
 def topology_matches(topology: dict, proof: dict) -> bool:
@@ -654,6 +678,9 @@ def prepare(payload: dict, code_row: dict, activity: dict,
             "artifact_hash": artifact_hash(proof),
             "ts": now if now is not None else time.time(),
             "started": started, "finished": finished,
+            # Seconds the recording was paused, so the session window and the minutes column
+            # can be judged on time spent recording rather than on an overnight gap.
+            "away": paused_seconds(proof),
             "verdict": "pass",
             "data": json.dumps(payload, sort_keys=True)}
 
@@ -672,7 +699,13 @@ def within_session(row: dict, activity: dict) -> bool:
     limit = float(activity.get("session_minutes") or 0) * 60.0
     if not limit or not row.get("started") or not row.get("finished"):
         return True
-    return (float(row["finished"]) - float(row["started"])) <= limit
+    spent = float(row["finished"]) - float(row["started"])
+    if pausable(activity):
+        # A pause is not work. For a lab the teacher allowed to be paused, the window is judged
+        # on recording time; for a one-sitting lab the wall clock stands, and a chain that was
+        # resumed anyway shows up in the report as more than one sitting.
+        spent -= float(row.get("away") or 0.0)
+    return spent <= limit
 
 
 # --------------------------------------------------------------------------- #
@@ -768,6 +801,17 @@ def report(row: dict, activity: dict, twins: list, attempts: list | None = None,
             cooked.setdefault("look_at", []).append(
                 f"T-Lab: the {r['kind']} on level {r['level']} ({r['version']}) does not "
                 f"re-check — {r['why']}")
+    one_sitting = not pausable(activity)
+    sittings = int(cooked.get("sittings") or 0)
+    if one_sitting and sittings > 1:
+        # Not a refusal — gBuilder could not stop a student closing the laptop, and a crash
+        # looks the same as a pause from here. It is the teacher's rule, so the teacher sees it.
+        away = float(row.get("away") or 0.0) or paused_seconds(proof)
+        cooked.setdefault("look_at", []).append(
+            f"This lab is set to one sitting; the recording was resumed "
+            f"{sittings - 1} time{'' if sittings == 2 else 's'}"
+            + (f", paused for {round(away / 60.0)} min in all" if away else "") + ".")
+    away_s = float(row.get("away") or 0.0)
     return {
         "receipt": row.get("receipt", ""),
         "activity": row.get("activity", ""),
@@ -781,7 +825,13 @@ def report(row: dict, activity: dict, twins: list, attempts: list | None = None,
         "title": (activity or {}).get("title", ""),
         "verdict": row.get("verdict", ""),
         "started": row.get("started", 0), "finished": row.get("finished", 0),
-        "minutes": round(((row.get("finished") or 0) - (row.get("started") or 0)) / 60.0, 1),
+        # Minutes spent RECORDING: the pauses are taken out and shown beside it. A submission
+        # that predates `away` has 0 there and reads exactly as it did.
+        "minutes": round(max(0.0, (row.get("finished") or 0) - (row.get("started") or 0)
+                             - away_s) / 60.0, 1),
+        "paused_minutes": round(away_s / 60.0, 1),
+        "sittings": sittings,
+        "one_sitting": one_sitting,
         "within_session": within_session(row, activity or {}),
         # The COOKED view — a reading of the chain for the grader, shown first. The raw log below
         # (`narration`) is left exactly as captured; see gini.domain.grader_view.

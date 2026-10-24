@@ -1110,3 +1110,42 @@ def test_the_version_file_is_read_correctly_when_it_has_windows_line_endings(tmp
     got = V.on_disk()
     assert got == "6.5.2"
     assert "\r" not in got and "\n" not in got
+
+
+# -- one sitting ---------------------------------------------------------------- #
+def test_a_lab_is_pausable_by_default_and_the_arm_reply_says_so(tc):
+    tc.signin("boss", "correct-horse")
+    _released_lab(tc)
+    _, v = tc.call("/api/activity?course=comp535&lab=lab1&rc=" + _rc(), token="")
+    assert v["pausable"] is True
+    _, armed = tc.call("/api/activity?code=" + v["code"], token="")
+    assert armed["pausable"] is True
+
+
+def test_a_one_sitting_lab_tells_gbuilder_not_to_offer_pause(tc):
+    tc.signin("boss", "correct-horse")
+    tc.call("/api/courses", {"id": "comp535", "title": "Networks"})
+    _, body = tc.call("/api/activities/save",
+                      {"course": "comp535", "lab": "lab1", "title": "t", "one_sitting": True,
+                       "session_minutes": 60, "vend_until": time.time() + HOUR})
+    assert body.get("ok"), body
+    tc.call("/api/activities/release", {"course": "comp535", "lab": "lab1"})
+    row = tc.call("/api/activities?course=comp535")[1][0]
+    assert row["one_sitting"] == 1
+    _, v = tc.call("/api/activity?course=comp535&lab=lab1&rc=" + _rc(), token="")
+    assert v["pausable"] is False
+    _, armed = tc.call("/api/activity?code=" + v["code"], token="")
+    assert armed["ok"] and armed["pausable"] is False
+
+
+def test_an_absent_one_sitting_field_keeps_what_was_saved(tc):
+    """The console's contract: a field it did not send is left alone — an older console that
+    knows nothing of the checkbox must not untick it on every save."""
+    tc.signin("boss", "correct-horse")
+    tc.call("/api/courses", {"id": "comp535", "title": "Networks"})
+    tc.call("/api/activities/save", {"course": "comp535", "lab": "lab1", "title": "first",
+                                     "one_sitting": True})
+    tc.call("/api/activities/save", {"course": "comp535", "lab": "lab1", "title": "second"})
+    assert tc.call("/api/activities?course=comp535")[1][0]["one_sitting"] == 1
+    tc.call("/api/activities/save", {"course": "comp535", "lab": "lab1", "one_sitting": False})
+    assert tc.call("/api/activities?course=comp535")[1][0]["one_sitting"] == 0

@@ -134,9 +134,9 @@ def test_the_recorder_keeps_the_lab_the_server_named(tmp_path):
     assert rec.status()["activity_title"] == "Multi-LAN routing"
 
 
-def test_cancelling_forgets_which_lab_it_was(tmp_path):
-    """Leaving recording mode leaves it entirely — the tutor must not go on treating a lab as the
-    one being marked after the student has stopped recording it."""
+def test_pausing_forgets_which_lab_it_was(tmp_path):
+    """Leaving recording mode leaves it — the tutor must not go on treating a lab as the one
+    being marked after the student has paused it; resuming names it again."""
     from gini.domain import proof as P
     from gini.domain.ticket import mint
     from gini.services.proof_recorder import ProofRecorder
@@ -147,7 +147,7 @@ def test_cancelling_forgets_which_lab_it_was(tmp_path):
     rec = ProofRecorder(Ctx(), store=P.ChainStore(tmp_path))
     rec.arm(mint(lambda n: bytes(range(n))).pretty)
     rec.note_activity("comp535/lab1", "Multi-LAN routing")
-    rec.cancel()
+    rec.pause()
     assert C.current_lab_of(rec) == ""
 
 

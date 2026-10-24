@@ -178,10 +178,10 @@ def test_an_answer_after_handing_in_is_refused(rec):
     assert "q2" not in rec.answers()
 
 
-def test_cancelling_takes_the_questions_with_it(rec):
-    """Cancel is the whole departure. A student who cancels and arms a DIFFERENT code must not be
-    shown the last lab's questions over a fresh chain."""
-    rec.cancel()
+def test_pausing_takes_the_questions_with_it(rec):
+    """A student who pauses and arms a DIFFERENT code must not be shown the last lab's questions
+    over a fresh chain. Resuming fetches them again, from the arm reply."""
+    rec.pause()
     assert rec.questions == []
 
 

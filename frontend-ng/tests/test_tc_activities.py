@@ -680,3 +680,96 @@ def test_a_timed_attempt_is_unchanged(store):
     lives an hour PAST the deadline, so a code taken at the last minute keeps its full session."""
     act = an_activity(store, vend_until=NOW + HOUR, session_minutes=60)
     assert ACT.mint_code(act, now=NOW)["valid_until"] == NOW + HOUR + 60 * 60
+
+
+# -- pausing ------------------------------------------------------------------- #
+#
+# gBuilder lets a student pause a recording and resume it later; the chain carries a `stopped`
+# mark and a `resumed` one with the length of the gap. The teacher may declare a lab one sitting,
+# which hides gBuilder's Pause button. Here the flag changes only what the session window is
+# judged against — and a one-sitting lab done in several is reported, never refused.
+
+def a_paused_proof(code, *, t0=NOW, work_minutes=10.0, away_minutes=600.0):
+    """`work_minutes` of recording split around a pause of `away_minutes`."""
+    topo = {"devices": [{"id": "1", "name": "R1", "type": "Router"}], "links": []}
+    chain = P.Chain.start(code, assignment="comp535/lab1", gini_version="test", t=t0)
+    half = work_minutes * 30.0
+    chain.append("place", {"id": "1", "type": "Router", "name": "R1"}, t=t0 + 1)
+    chain.append("stopped", {"devices": 1, "links": 0, "ids": ["1"]}, t=t0 + half)
+    chain.append("resumed", {"devices": 1, "links": 0, "ids": ["1"], "away": away_minutes * 60.0},
+                 t=t0 + half + away_minutes * 60.0)
+    chain.append("submit", {"artifact": P.artifact_summary(topo)},
+                 t=t0 + work_minutes * 60.0 + away_minutes * 60.0)
+    return P.build_proof(chain)
+
+
+def test_a_lab_is_pausable_unless_the_teacher_said_one_sitting(store):
+    assert ACT.pausable(an_activity(store)) is True
+    assert ACT.pausable({}) is True, "a row that predates the column is every lab there was"
+    store.activity_put({**an_activity(store), "one_sitting": 1})
+    assert ACT.pausable(store.activity("comp535/lab1")) is False
+
+
+def test_the_pause_is_measured_from_the_chain_and_stored_with_the_submission(store):
+    act = an_activity(store)
+    row = ACT.mint_code(act, now=NOW)
+    proof = a_paused_proof(row["code"], work_minutes=10, away_minutes=600)
+    assert ACT.paused_seconds(proof) == 600 * 60.0
+    rec = ACT.prepare({"proof": proof}, row, act, now=NOW)
+    assert rec["away"] == 600 * 60.0
+    assert store.submission_put(rec)
+    assert store.submission_by_code(row["code"])["away"] == 600 * 60.0
+
+
+def test_a_pausable_lab_judges_the_window_on_recording_time(store):
+    """Ten minutes of work around a ten-hour pause is inside a sixty-minute window."""
+    act = an_activity(store, session_minutes=60)
+    row = ACT.mint_code(act, now=NOW)
+    rec = ACT.prepare({"proof": a_paused_proof(row["code"], work_minutes=10, away_minutes=600)},
+                      row, act, now=NOW)
+    assert ACT.within_session(rec, act) is True
+    rec = ACT.prepare({"proof": a_paused_proof(row["code"], work_minutes=90, away_minutes=600)},
+                      row, act, now=NOW)
+    assert ACT.within_session(rec, act) is False, "the work itself overran"
+
+
+def test_a_one_sitting_lab_judges_the_window_on_the_clock(store):
+    """The teacher said one sitting: the clock stands, and the pause counts against it."""
+    store.activity_put({**an_activity(store, session_minutes=60), "one_sitting": 1})
+    act = store.activity("comp535/lab1")
+    row = ACT.mint_code(act, now=NOW)
+    rec = ACT.prepare({"proof": a_paused_proof(row["code"], work_minutes=10, away_minutes=600)},
+                      row, act, now=NOW)
+    assert ACT.within_session(rec, act) is False
+
+
+def test_a_submission_that_predates_the_pause_column_reads_as_it_did(store):
+    act = an_activity(store, session_minutes=60)
+    assert ACT.within_session({"started": NOW, "finished": NOW + 90 * 60}, act) is False
+    assert ACT.within_session({"started": NOW, "finished": NOW + 10 * 60}, act) is True
+
+
+def test_the_report_shows_recording_minutes_and_the_pause_beside_them(store):
+    act = an_activity(store)
+    row = ACT.mint_code(act, now=NOW)
+    rec = ACT.prepare({"proof": a_paused_proof(row["code"], work_minutes=10, away_minutes=600)},
+                      row, act, now=NOW)
+    r = ACT.report(rec, act, [])
+    assert r["minutes"] == 10.0 and r["paused_minutes"] == 600.0
+    assert r["sittings"] == 2 and r["one_sitting"] is False
+    assert not any("one sitting" in x for x in r["cooked"]["look_at"])
+
+
+def test_a_one_sitting_lab_done_in_two_is_flagged_for_the_teacher_not_refused(store):
+    """gBuilder cannot stop a student closing the laptop, and a crash looks the same as a pause
+    from here. The rule is the teacher's, so the teacher sees it."""
+    store.activity_put({**an_activity(store), "one_sitting": 1})
+    act = store.activity("comp535/lab1")
+    row = ACT.mint_code(act, now=NOW)
+    rec = ACT.prepare({"proof": a_paused_proof(row["code"], work_minutes=10, away_minutes=600)},
+                      row, act, now=NOW)
+    assert rec["verdict"] == "pass"
+    r = ACT.report(rec, act, [])
+    assert r["one_sitting"] is True
+    flag = [x for x in r["cooked"]["look_at"] if "one sitting" in x]
+    assert flag and "resumed 1 time" in flag[0] and "600 min" in flag[0]
