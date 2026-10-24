@@ -30,8 +30,14 @@ class _Scripted:
 # -- L1: retrieval, and the confidence that gates everything above it --------------- #
 
 def test_retrieval_finds_the_page_and_carries_what_it_forbids():
+    """The manual now has two scheduler pages — the xv6 Scheduler face and T-Lab 02, "You are the
+    scheduler" — and a question that says only "scheduler" is one both honestly speak to. What is
+    pinned is that the face's page comes FIRST, and that a lab page is the only other thing
+    allowed to follow it; an unrelated page outranking either would be the regression."""
     g = retrieve("why is my process stuck in the scheduler")
-    assert [p.id for p, _ in g.pages] == ["os-scheduler"]
+    ids = [p.id for p, _ in g.pages]
+    assert ids[0] == "os-scheduler"
+    assert set(ids) <= {"os-scheduler", "os-scheduler-lab"}
     assert g.limits(), "a page's stated limits must travel with the grounding"
     assert all(name.endswith(".md") for name, _line in g.limits())
 
