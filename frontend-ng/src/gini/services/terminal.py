@@ -14,11 +14,19 @@ sh'`. The same line worked on macOS and Linux, which is why it survived. So:
 * a command handed to this function uses DOUBLE quotes for anything that must stay one argument,
   because cmd honours those (and protects `>`, `&`, `|`, `;` inside them) and every POSIX shell
   does too — `machine_shell_command` builds the one that bit;
-* the Windows launcher passes the command as ONE argv element to `cmd /k`, never through
-  `start … "…"` or Windows Terminal's own re-quoting, both of which strip or re-nest the inner
-  quotes. `CREATE_NEW_CONSOLE` gives cmd its own window, and Windows decides which terminal
-  hosts it — on Windows 11 that is the student's default terminal app (Windows Terminal unless
-  they changed it), which is also why no `wt` detection is needed any more.
+* the Windows launcher hands cmd the command line as ONE STRING, `cmd /k <command>`, exactly as
+  a student would type it. Not as a Python list: `Popen(["cmd", "/k", command])` made Python
+  quote the element as `"docker … sh -c \"cd …\""`, cmd's /k rule stripped the outer pair and
+  passed the `\"` through, and docker — a Go program, which reads `\"` as a LITERAL quote
+  character, not as grouping — received the words `"cd`, `/root`, `2>/dev/null;`, `exec`,
+  `sh"`. The container then ran `sh -c '"cd' /root …` and printed
+  `/root: line 0: syntax error: unterminated quoted string` — the second term's bug, one
+  release after the first. As a string, nothing re-quotes: cmd leaves `"cd … exec sh"` in place
+  for its child, and docker's argv parser takes it as the one argument it is. Never through
+  `start … "…"` or Windows Terminal's own re-quoting either, which lose the inner quotes.
+  `CREATE_NEW_CONSOLE` gives cmd its own window, and Windows decides which terminal hosts it —
+  on Windows 11 that is the student's default terminal app (Windows Terminal unless they
+  changed it), which is also why no `wt` detection is needed.
 """
 from __future__ import annotations
 
@@ -38,13 +46,14 @@ def machine_shell_command(service: str, home: str) -> str:
 def open_terminal(title: str, cwd: str | Path, command: str) -> tuple[bool, str]:
     cwd = str(cwd)
     if sys.platform == "win32":
-        # One argv element to `cmd /k`, which keeps the window open after the command so the
-        # student can keep typing. Python quotes the element as `"…\"…\"…"`; cmd's /k rule strips
-        # the outer pair and keeps the inner ones, and a Go or C program such as docker reads
-        # `\"` as a literal quote — so `sh -c "cd …; exec sh"` arrives intact at the container.
+        # The command line as one STRING — on Windows, Popen passes a string to CreateProcess
+        # verbatim, so this is byte for byte what a student would type. `/k` keeps the window
+        # open after the command so they can keep typing. A list here is the bug the module
+        # docstring describes: Python's quoting of the element turns the inner quotes into `\"`,
+        # which docker reads as literal quote characters.
         flags = getattr(subprocess, "CREATE_NEW_CONSOLE", 0)
         try:
-            subprocess.Popen(["cmd", "/k", command], cwd=cwd, creationflags=flags)
+            subprocess.Popen(f"cmd /k {command}", cwd=cwd, creationflags=flags)
             return True, "opened a Windows console"
         except OSError as e:
             return False, str(e)
