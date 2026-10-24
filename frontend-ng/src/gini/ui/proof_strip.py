@@ -170,6 +170,8 @@ class ProofStrip(QWidget):
         self.armChecked.connect(self._on_arm_checked)
         self.handedIn.connect(self._on_handed_in)
         self.flushed.connect(self._on_flushed)
+        self._flushing = False            # an outbox flush is on the worker right now
+        self._report_flush = False        # ...and the student asked for it, so it must answer
         # Emitted from the worker thread, handled here — the same crossing armChecked already makes.
         self.questionsFetched.connect(self._on_questions_fetched)
         if recorder is not None and hasattr(recorder, "set_on_change"):
@@ -641,17 +643,24 @@ class ProofStrip(QWidget):
             f"Your work is safe. The proof is on disk at:\n{path}\n\n"
             f"Receipt code: {receipt}\n\n"
             f"It could not reach the course server: {answer.get('error', 'refused')}\n\n"
-            f"gBuilder will try again automatically next time it starts or you enter a code. "
+            f"gBuilder will try again automatically while it is open, and next time it starts. "
+            f"To send it yourself — once you are connected, on the campus VPN if your course "
+            f"needs it — choose Course → Resubmit to Course Server from the menu bar.\n\n"
             f"This receipt stays valid — give it to your instructor either way, and do not redo "
             f"the lab.")
 
     # -- the outbox ---------------------------------------------------------- #
     def flush_outbox(self) -> None:
-        """Try anything that never made it. Safe to call often: it is a no-op when empty."""
+        """Try anything that never made it. Safe to call often: it is a no-op when empty, and a
+        no-op while one is already running — the launch flush, the five-minute timer and the
+        student's own Resubmit can all land on the same worker, and two flushes of the same
+        entry would only make the server say `duplicate` to the second."""
         url = self._tc_url()
         if not url or not outbox.pending():
             return
-
+        if self._flushing:
+            return
+        self._flushing = True
         self._busy(True)
         self._say("Sending work that has not reached the course server yet…")
 
@@ -660,7 +669,34 @@ class ProofStrip(QWidget):
 
         run_off_gui(self, work)
 
+    def resubmit(self) -> None:
+        """Course → Resubmit to Course Server: send what is owed, now, and SAY what happened.
+
+        The strip already had a Retry button, in the dock, visible only while something was
+        pending — which is to say findable only by a student who already knew it existed. The
+        one who needs it has a "Saved — not sent yet" dialog on screen and a menu bar, so it is
+        in the menu bar. Unlike the automatic flushes this one always answers, including when
+        there is nothing to send: "nothing is waiting" is exactly what a worried student came to
+        hear.
+        """
+        if not self._tc_url():
+            QMessageBox.information(
+                self, "No course server",
+                "No course server is configured, so there is nowhere to send work to. Set the "
+                "address your instructor gave you in Settings → Teaching Center, then choose "
+                "Resubmit again.")
+            return
+        if not outbox.pending():
+            QMessageBox.information(
+                self, "Nothing to resubmit",
+                "Every submission made from this computer has reached the course server. "
+                "Your receipts are the proof — there is nothing waiting to send.")
+            return
+        self._report_flush = True
+        self.flush_outbox()
+
     def _on_flushed(self, summary: dict) -> None:
+        self._flushing = False
         self._busy(False)
         sent, kept = summary.get("sent") or [], summary.get("kept") or []
         if sent:
@@ -672,6 +708,35 @@ class ProofStrip(QWidget):
             self._say(f"{len(kept)} submission{'' if len(kept) == 1 else 's'} still waiting to "
                       f"send", bad=True)
         self._refresh_pending()
+        if self._report_flush:
+            self._report_flush = False
+            self._report(sent, kept)
+
+    def _report(self, sent: list, kept: list) -> None:
+        """What Resubmit did, receipt by receipt — with the last error, because that line is
+        what an instructor will ask for, and until now it lived in a tooltip."""
+        lines = []
+        if sent:
+            lines.append("Sent to the course server:\n" + "\n".join(f"  • {r}" for r in sent))
+        if kept:
+            still = []
+            for e in outbox.pending():
+                if e.get("receipt") not in kept:
+                    continue
+                tries = int(e.get("attempts", 0) or 0)
+                why = str(e.get("last_error") or "no reply")
+                still.append(f"  • {e.get('receipt')} · {tries} attempt{'' if tries == 1 else 's'}"
+                             f"\n    {why}")
+            lines.append("Still waiting:\n" + "\n".join(still))
+            lines.append("Your receipts stay valid. If this keeps failing, check that you are "
+                         "connected (on the campus VPN, if your course needs it), and give your "
+                         "instructor the receipt and the error above.")
+        else:
+            lines.append("Everything has now reached the course server.")
+        if kept:
+            QMessageBox.warning(self, "Resubmit", "\n\n".join(lines))
+        else:
+            QMessageBox.information(self, "Resubmit", "\n\n".join(lines))
 
     # -- rendering ----------------------------------------------------------- #
     def _on_recorder_changed(self) -> None:
@@ -760,8 +825,9 @@ class ProofStrip(QWidget):
         err = info.get("last_error", "")
         self.pending.setToolTip(
             (f"Last error: {err}\n\n" if err else "")
-            + "Your receipts stay valid. gBuilder retries on launch, when you enter a code, "
-              "and when you press Retry now.")
+            + "Your receipts stay valid. gBuilder retries on launch, every few minutes while it "
+              "is open, when you enter a code, and when you choose Course → Resubmit to Course "
+              "Server.")
         self.pending.show()
         self.retry.setVisible(bool(self._tc_url()))
 

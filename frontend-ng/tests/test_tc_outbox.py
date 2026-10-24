@@ -442,3 +442,94 @@ def test_a_successful_hand_in_clears_the_outbox_entry(tmp_path, monkeypatch):
                         {"ok": True, "receipt": receipt, "within_session": True})
     assert outbox.pending(box) == []
     assert seen[-1][0] == "info" and "sent to the course server" in seen[-1][2]
+
+
+# --------------------------------------------------------------------------- #
+# Course → Resubmit: the same flush, but it always answers
+# --------------------------------------------------------------------------- #
+def _resubmit_strip(mod, monkeypatch, box, answer):
+    """A strip with a course server, a stubbed transport, and the worker run inline."""
+    monkeypatch.setattr(mod.outbox, "outbox_root", lambda: box)
+    monkeypatch.setattr(mod.tc_submit, "submit", lambda *a, **k: answer)
+    monkeypatch.setattr(mod, "run_off_gui", lambda owner, fn: fn())
+    strip = object.__new__(mod.ProofStrip)
+    strip.recorder = type("R", (), {"ctx": type("C", (), {
+        "settings": type("S", (), {"tc_url": "https://127.0.0.1:9"})()})()})()
+    strip._say = lambda *a, **k: None
+    strip._busy = lambda *a, **k: None
+    strip._refresh_pending = lambda: None
+    # Set explicitly: the stub QWidget answers ANY missing attribute with a callable, which is
+    # truthy — exactly the wrong default for a "busy" flag.
+    strip._flushing = strip._report_flush = False
+    strip.flushed.connect(strip._on_flushed)
+    return strip
+
+
+def test_resubmit_with_nothing_waiting_says_everything_has_arrived(tmp_path, monkeypatch):
+    mod, seen = _load_strip(monkeypatch)
+    strip = _resubmit_strip(mod, monkeypatch, tmp_path / "outbox", {"ok": True})
+    strip.resubmit()
+    kind, title, text = seen[-1]
+    assert kind == "info" and "reached the course server" in text
+
+
+def test_resubmit_reports_what_is_still_stuck_and_why(tmp_path, monkeypatch):
+    """The last error used to live in a tooltip. It is the line an instructor asks for."""
+    mod, seen = _load_strip(monkeypatch)
+    box = tmp_path / "outbox"
+    proof = a_proof()
+    outbox.queue(proof, root=box)
+    strip = _resubmit_strip(mod, monkeypatch, box,
+                            {"ok": False, "unreachable": True,
+                             "error": "the connection was closed (Broken pipe)"})
+    strip.resubmit()
+    kind, title, text = seen[-1]
+    assert kind == "warn"
+    assert P.receipt_code(proof) in text
+    assert "Broken pipe" in text and "1 attempt" in text
+    assert "VPN" in text
+    assert outbox.pending(box), "still owed — nothing was dropped"
+
+
+def test_resubmit_says_when_it_caught_up(tmp_path, monkeypatch):
+    mod, seen = _load_strip(monkeypatch)
+    box = tmp_path / "outbox"
+    proof = a_proof()
+    outbox.queue(proof, root=box)
+    strip = _resubmit_strip(mod, monkeypatch, box, {"ok": True, "receipt": P.receipt_code(proof)})
+    strip.resubmit()
+    kind, title, text = seen[-1]
+    assert kind == "info" and P.receipt_code(proof) in text and "Sent" in text
+    assert outbox.pending(box) == []
+
+
+def test_two_flushes_cannot_run_at_once(tmp_path, monkeypatch):
+    """Launch, the timer and Resubmit can all fire together; the second must wait its turn."""
+    mod, seen = _load_strip(monkeypatch)
+    box = tmp_path / "outbox"
+    outbox.queue(a_proof(), root=box)
+    started = []
+    monkeypatch.setattr(mod.outbox, "outbox_root", lambda: box)
+    monkeypatch.setattr(mod, "run_off_gui", lambda owner, fn: started.append(fn))  # never runs
+    strip = object.__new__(mod.ProofStrip)
+    strip.recorder = type("R", (), {"ctx": type("C", (), {
+        "settings": type("S", (), {"tc_url": "https://127.0.0.1:9"})()})()})()
+    strip._say = lambda *a, **k: None
+    strip._busy = lambda *a, **k: None
+    strip._flushing = strip._report_flush = False
+    strip.flush_outbox()
+    strip.flush_outbox()
+    assert len(started) == 1
+
+
+def test_the_not_sent_dialog_points_at_the_menu(tmp_path, monkeypatch):
+    mod, seen = _load_strip(monkeypatch)
+    monkeypatch.setattr(mod.outbox, "outbox_root", lambda: tmp_path / "outbox")
+    proof = a_proof()
+    strip = object.__new__(mod.ProofStrip)
+    strip._say = lambda *a, **k: None
+    strip._busy = lambda *a, **k: None
+    strip._on_handed_in({"receipt": P.receipt_code(proof), "path": "/tmp/p.json", "proof": proof},
+                        {"ok": False, "unreachable": True, "error": "Broken pipe"})
+    kind, title, text = seen[-1]
+    assert "Resubmit to Course Server" in text and "VPN" in text

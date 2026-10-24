@@ -415,3 +415,57 @@ def test_the_submissions_list_shows_which_ones_were_late(tc):
     tc_submit.submit(tc.url, late, late_proof, topo)
     rows = {r["receipt"]: r["late"] for r in tc.staff("/api/submissions?course=comp535")}
     assert sorted(rows.values()) == [0, 1], rows
+
+
+# --------------------------------------------------------------------------- #
+# the wire: gzip, and an older server
+# --------------------------------------------------------------------------- #
+def test_a_gzipped_submission_is_taken(tc):
+    """What gBuilder sends now. The server reads `Content-Encoding: gzip` on any route."""
+    import gzip
+    code = tc.code()
+    topo = a_topology()
+    body = json.dumps({"code": code, "proof": a_chain(code, topo), "topology": topo}).encode()
+    req = urllib.request.Request(
+        tc.url + "/api/activity/submit", data=gzip.compress(body),
+        headers={"Content-Type": "application/json", "Content-Encoding": "gzip"}, method="POST")
+    with urllib.request.urlopen(req, timeout=10) as r:
+        answer = json.loads(r.read())
+    assert answer["ok"] and answer["receipt"]
+    assert len(gzip.compress(body)) < len(body)
+
+
+def test_a_server_from_before_gzip_still_receives_the_work(tc, monkeypatch):
+    """The fallback, end to end: the handler's `_body` is put back to what it was before gzip
+    was understood, and gBuilder's `submit` must still land the work — on the second request."""
+    from gini_teaching_center import server
+
+    def old_body(self):
+        raw = self.rfile.read(int(self.headers.get("Content-Length", 0) or 0)) or b"{}"
+        try:
+            return json.loads(raw)
+        except json.JSONDecodeError:
+            return {}
+
+    monkeypatch.setattr(server.Handler, "_body", old_body)
+    code = tc.code()
+    topo = a_topology()
+    answer = tc_submit.submit(tc.url, code, a_chain(code, topo), topo, sleep=lambda s: None)
+    assert answer["ok"] and answer["receipt"]
+
+
+def test_the_check_tools_submit_probe_is_answered_by_a_refusal_and_stores_nothing(tc, trust_tls):
+    """tc_check.py sends a hand-in-sized body under a code no course issued. The Teaching
+    Center must read the whole thing and refuse it (409) — any other answer is something in
+    front of it — and must not keep any trace."""
+    import ssl
+    import sys as _sys
+    tools = Path(__file__).resolve().parents[2] / "teaching-center" / "tools"
+    if str(tools) not in _sys.path:
+        _sys.path.insert(0, str(tools))
+    import tc_check
+    ctx = ssl.create_default_context(cafile=str(trust_tls))
+    verdict, detail = tc_check.probe_submit(tc.url, ctx, size=300_000)
+    assert verdict == "ok", detail
+    assert "409" in detail
+    assert tc.staff("/api/submissions?course=comp535") == []

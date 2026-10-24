@@ -17,16 +17,34 @@ their own chain commits to a different digest, and the server checks it.
 Timeouts are short and failure is always a sentence, never an exception: this runs at the end of a
 lab, on campus wifi, and a student staring at a frozen dialog cannot tell whether their work is
 safe.
+
+**The body is gzipped, and a dropped connection is tried again at once.** Both came from the same
+field report: "Broken pipe" on hand-in for 15–20 students in a class of 200. A proof is a chain
+of every meaningful action, and a long OS lab's chain runs to megabytes — over a VPN that is a
+long upload, long enough for a flaky link to drop it and for a proxy's body limit to refuse it.
+JSON of repeated events compresses about ten to one, so the same work now crosses the wire as a
+few hundred kilobytes. A Teaching Center that predates gzip answers a compressed body with a 500
+(its JSON parser cannot read the bytes), and that exact answer is the cue to send it plain, so a
+new gBuilder still hands in to an old server. And a connection that was reset or closed while
+the body was in flight is retried straight away, twice, with a short wait — the outbox would
+retry at the next launch, but a student who has just finished is still sitting there now.
 """
 from __future__ import annotations
 
+import gzip
+import http.client
 import json
 import ssl
+import time
 import urllib.error
 import urllib.parse
 import urllib.request
 
 TIMEOUT = 20.0          # generous for a big topology on bad wifi, short enough not to look hung
+
+#: Seconds to wait before each immediate retry of a dropped upload. Two retries: enough to ride
+#: out a VPN re-key or a proxy reload, short enough that a dead link is reported in seconds.
+RETRY_WAITS = (1.0, 3.0)
 
 
 class Insecure(Exception):
@@ -107,13 +125,39 @@ def _wrap(e: Exception, url: str = "") -> Unreachable:
             f"{detail}. The server is running — this is a certificate problem, so nothing you do "
             f"in gBuilder will fix it. Tell your instructor (teaching-center/tools/tc_check.py in "
             f"the GINI repo prints the details they will ask for), and keep your proof file.")
+    if _dropped(cause):
+        # Name what happened in words a student can act on. "[Errno 32] Broken pipe" is the
+        # whole of what twenty of them were shown, and none of them could tell whether the server
+        # was down, their network was, or their work was gone.
+        return Unreachable(
+            f"the connection was closed while your work was being sent ({cause}). The server "
+            f"was reached, so this is usually the network between you and it — a VPN that "
+            f"dropped, or a proxy in front of the course server refusing a large upload.")
     return Unreachable(str(e))
 
 
-def _post(url: str, path: str, body: dict) -> tuple[int, dict]:
-    req = urllib.request.Request(
-        url.rstrip("/") + path, data=json.dumps(body).encode(),
-        headers={"Content-Type": "application/json"}, method="POST")
+def _dropped(e: object) -> bool:
+    """Did the far end close on us mid-request? Those are the failures a second try fixes —
+    unlike a timeout (nothing is listening, or the link is dead) or a refused connection, where
+    trying again in a second just doubles the wait for the same answer.
+
+    Takes the raw exception or urllib's `URLError` around it: the request body is sent inside
+    urllib's wrapper, the response is read outside it, so the same dropped connection arrives
+    either way depending on how far it got.
+    """
+    cause = getattr(e, "reason", e)
+    return isinstance(cause, (BrokenPipeError, ConnectionResetError, ConnectionAbortedError,
+                              http.client.RemoteDisconnected, http.client.IncompleteRead))
+
+
+def _post(url: str, path: str, body: dict, *, compress: bool = False) -> tuple[int, dict]:
+    data = json.dumps(body).encode()
+    headers = {"Content-Type": "application/json"}
+    if compress:
+        data = gzip.compress(data, compresslevel=6)
+        headers["Content-Encoding"] = "gzip"
+    req = urllib.request.Request(url.rstrip("/") + path, data=data, headers=headers,
+                                 method="POST")
     try:
         with urllib.request.urlopen(req, timeout=TIMEOUT) as r:
             return r.status, json.loads(r.read() or b"null")
@@ -125,6 +169,25 @@ def _post(url: str, path: str, body: dict) -> tuple[int, dict]:
             return e.code, {"error": f"The course server replied with {e.code}."}
     except Exception as e:                                   # noqa: BLE001
         raise _wrap(e, url) from e
+
+
+def _post_retrying(url: str, path: str, body: dict, *, compress: bool,
+                   sleep=time.sleep) -> tuple[int, dict]:
+    """`_post`, tried again at once when the connection was dropped mid-send.
+
+    Only for a DROPPED connection (`_dropped`): a certificate refusal or a timeout is the same
+    answer every time, and waiting to hear it twice helps nobody. Safe to repeat because the
+    server keys a submission by its receipt — a retry of work that did land is answered
+    `duplicate`, which the outbox treats as delivered.
+    """
+    for wait in RETRY_WAITS + (None,):
+        try:
+            return _post(url, path, body, compress=compress)
+        except Unreachable as e:
+            if wait is None or isinstance(e, Untrusted) or not _dropped(e.__cause__):
+                raise
+            sleep(wait)
+    raise AssertionError("unreachable")                      # the loop always returns or raises
 
 
 def _get(url: str, path: str) -> tuple[int, dict]:
@@ -160,12 +223,19 @@ def check_code(url: str, code: str) -> dict:
 
 
 def submit(url: str, code: str, proof: dict, topology: dict | None = None,
-           shadows: dict | None = None) -> dict:
+           shadows: dict | None = None, *, sleep=time.sleep) -> dict:
     """Hand in the work. Returns `{ok, receipt, within_session}` or `{ok: False, error}`.
 
     `topology` is what makes the submission runnable for the teacher. It is optional here only so
     the failure is graceful if a caller has none — the server refuses a topology that does not
     match the proof, so sending a wrong one is never quietly accepted.
+
+    Sent gzipped first. A 500 is what a Teaching Center from before gzip answers — its JSON
+    parser throws on the bytes, and the handler's catch-all reports that as a server error — so
+    on a 500 the same body goes again uncompressed. A current server never answers a well-formed
+    submission with a 500, so the cost of the fallback on a server that is genuinely broken is
+    one extra request before the same answer is reported. `sleep` is the retry wait, injectable
+    so the tests do not.
     """
     if not url:
         return {"ok": False, "error": "No course server is configured."}
@@ -177,5 +247,8 @@ def submit(url: str, code: str, proof: dict, topology: dict | None = None,
         # An OS lab's deliverable. Sent only when there IS one, so a networking submission is
         # exactly the shape it has always been.
         body["shadows"] = shadows
-    _, r = _post(url, "/api/activity/submit", body)
+    status, r = _post_retrying(url, "/api/activity/submit", body, compress=True, sleep=sleep)
+    if status == 500:
+        status, r = _post_retrying(url, "/api/activity/submit", body, compress=False,
+                                   sleep=sleep)
     return r if isinstance(r, dict) else {"ok": False, "error": "Unexpected reply."}

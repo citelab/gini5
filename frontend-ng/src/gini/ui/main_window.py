@@ -1940,6 +1940,14 @@ class MainWindow(QMainWindow):
         # the window opening, and it runs on a worker thread from there — the usual recovery for
         # a student whose wifi died mid-submission is simply reopening gBuilder on campus.
         _QTimer.singleShot(2000, self.proof_strip.flush_outbox)
+        # ...and keep catching up while gBuilder stays open. The launch flush assumed the student
+        # would reopen gBuilder on campus; the ones whose hand-in failed were off the VPN at home,
+        # and the next time they opened gBuilder was for the next lab, or never. A retry every
+        # few minutes means that connecting to the VPN is enough — nothing else to remember.
+        self._outbox_timer = _QTimer(self)
+        self._outbox_timer.setInterval(5 * 60 * 1000)
+        self._outbox_timer.timeout.connect(self.proof_strip.flush_outbox)
+        self._outbox_timer.start()
         # The strip re-emits the recorder's own change callback, so this one connection covers
         # arming, answering, resuming, pausing and handing in — every transition the panel
         # renders. It is made here rather than beside the dock because the strip is built later.
@@ -2026,6 +2034,16 @@ class MainWindow(QMainWindow):
         reset_act.setMenuRole(QAction.MenuRole.NoRole)
         hwm.addSeparator()
         add(hwm, "&List Boards…", self._show_boards)
+
+        # Course: what a student owes the course server, from the menu bar. The strip's Retry
+        # button sits in a corner of the dock and appears only while something is pending, so the
+        # student it exists for — one holding a "Saved — not sent yet" dialog — had never seen it.
+        # A menu is where they look. Built with a lambda because the strip is created after the
+        # menu bar is.
+        cm = mb.addMenu("&Course")
+        resubmit_act = add(cm, "&Resubmit to Course Server…",
+                           lambda: self.proof_strip.resubmit())
+        resubmit_act.setMenuRole(QAction.MenuRole.NoRole)
 
         # Teacher: verifying a student's proof is an action a marker takes repeatedly, not a
         # preference, so it gets a menu of its own rather than a corner of Settings.

@@ -7,8 +7,11 @@ of it. The teacher types it in and is told "no submission with that receipt", an
 have no way to tell who is wrong.
 
 So every submission is written here BEFORE it is attempted, and stays until the server has it.
-gBuilder flushes the outbox on launch and whenever it next talks to the course server, so the usual
-recovery is that the student reopens gBuilder on campus and it quietly catches up.
+gBuilder flushes the outbox on launch, every few minutes while it is open, whenever it next talks
+to the course server, and when the student chooses Course → Resubmit to Course Server. The usual
+recovery is that the student connects to the campus VPN and it quietly catches up — the periodic
+flush is there because the student whose hand-in failed was at home, and "reopen gBuilder on
+campus" turned out to mean "at the next lab, or never".
 
 **Nothing is ever deleted because the server said no.** An entry leaves only when the work is
 demonstrably at the far end — accepted, or refused as a duplicate, which means an earlier attempt

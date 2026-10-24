@@ -159,6 +159,16 @@ nginx wins on the two things that bite later: it can bind **443** (a privileged 
 `gini-tc` account cannot), and certbot renewal already knows how to reload it. The private key stays
 readable only by root — the Teaching Center process never sees it.
 
+**`client_max_body_size` is not optional.** nginx's default is 1 MB, and a long lab's proof chain
+is bigger than that uncompressed — current gBuilders gzip the upload, but older ones in the field
+do not.
+The student does not see a 413: nginx refuses at the headers and closes, and over a VPN the
+refusal is lost while the body is still going out, so gBuilder reports **"Broken pipe"** at
+hand-in. If a class reports that, check `grep 'too large body' /var/log/nginx/error.log` on the
+server, and run `teaching-center/tools/tc_check.py` from a student machine — it sends a 2 MB probe
+down the submit route and says which of the two it is. Nothing is lost either way: the work waits
+in gBuilder's outbox and goes when the limit is raised.
+
 **b. Built-in TLS — when there is no nginx, or no root to configure one.**
 
 ```bash

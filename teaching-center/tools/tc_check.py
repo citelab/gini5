@@ -14,16 +14,67 @@ To find the interpreter gBuilder uses:
     python -c "import sys; print(sys.executable)"
 
 This prints a verdict and the evidence behind it. Send the whole output to your instructor.
+
+Once the connection verifies, it also sends a hand-in-sized body (PROBE_BYTES of it, under a
+code no course ever issued) down the real submit route and reports how far it got. That is the
+check for the OTHER hand-in failure, "Broken pipe": a long lab's proof is megabytes, and a proxy
+in front of the Teaching Center with a body limit refuses it mid-upload. The Teaching Center
+itself answers the probe with a refusal (HTTP 409, unknown code) and stores nothing — anything
+else is something between you and it.
 """
 from __future__ import annotations
 
 import hashlib
+import json
 import os
 import platform
 import socket
 import ssl
 import sys
+import time
+import urllib.error
 import urllib.parse
+import urllib.request
+
+#: The size of the submit probe. A long OS lab's proof, uncompressed, is about this — and an
+#: older gBuilder sends it uncompressed. nginx's default `client_max_body_size` is 1 MB.
+PROBE_BYTES = 2_000_000
+
+
+def probe_submit(url: str, ctx: ssl.SSLContext, size: int = PROBE_BYTES,
+                 timeout: float = 90.0) -> tuple[str, str]:
+    """POST a body of `size` bytes to the submit route. Returns (verdict, detail).
+
+    Verdicts: `ok` (the Teaching Center read all of it and refused the fake code, as it should),
+    `too_large` (an HTTP 413 — a proxy's body limit, since the Teaching Center has none),
+    `dropped` (the connection was closed while the body was being sent — what gBuilder shows as
+    "Broken pipe"), `timeout`, or `odd` with whatever came back.
+    """
+    body = json.dumps({"code": "TC-CHECK-PROBE", "proof": {"pad": "x" * size}}).encode()
+    req = urllib.request.Request(url.rstrip("/") + "/api/activity/submit", data=body,
+                                 headers={"Content-Type": "application/json"}, method="POST")
+    t0 = time.time()
+    try:
+        with urllib.request.urlopen(req, timeout=timeout, context=ctx) as r:
+            return "odd", f"HTTP {r.status} — a refusal was expected"
+    except urllib.error.HTTPError as e:
+        took = time.time() - t0
+        if e.code == 409:
+            return "ok", f"refused as expected (HTTP 409) — {len(body):,} bytes in {took:.1f}s"
+        if e.code == 413:
+            return "too_large", (f"HTTP 413 — something in front of the Teaching Center caps "
+                                 f"request bodies below {len(body):,} bytes")
+        return "odd", f"HTTP {e.code} after {took:.1f}s"
+    except Exception as e:                                   # noqa: BLE001
+        took = time.time() - t0
+        cause = getattr(e, "reason", e)
+        if isinstance(cause, (BrokenPipeError, ConnectionResetError, ConnectionAbortedError)):
+            return "dropped", (f"the connection was closed while the body was being sent, "
+                               f"after {took:.1f}s ({cause})")
+        if isinstance(cause, (TimeoutError, socket.timeout)) or "timed out" in str(e).lower():
+            return "timeout", (f"no answer within {timeout:.0f}s — {len(body):,} bytes is too "
+                               f"slow for this link")
+        return "odd", f"{type(e).__name__}: {e}"
 
 # SHA-256 of the certificate each endpoint really serves, read from the server itself. If your
 # machine is handed something else, the connection is being intercepted — that is the one failure
@@ -134,10 +185,33 @@ def main(argv: list[str]) -> int:
             internet = False
         _say("trusts pypi.org too", "yes" if internet else "NO — this Python trusts almost nothing")
 
+    # ---- can a hand-in-sized upload get through? ---------------------------------------------- #
+    probe = None
+    if err is None:
+        print("\nSubmit route")
+        probe, detail = probe_submit(f"{p.scheme}://{host}:{port}", ctx)
+        _say(f"{PROBE_BYTES // 1_000_000} MB upload", detail)
+
     # ---- what it means ------------------------------------------------------------------------- #
     print("\nVERDICT")
     reason = (getattr(err, "verify_message", "") or str(err or "")).lower()
-    if err is None:
+    if err is None and probe == "too_large":
+        print("  The connection is fine, but a hand-in-sized upload is refused with HTTP 413. The\n"
+              "  Teaching Center has no body limit, so this is the proxy in front of it — on nginx,\n"
+              "  `client_max_body_size` defaults to 1 MB and the README's configuration sets 32m.\n"
+              "  A student with a long lab sees this as \"Broken pipe\" at hand-in. The instructor\n"
+              "  fixes it on the server; the student's work is safe in gBuilder's outbox meanwhile.")
+    elif err is None and probe == "dropped":
+        print("  The connection verifies, but an upload of hand-in size was cut off before it\n"
+              "  finished — the same \"Broken pipe\" gBuilder reports. On a VPN this is usually the\n"
+              "  link; if it happens every time from this machine, it is something in front of the\n"
+              "  server (a body limit, with the refusal lost mid-upload). Send this output to your\n"
+              "  instructor, who can check the proxy's error log for \"too large body\".")
+    elif err is None and probe == "timeout":
+        print("  The connection verifies, but a hand-in-sized upload did not finish in time. This\n"
+              "  link is slow; gBuilder keeps the work and retries, and Course → Resubmit to Course\n"
+              "  Server sends it when you are somewhere faster.")
+    elif err is None:
         print("  This machine connects and verifies the certificate correctly. If gBuilder still\n"
               "  refuses, it is running a DIFFERENT Python from this one — re-run this with the\n"
               "  interpreter named by:  head -1 \"$(command -v gbuilder)\"")

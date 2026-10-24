@@ -88,6 +88,68 @@ def test_watcher_flags_zombie_leak_and_idle():
     assert any(e.kind == "idle" for e in ev)   # nothing runnable/running
 
 
+def test_a_zombie_that_blinks_out_of_one_read_is_not_reported_again():
+    """The flood behind a 1.6 MB proof. A serial dump read mid-`spin` can lose a row for one
+    poll (gini_agent.dump: "the process blinks out"). The watcher took that as the process
+    being reaped, dropped its armed flag, and fired the same zombie_leak on the next good read —
+    1,809 times in one student's chain. One zombie is one observation."""
+    w = StateWatcher(zombie=2)
+    full = [(2, "sleeping", "sh"), (5, "zombie", "prog")]
+    short = [(2, "sleeping", "sh")]                 # pid 5 missing from this read only
+    ev = []
+    for i in range(30):
+        ev += w.observe(_snap(short if i % 3 == 2 else full, run=None))
+    assert [e.pid for e in ev if e.kind == "zombie_leak"] == [5]
+    assert w.active("zombie_leak") == {5}            # and it is still badged throughout
+
+
+def test_a_running_process_that_blinks_out_does_not_make_the_cpu_look_idle():
+    w = StateWatcher()
+    w.observe(_snap([(2, "sleeping", "sh"), (3, "running", "spin")], run=3))
+    ev = w.observe(_snap([(2, "sleeping", "sh")], run=None))     # spin lost from this read
+    assert not any(e.kind == "idle" for e in ev)
+
+
+def test_a_row_read_twice_in_one_dump_is_one_process():
+    """A raw serial window can carry the tail of one dump and the head of the next, so the same
+    pid is parsed twice. Two rows must not age a zombie two snapshots per read."""
+    w = StateWatcher(zombie=3)
+    twice = [(5, "zombie", "prog"), (5, "zombie", "prog"), (2, "sleeping", "sh")]
+    ev = []
+    for _ in range(2):
+        ev += w.observe(_snap(twice, run=None))
+    assert not [e for e in ev if e.kind == "zombie_leak"], "aged by rows, not by reads"
+    ev += w.observe(_snap(twice, run=None))
+    leak = [e for e in ev if e.kind == "zombie_leak"]
+    assert len(leak) == 1 and "3 snapshots" in leak[0].detail
+
+
+def test_a_process_missing_for_several_reads_is_forgotten():
+    """The grace is a grace, not amnesty: a process that is really gone must drop its badge, and
+    a later process with the same number must start from nothing."""
+    w = StateWatcher(starve=2)
+    for _ in range(3):
+        w.observe(_snap([(3, "running", "spin"), (4, "runnable", "spin")], run=3))
+    assert w.active("starvation") == {4}
+    for _ in range(StateWatcher.MISSING_GRACE):
+        w.observe(_snap([(3, "running", "spin")], run=3))
+    assert w.active("starvation") == set()
+    # back with the same pid: a fresh streak, so it has to earn the flag again
+    ev = w.observe(_snap([(3, "running", "spin"), (4, "runnable", "spin")], run=3))
+    assert not [e for e in ev if e.kind == "starvation"]
+
+
+def test_a_streak_is_frozen_not_advanced_while_a_process_is_missing():
+    """Two glitched reads must not carry a runnable streak over the threshold by themselves."""
+    w = StateWatcher(starve=4)
+    for _ in range(2):
+        w.observe(_snap([(3, "running", "spin"), (4, "runnable", "spin")], run=3))
+    for _ in range(2):                              # pid 4 absent, within the grace
+        w.observe(_snap([(3, "running", "spin")], run=3))
+    ev = w.observe(_snap([(3, "running", "spin"), (4, "runnable", "spin")], run=3))
+    assert not [e for e in ev if e.kind == "starvation"], "streak is 3 real reads, not 5"
+
+
 # -- MachineState orchestration --------------------------------------------- #
 def test_machine_state_steps_and_cards():
     ms = MachineState(DemoScheduler(timeslice=1), device_id="d1")

@@ -21,6 +21,7 @@ Run:  ./run.sh          (sets PYTHONPATH; gini.domain is a hard dependency)
 """
 from __future__ import annotations
 
+import gzip
 import hmac
 import json
 import mimetypes
@@ -30,6 +31,7 @@ import secrets
 import traceback
 import time
 import urllib.parse
+import zlib
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
@@ -113,10 +115,27 @@ class Handler(BaseHTTPRequestHandler):
         self.wfile.write(body)
 
     def _body(self) -> dict:
+        """The request's JSON, or `{}` for anything that is not.
+
+        A gzipped body is taken too (`Content-Encoding: gzip`): gBuilder compresses a submission
+        because a long lab's proof chain runs to megabytes, and a VPN upload of that size is what
+        was failing at hand-in. The encoding header is honoured for every route, not just submit,
+        because a client that can compress one body can compress any.
+
+        `ValueError` rather than `JSONDecodeError`: bytes that are not UTF-8 raise the former
+        from `json.loads`, and before gzip was understood here that is exactly what a compressed
+        body did — the uncaught error became a 500, which is the answer gBuilder now reads as
+        "an older server, send it plain".
+        """
         raw = self.rfile.read(int(self.headers.get("Content-Length", 0) or 0)) or b"{}"
+        if "gzip" in (self.headers.get("Content-Encoding") or "").lower():
+            try:
+                raw = gzip.decompress(raw)
+            except (OSError, EOFError, zlib.error):
+                return {}
         try:
             return json.loads(raw)
-        except json.JSONDecodeError:
+        except ValueError:
             return {}
 
     def _q(self, key: str) -> str:

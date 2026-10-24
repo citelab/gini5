@@ -60,7 +60,23 @@ class StateWatcher:
     """Edge-triggered detector: turns a stream of snapshots into a few teachable events.
 
     Fires each condition once per episode (when it becomes true), and re-arms when it clears,
-    so Coach gets a nudge on the *transition*, not every tick."""
+    so Coach gets a nudge on the *transition*, not every tick.
+
+    **A read is not the truth, and the watcher must not treat it as one.** The process table
+    comes off the kernel's serial line, and a dump that arrives while a CPU-bound program is
+    hogging the UART can be truncated or mixed with console output (`gini_agent.dump` says how):
+    a row vanishes for one poll, or is read twice. The first version of this took every read at
+    its word — a pid missing from one snapshot was "reaped", which dropped its armed flag, and
+    the next good read fired the same zombie again. One student's chain carried the same
+    `zombie_leak` 1,809 times in 38 minutes and weighed 1.6 MB, which is what made their hand-in
+    fail — the upload, not the lab. So a pid is forgotten only after it has been missing for
+    MISSING_GRACE consecutive reads, its streaks are frozen rather than reset while it is
+    missing, and a pid listed twice in one dump counts once.
+    """
+
+    #: Consecutive reads a pid may be absent from before it is taken to be gone. One is the
+    #: documented glitch ("the process blinks out"); three in a row is a process that exited.
+    MISSING_GRACE = 3
 
     def __init__(self, starve: int = 4, monopoly: int = 5, zombie: int = 3) -> None:
         self.starve, self.monopoly, self.zombie = starve, monopoly, zombie
@@ -74,28 +90,47 @@ class StateWatcher:
         self._running_streak: dict[int, int] = {}
         self._zombie_age: dict[int, int] = {}
         self._fired: set = set()          # (kind, pid) currently-active conditions
+        self._last: dict[int, str] = {}   # pid -> state at its most recent appearance
+        self._missing: dict[int, int] = {}  # pid -> consecutive reads it has been absent from
 
     def observe(self, snap: Snapshot) -> list[OsEvent]:
         events: list[OsEvent] = []
-        present = {p.pid for p in snap.procs}
-        others_runnable = sum(1 for p in snap.procs if p.state == "runnable")
-        any_active = False
+        seen: dict[int, str] = {}
         for p in snap.procs:
-            if p.state == "running":
-                any_active = True
-                self._running_streak[p.pid] = self._running_streak.get(p.pid, 0) + 1
-                self._runnable_streak[p.pid] = 0
-            elif p.state == "runnable":
-                any_active = True
-                self._runnable_streak[p.pid] = self._runnable_streak.get(p.pid, 0) + 1
-                self._running_streak[p.pid] = 0
+            seen.setdefault(p.pid, p.state)          # a row read twice is one process
+        # Known pids this read did not list. Frozen, not forgotten, until the absence has lasted:
+        # their streaks neither advance nor reset, their flags stay armed, and their last state
+        # still counts towards "is anything running" so a running process that blinks out does
+        # not read as an idle CPU.
+        held: dict[int, str] = {}
+        for pid in list(self._last):
+            if pid in seen:
+                continue
+            n = self._missing.get(pid, 0) + 1
+            if n >= self.MISSING_GRACE:
+                self._forget(pid)
             else:
-                self._running_streak[p.pid] = 0
-                self._runnable_streak[p.pid] = 0
-            if p.state == "zombie":
-                self._zombie_age[p.pid] = self._zombie_age.get(p.pid, 0) + 1
+                self._missing[pid] = n
+                held[pid] = self._last[pid]
+        for pid, state in seen.items():
+            self._missing.pop(pid, None)
+            self._last[pid] = state
+            if state == "running":
+                self._running_streak[pid] = self._running_streak.get(pid, 0) + 1
+                self._runnable_streak[pid] = 0
+            elif state == "runnable":
+                self._runnable_streak[pid] = self._runnable_streak.get(pid, 0) + 1
+                self._running_streak[pid] = 0
             else:
-                self._zombie_age.pop(p.pid, None)
+                self._running_streak[pid] = 0
+                self._runnable_streak[pid] = 0
+            if state == "zombie":
+                self._zombie_age[pid] = self._zombie_age.get(pid, 0) + 1
+            else:
+                self._zombie_age.pop(pid, None)
+        states = list(seen.values()) + list(held.values())
+        others_runnable = sum(1 for s in states if s == "runnable")
+        any_active = any(s in ("running", "runnable") for s in states)
 
         # starvation — runnable a long time without ever getting the CPU
         for pid, streak in self._runnable_streak.items():
@@ -124,10 +159,15 @@ class StateWatcher:
                    lambda: OsEvent("idle",
                                    "no process is runnable or running — the CPU is idle "
                                    "(all sleeping/zombie). Deadlock, or just waiting?"))
-        # drop fired flags for pids that vanished
-        self._fired = {(k, pid) for (k, pid) in self._fired
-                       if pid is None or pid in present}
         return events
+
+    def _forget(self, pid: int) -> None:
+        """A process that has really gone: nothing about it survives, so a later process that
+        happens to get the same number starts clean."""
+        for table in (self._runnable_streak, self._running_streak, self._zombie_age,
+                      self._last, self._missing):
+            table.pop(pid, None)
+        self._fired = {(k, p) for (k, p) in self._fired if p != pid}
 
     def _edge(self, out, key, cond, make) -> None:
         if cond and key not in self._fired:
