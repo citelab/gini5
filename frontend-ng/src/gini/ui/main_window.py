@@ -4732,10 +4732,11 @@ class MainWindow(QMainWindow):
             kind = "xv6 serial console"
         elif role == "machine":
             # Land in the persistent home (/root, MACHINE_HOME), like the in-app terminal, so a
-            # program a student writes here survives a restart. `cd; exec sh` rather than `-w`,
-            # which podman-compose's exec does not accept.
+            # program a student writes here survives a restart. Built in services.terminal,
+            # which knows that cmd.exe will run it on Windows.
             from ..services.orchestrator import MACHINE_HOME
-            cmd = f"docker compose exec {svc} sh -c 'cd {MACHINE_HOME} 2>/dev/null; exec sh'"
+            from ..services.terminal import machine_shell_command
+            cmd = machine_shell_command(svc, MACHINE_HOME)
             kind = "shell"
         elif role in ("router", "ovs"):   # real C gRouter CLI over its control socket
             cmd = (f"docker compose exec {svc} python3 "

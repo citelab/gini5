@@ -138,8 +138,13 @@ def test_the_native_login_also_lands_in_the_home():
     lands in /root too, via `cd; exec sh` rather than `-w` (podman-compose rejects `-w`)."""
     import inspect
 
+    from gini.services.orchestrator import MACHINE_HOME
+    from gini.services.terminal import machine_shell_command
     from gini.ui import main_window
+    # The command is built in services.terminal (it has to know cmd.exe will run it on
+    # Windows); the double-click path must be the one using it.
     src = inspect.getsource(main_window.MainWindow._open_terminal)
-    assert f"cd {{MACHINE_HOME}}" in src or "cd {MACHINE_HOME}" in src
-    assert "-w " not in src.split('role == "machine"')[1].split("elif")[0], \
-        "used -w, which podman-compose's exec does not accept"
+    assert "machine_shell_command(svc, MACHINE_HOME)" in src
+    cmd = machine_shell_command("m1", MACHINE_HOME)
+    assert f"cd {MACHINE_HOME}" in cmd and "exec sh" in cmd
+    assert "-w " not in cmd, "used -w, which podman-compose's exec does not accept"

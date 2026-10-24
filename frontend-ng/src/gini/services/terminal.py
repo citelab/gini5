@@ -3,6 +3,22 @@
 Mirrors old gBuilder's xterm-on-double-click, but cross-platform: a real terminal
 window the student types into (docker exec into a machine, or a console into a
 network element).
+
+**The command is run by cmd.exe on Windows, and cmd has no single quotes.** That is the bug this
+module carried for a term: the machine login was
+`docker compose exec m1 sh -c 'cd /root 2>/dev/null; exec sh'`, which bash reads as one quoted
+argument and cmd reads as five words with a redirection in the middle — cmd tried to redirect
+stderr to a file called `/dev/null`, failed, and what reached the container was a broken `exec
+sh'`. The same line worked on macOS and Linux, which is why it survived. So:
+
+* a command handed to this function uses DOUBLE quotes for anything that must stay one argument,
+  because cmd honours those (and protects `>`, `&`, `|`, `;` inside them) and every POSIX shell
+  does too — `machine_shell_command` builds the one that bit;
+* the Windows launcher passes the command as ONE argv element to `cmd /k`, never through
+  `start … "…"` or Windows Terminal's own re-quoting, both of which strip or re-nest the inner
+  quotes. `CREATE_NEW_CONSOLE` gives cmd its own window, and Windows decides which terminal
+  hosts it — on Windows 11 that is the student's default terminal app (Windows Terminal unless
+  they changed it), which is also why no `wt` detection is needed any more.
 """
 from __future__ import annotations
 
@@ -12,19 +28,24 @@ import sys
 from pathlib import Path
 
 
+def machine_shell_command(service: str, home: str) -> str:
+    """The login into a machine container: a shell in its persistent home, so a program a student
+    writes there survives a restart. `cd; exec sh` rather than `-w`, which podman-compose's exec
+    does not accept. Double-quoted — see the module docstring for the cmd.exe reason."""
+    return f'docker compose exec {service} sh -c "cd {home} 2>/dev/null; exec sh"'
+
+
 def open_terminal(title: str, cwd: str | Path, command: str) -> tuple[bool, str]:
     cwd = str(cwd)
     if sys.platform == "win32":
-        # Windows HAS terminals (cmd / PowerShell / Windows Terminal) — it just needs a different
-        # launcher than macOS/Linux. Prefer Windows Terminal if installed; else a classic console via
-        # `start`. `cmd /k` keeps the window open after the command so the student can keep typing;
-        # the working dir is inherited from the Popen cwd.
+        # One argv element to `cmd /k`, which keeps the window open after the command so the
+        # student can keep typing. Python quotes the element as `"…\"…\"…"`; cmd's /k rule strips
+        # the outer pair and keeps the inner ones, and a Go or C program such as docker reads
+        # `\"` as a literal quote — so `sh -c "cd …; exec sh"` arrives intact at the container.
+        flags = getattr(subprocess, "CREATE_NEW_CONSOLE", 0)
         try:
-            if shutil.which("wt"):                     # Windows Terminal
-                subprocess.Popen(["wt", "-d", cwd, "cmd", "/k", command])
-            else:
-                subprocess.Popen(f'start "{title}" cmd /k "{command}"', shell=True, cwd=cwd)
-            return True, "opened Windows console"
+            subprocess.Popen(["cmd", "/k", command], cwd=cwd, creationflags=flags)
+            return True, "opened a Windows console"
         except OSError as e:
             return False, str(e)
     if sys.platform == "darwin":
